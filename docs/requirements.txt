@@ -1,0 +1,5 @@
+-e ..
+furo>=2024.1.29
+sphinx-copybutton>=0.5
+sphinx-design>=0.5
+mango-agents>=2.0

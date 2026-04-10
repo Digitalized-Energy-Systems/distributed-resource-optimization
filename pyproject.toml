@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "distributed-resource-optimization"
+version = "0.1.0"
+description = "Distributed resource optimization algorithms — COHDA, ADMM, and averaging consensus"
+authors = [{name = "Rico Schrage"}]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["distributed", "optimization", "COHDA", "ADMM", "consensus", "multi-agent", "energy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "cvxpy>=1.3",
+]
+
+[project.optional-dependencies]
+mango = [
+    "mango-agents>=2.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mango-agents>=2.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.1.29",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.5",
+    "mango-agents>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Digitalized-Energy-Systems/mango-optimization"
+Documentation = "https://digitalized-energy-systems.github.io/mango-optimization/"
+Repository = "https://github.com/Digitalized-Energy-Systems/mango-optimization"
+Issues = "https://github.com/Digitalized-Energy-Systems/mango-optimization/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["distributed_resource_optimization"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["distributed_resource_optimization"]
+omit = ["tests/*"]
