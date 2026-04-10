@@ -167,6 +167,7 @@ try:
         OptimizationFinishedMessage,
         StartCoordinatedDistributedOptimization,
     )
+
     _MANGO_AVAILABLE = True
 except ImportError:  # pragma: no cover
     pass

@@ -31,6 +31,7 @@ from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMGlobalObjective, 
 # Global objective (currently informational only)
 # ---------------------------------------------------------------------------
 
+
 class ADMMTargetDistanceObjective(ADMMGlobalObjective):
     """Quadratic target-distance objective (informational)."""
 
@@ -47,6 +48,7 @@ class ADMMTargetDistanceObjective(ADMMGlobalObjective):
 # ---------------------------------------------------------------------------
 # Sharing data
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ADMMSharingData:
@@ -86,6 +88,7 @@ def create_admm_start(data: ADMMSharingData) -> ADMMStart:
 # Sharing global actor
 # ---------------------------------------------------------------------------
 
+
 class ADMMSharingGlobalActor(ADMMGlobalActor):
     """Global actor for the sharing ADMM variant.
 
@@ -119,16 +122,12 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
             constraints.append(d_var[i] >= lhs)
             constraints.append(d_var[i] >= -lhs)
 
-        objective = cp.Minimize(
-            (n * rho / 2) * cp.sum_squares(z_var - u - x_avg) + cp.sum(d_var)
-        )
+        objective = cp.Minimize((n * rho / 2) * cp.sum_squares(z_var - u - x_avg) + cp.sum(d_var))
         prob = cp.Problem(objective, constraints)
         prob.solve(solver=cp.OSQP, verbose=False)
 
         if z_var.value is None:
-            raise RuntimeError(
-                f"Sharing ADMM z-update QP did not converge (status={prob.status})."
-            )
+            raise RuntimeError(f"Sharing ADMM z-update QP did not converge (status={prob.status}).")
         return np.asarray(z_var.value, dtype=float)
 
     def u_update(
@@ -166,6 +165,7 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
 # ---------------------------------------------------------------------------
 # Factories
 # ---------------------------------------------------------------------------
+
 
 def create_sharing_target_distance_admm_coordinator() -> ADMMGenericCoordinator:
     """Create an :class:`~.core.ADMMGenericCoordinator` for target-distance sharing."""

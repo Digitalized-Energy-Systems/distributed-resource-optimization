@@ -74,9 +74,7 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
     x_var = cp.Variable(m)
 
     h = rho * np.asarray(v, dtype=float) + np.asarray(actor.S, dtype=float)
-    objective = cp.Minimize(
-        (rho / 2) * cp.sum_squares(x_var) + h @ x_var
-    )
+    objective = cp.Minimize((rho / 2) * cp.sum_squares(x_var) + h @ x_var)
 
     constraints = [
         x_var >= actor.lb,

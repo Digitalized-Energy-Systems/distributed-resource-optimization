@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 # ActorContainer
 # ---------------------------------------------------------------------------
 
+
 class ActorContainer:
     """Registry of :class:`SimpleCarrier` instances that share a lifecycle.
 
@@ -42,6 +43,7 @@ class ActorContainer:
 # ---------------------------------------------------------------------------
 # SimpleCarrier
 # ---------------------------------------------------------------------------
+
 
 class SimpleCarrier(Carrier):
     """Lightweight in-process carrier for a single algorithm participant.
@@ -180,6 +182,7 @@ class SimpleCarrier(Carrier):
 
     def schedule_using(self, fn: Any, delay_s: float) -> asyncio.Task:
         """Schedule *fn* to run after *delay_s* seconds on the event loop."""
+
         async def _run() -> None:
             if delay_s > 0:
                 await asyncio.sleep(delay_s)
@@ -196,6 +199,7 @@ def cid(carrier: SimpleCarrier) -> int:
 # ---------------------------------------------------------------------------
 # Express helpers
 # ---------------------------------------------------------------------------
+
 
 async def start_distributed_optimization(
     actors: list["DistributedAlgorithm"],

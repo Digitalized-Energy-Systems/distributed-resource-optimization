@@ -24,6 +24,7 @@ from distributed_resource_optimization.algorithm.core import (
 # Minimal stub algorithm for routing tests
 # ---------------------------------------------------------------------------
 
+
 class _EchoAlgorithm(DistributedAlgorithm):
     """Stores every received (content, meta) pair in `received`."""
 
@@ -37,6 +38,7 @@ class _EchoAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 # Registration and addressing
 # ---------------------------------------------------------------------------
+
 
 def test_container_registers_carriers():
     container = ActorContainer()
@@ -73,6 +75,7 @@ def test_others_excludes_self():
 # ---------------------------------------------------------------------------
 # Done-event lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_done_event_fires_after_single_message():
@@ -124,6 +127,7 @@ async def test_done_event_resets_between_runs():
 # Meta propagation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_send_to_other_populates_sender_in_meta():
     """The 'sender' field in meta should match the sending carrier's aid."""
@@ -147,6 +151,7 @@ async def test_send_to_other_populates_sender_in_meta():
 # send_awaitable — request-reply
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_send_awaitable_resolves_on_reply():
     """send_awaitable should return a Future that resolves when the target replies."""
@@ -167,6 +172,7 @@ async def test_send_awaitable_resolves_on_reply():
 # ---------------------------------------------------------------------------
 # schedule_using
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_schedule_using_executes_function():

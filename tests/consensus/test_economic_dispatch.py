@@ -18,7 +18,7 @@ class TestGradientTerm:
     def test_below_cost_clips_to_p_min(self):
         """When λ < cost, P = p_min (default 0) so gradient = -ρ*(0 - target/N)."""
         actor = self._actor(cost=10.0, p_max=30.0, rho=0.05, epsilon=0.1, n_guess=3)
-        lam = np.array([5.0])     # below cost
+        lam = np.array([5.0])  # below cost
         p_target = np.array([30.0])
         grad = actor.gradient_term(lam, p_target)
         # P = clip((5-10)/0.1, 0, 30) = 0
@@ -28,7 +28,7 @@ class TestGradientTerm:
     def test_above_max_clips_to_p_max(self):
         """When λ >> cost, P = p_max so gradient = -ρ*(p_max - target/N)."""
         actor = self._actor(cost=10.0, p_max=5.0, rho=0.05, epsilon=0.1, n_guess=3)
-        lam = np.array([100.0])   # far above cost
+        lam = np.array([100.0])  # far above cost
         p_target = np.array([30.0])
         grad = actor.gradient_term(lam, p_target)
         # P = clip((100-10)/0.1, 0, 5) = 5

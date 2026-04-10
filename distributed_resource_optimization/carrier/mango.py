@@ -73,21 +73,25 @@ if TYPE_CHECKING:
 # Message types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class StartCoordinatedDistributedOptimization:
     """Sent to a :class:`CoordinatorRole` to kick off a coordinated run."""
+
     input: Any
 
 
 @dataclass
 class OptimizationFinishedMessage:
     """Broadcast by the coordinator to each participant when the run ends."""
+
     result: Any
 
 
 @dataclass
 class _CarrierRequest:
     """Internal wrapper that adds request-tracking to any optimization message."""
+
     content: Any
     request_id: str
 
@@ -95,6 +99,7 @@ class _CarrierRequest:
 @dataclass
 class _CarrierReply:
     """Internal reply wrapper matched to a :class:`_CarrierRequest` by ID."""
+
     content: Any
     request_id: str
 
@@ -102,6 +107,7 @@ class _CarrierReply:
 # ---------------------------------------------------------------------------
 # MangoCarrier
 # ---------------------------------------------------------------------------
+
 
 class MangoCarrier(Carrier):
     """A :class:`~.core.Carrier` that delegates to a mango-agents Role.
@@ -130,6 +136,7 @@ class MangoCarrier(Carrier):
         meta: dict | None = None,
     ) -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
+
         async def _send() -> None:
             await self._parent.context.send_message(content, receiver)
 
@@ -201,6 +208,7 @@ class MangoCarrier(Carrier):
 # DistributedOptimizationRole
 # ---------------------------------------------------------------------------
 
+
 class DistributedOptimizationRole(Role):
     """Mango Role hosting a :class:`~..algorithm.core.DistributedAlgorithm`.
 
@@ -223,7 +231,9 @@ class DistributedOptimizationRole(Role):
         self.context.subscribe_message(
             self,
             self._handle_optimization,
-            lambda c, m: not isinstance(c, (_CarrierReply, StartCoordinatedDistributedOptimization)),
+            lambda c, m: (
+                not isinstance(c, (_CarrierReply, StartCoordinatedDistributedOptimization))
+            ),
         )
         self.context.subscribe_message(
             self,
@@ -254,6 +264,7 @@ class DistributedOptimizationRole(Role):
 # ---------------------------------------------------------------------------
 # CoordinatorRole
 # ---------------------------------------------------------------------------
+
 
 class CoordinatorRole(Role):
     """Mango Role hosting a :class:`~..algorithm.core.Coordinator`.
@@ -293,18 +304,14 @@ class CoordinatorRole(Role):
             lambda c, m: isinstance(c, _CarrierReply),
         )
 
-    def _handle_start(
-        self, content: StartCoordinatedDistributedOptimization, meta: dict
-    ) -> None:
+    def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
         from ..algorithm.core import start_optimization
 
         loop = asyncio.get_event_loop()
         self._done_future = loop.create_future()
 
         async def _run() -> None:
-            results = await start_optimization(
-                self.coordinator, self._carrier, content.input, meta
-            )
+            results = await start_optimization(self.coordinator, self._carrier, content.input, meta)
             for i, addr in enumerate(self._carrier.others("coordinator")):
                 await self.context.send_message(
                     OptimizationFinishedMessage(result=results[i]), addr

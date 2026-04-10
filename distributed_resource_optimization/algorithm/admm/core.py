@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Message types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ADMMStart:
     """Sent to the coordinator to begin a new ADMM run.
@@ -68,6 +69,7 @@ class ADMMAnswer:
 # ---------------------------------------------------------------------------
 # Abstract global-actor interface
 # ---------------------------------------------------------------------------
+
 
 class ADMMGlobalActor(ABC):
     """Interface for the coordinator-side global update in ADMM variants."""
@@ -136,6 +138,7 @@ class ADMMGlobalObjective(ABC):
 # Helper: max-norm over list-of-arrays or single array
 # ---------------------------------------------------------------------------
 
+
 def _max_norm(v: Any) -> float:
     """Return ``max ||v_i||`` if *v* is a list, else ``max |v_j|`` for a vector."""
     if isinstance(v, list):
@@ -159,6 +162,7 @@ def _deepcopy_z(z: Any) -> Any:
 # ---------------------------------------------------------------------------
 # Generic ADMM coordinator
 # ---------------------------------------------------------------------------
+
 
 class ADMMGenericCoordinator(Coordinator):
     """Standard ADMM iteration loop.
@@ -198,9 +202,7 @@ class ADMMGenericCoordinator(Coordinator):
         message_data: ADMMStart,
         meta: Any,
     ) -> list[np.ndarray]:
-        x, _z, _u = await self._run(
-            carrier, message_data.data, message_data.solution_length
-        )
+        x, _z, _u = await self._run(carrier, message_data.data, message_data.solution_length)
         return x
 
     async def _run(
@@ -248,14 +250,8 @@ class ADMMGenericCoordinator(Coordinator):
             # 4. Convergence check
             r_norm = actor.primal_residual(x, z)
             s_norm = rho * _max_diff_norm(z, z_old)
-            eps_pri = (
-                np.sqrt(m * n) * self.abs_tol
-                + self.rel_tol * max(_max_norm(x), _max_norm(z))
-            )
-            eps_dual = (
-                np.sqrt(m * n) * self.abs_tol
-                + self.rel_tol * _max_norm(u)
-            )
+            eps_pri = np.sqrt(m * n) * self.abs_tol + self.rel_tol * max(_max_norm(x), _max_norm(z))
+            eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * _max_norm(u)
 
             if r_norm < eps_pri and s_norm < eps_dual:
                 logger.debug("ADMM converged in %d iterations.", k)
@@ -263,8 +259,7 @@ class ADMMGenericCoordinator(Coordinator):
 
             if k == self.max_iters:
                 logger.warning(
-                    "ADMM reached max iterations (%d) without full convergence "
-                    "(r=%.4g, s=%.4g).",
+                    "ADMM reached max iterations (%d) without full convergence (r=%.4g, s=%.4g).",
                     self.max_iters,
                     r_norm,
                     s_norm,
@@ -276,6 +271,7 @@ class ADMMGenericCoordinator(Coordinator):
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def create_admm_start(data: Any, length: int | None = None) -> ADMMStart:
     """Create an :class:`ADMMStart` message.
@@ -290,6 +286,4 @@ def create_admm_start(data: Any, length: int | None = None) -> ADMMStart:
         return ADMMStart(data=data, solution_length=data.solution_length)
     if hasattr(data, "target"):
         return ADMMStart(data=data, solution_length=len(data.target))
-    raise ValueError(
-        "Cannot infer solution_length; pass it explicitly as the second argument."
-    )
+    raise ValueError("Cannot infer solution_length; pass it explicitly as the second argument.")

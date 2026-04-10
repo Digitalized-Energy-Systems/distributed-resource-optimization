@@ -52,9 +52,7 @@ async def test_averaging_consensus_with_simple_carrier():
         data=p_target,
     )
 
-    await start_distributed_optimization(
-        [actor_one, actor_two, actor_three], initial_message
-    )
+    await start_distributed_optimization([actor_one, actor_two, actor_three], initial_message)
 
     assert finished[0]
     assert np.allclose(actor_one._lam, actor_two._lam, atol=1e-3)

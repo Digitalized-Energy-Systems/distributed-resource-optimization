@@ -51,7 +51,9 @@ class Carrier(ABC):
         """
 
     @abstractmethod
-    def send_awaitable(self, content: Any, receiver: Any, meta: dict | None = None) -> asyncio.Future:
+    def send_awaitable(
+        self, content: Any, receiver: Any, meta: dict | None = None
+    ) -> asyncio.Future:
         """Send *content* to *receiver* and return a Future for the reply.
 
         The future resolves to the first reply message received in response to

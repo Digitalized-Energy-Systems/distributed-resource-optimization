@@ -23,8 +23,10 @@ def _make_decider(
     local_perf=None,
 ) -> LocalSearchDecider:
     if local_perf is None:
+
         def local_perf(_: object) -> float:
             return 0.0
+
     return LocalSearchDecider(
         initial_schedule=np.array(initial, dtype=float),
         corridors=corridors,
@@ -41,7 +43,10 @@ class TestLocalSearchDeciderInit:
             SystemConfig,
             WorkingMemory,
         )
-        mem = WorkingMemory(target_params=None, system_config=SystemConfig(), solution_candidate=None)
+
+        mem = WorkingMemory(
+            target_params=None, system_config=SystemConfig(), solution_candidate=None
+        )
         result = d.initial_schedule(mem)
         assert np.allclose(result, [1.0, 2.0])
 

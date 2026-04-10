@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 # ConsensusActor hierarchy
 # ---------------------------------------------------------------------------
 
+
 class ConsensusActor:
     """Optional plug-in that adds a gradient term to the averaging update.
 
@@ -58,6 +59,7 @@ class NoConsensusActor(ConsensusActor):
 # ---------------------------------------------------------------------------
 # Message types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AveragingConsensusMessage(OptimizationMessage):
@@ -93,6 +95,7 @@ class ConsensusFinishedMessage:
 # ---------------------------------------------------------------------------
 # AveragingConsensusAlgorithm
 # ---------------------------------------------------------------------------
+
 
 class AveragingConsensusAlgorithm(DistributedAlgorithm):
     """Distributed averaging consensus with an optional gradient correction.
@@ -192,6 +195,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 # Factories
 # ---------------------------------------------------------------------------
+
 
 def create_averaging_consensus_participant(
     finish_callback: Callable,

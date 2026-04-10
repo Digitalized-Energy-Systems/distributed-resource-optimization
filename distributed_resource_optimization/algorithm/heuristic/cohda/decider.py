@@ -79,6 +79,7 @@ class LocalSearchDecider(LocalDecider):
 # Algorithmic functions
 # ---------------------------------------------------------------------------
 
+
 def _local_performance_with_global_share(
     decider: LocalSearchDecider,
     schedule: np.ndarray,
@@ -87,10 +88,8 @@ def _local_performance_with_global_share(
     delta_to_target: float,
 ) -> float:
     """Combined local + convergence-force performance."""
-    return (
-        decider.local_performance(schedule)
-        + decider.convergence_force_factor
-        * ((new_value - current_value) + delta_to_target)
+    return decider.local_performance(schedule) + decider.convergence_force_factor * (
+        (new_value - current_value) + delta_to_target
     )
 
 
@@ -169,14 +168,9 @@ def decide(
     """
     current_best_schedule = candidate.schedules[cohda_data.participant_id - 1].copy()
     target = cohda_data.memory.target_params
-    open_schedule = (
-        target.schedule * target.weights
-        - candidate.schedules.sum(axis=0)
-    )
+    open_schedule = target.schedule * target.weights - candidate.schedules.sum(axis=0)
 
-    new_best_schedule = _find_in_local_search_room(
-        decider, current_best_schedule, open_schedule
-    )
+    new_best_schedule = _find_in_local_search_room(decider, current_best_schedule, open_schedule)
     new_candidate = create_from_updated_sysconf(
         cohda_data.participant_id, sysconfig, new_best_schedule
     )

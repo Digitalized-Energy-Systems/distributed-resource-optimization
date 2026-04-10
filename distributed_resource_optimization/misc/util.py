@@ -18,6 +18,7 @@ def log_exception(exc: BaseException, tb: str | None = None) -> None:
 
 async def spawn_logged(coro) -> asyncio.Task:
     """Schedule a coroutine as a task; log any exceptions it raises."""
+
     async def _wrapped():
         try:
             return await coro

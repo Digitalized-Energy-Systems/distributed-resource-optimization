@@ -82,6 +82,7 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
 # Factories
 # ---------------------------------------------------------------------------
 
+
 def create_consensus_target_reach_admm_coordinator() -> ADMMGenericCoordinator:
     """Create an :class:`ADMMGenericCoordinator` for the consensus variant."""
     return ADMMGenericCoordinator(global_actor=ADMMConsensusGlobalActor())

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ScheduleSelection:
     """A participant's chosen schedule together with its version counter."""
@@ -43,10 +44,7 @@ class ScheduleSelection:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ScheduleSelection):
             return NotImplemented
-        return (
-            np.array_equal(self.schedule, other.schedule)
-            and self.counter == other.counter
-        )
+        return np.array_equal(self.schedule, other.schedule) and self.counter == other.counter
 
     def __hash__(self) -> int:
         return hash((tuple(float(v) for v in self.schedule), self.counter))
@@ -67,8 +65,7 @@ class SystemConfig:
         if set(self.schedule_choices) != set(other.schedule_choices):
             return False
         return all(
-            self.schedule_choices[k] == other.schedule_choices[k]
-            for k in self.schedule_choices
+            self.schedule_choices[k] == other.schedule_choices[k] for k in self.schedule_choices
         )
 
     def __hash__(self) -> int:
@@ -106,9 +103,7 @@ class SolutionCandidate:
         )
 
     def __hash__(self) -> int:
-        return hash(
-            (self.participant_id, self.schedules.tobytes(), self.perf, self.present)
-        )
+        return hash((self.participant_id, self.schedules.tobytes(), self.perf, self.present))
 
     def __repr__(self) -> str:
         return (
@@ -128,9 +123,8 @@ class TargetParams:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, TargetParams):
             return NotImplemented
-        return (
-            np.array_equal(self.schedule, other.schedule)
-            and np.array_equal(self.weights, other.weights)
+        return np.array_equal(self.schedule, other.schedule) and np.array_equal(
+            self.weights, other.weights
         )
 
     def __hash__(self) -> int:
@@ -142,10 +136,7 @@ class TargetParams:
         )
 
     def __repr__(self) -> str:
-        return (
-            f"TargetParams(schedule={self.schedule.tolist()}, "
-            f"weights={self.weights.tolist()})"
-        )
+        return f"TargetParams(schedule={self.schedule.tolist()}, weights={self.weights.tolist()})"
 
 
 @dataclass
@@ -168,6 +159,7 @@ class WorkingMemory(OptimizationMessage):
 # Default performance function
 # ---------------------------------------------------------------------------
 
+
 def cohda_default_performance(
     cluster_schedule: np.ndarray,
     target_params: TargetParams,
@@ -178,7 +170,7 @@ def cohda_default_performance(
     :param target_params: Target schedule and weights.
     :returns: ``-sum(weights * abs(target - column_sums))``.
     """
-    sum_cs = cluster_schedule.sum(axis=0)           # (n_intervals,)
+    sum_cs = cluster_schedule.sum(axis=0)  # (n_intervals,)
     diff = np.abs(target_params.schedule - sum_cs)
     return -float(np.sum(diff * target_params.weights))
 
@@ -186,6 +178,7 @@ def cohda_default_performance(
 # ---------------------------------------------------------------------------
 # Local decider hierarchy
 # ---------------------------------------------------------------------------
+
 
 class LocalDecider:
     """Abstract strategy for selecting a local schedule in the decide step."""
@@ -217,6 +210,7 @@ class DefaultLocalDecider(LocalDecider):
 # ---------------------------------------------------------------------------
 # COHDAAlgorithmData
 # ---------------------------------------------------------------------------
+
 
 class COHDAAlgorithmData(DistributedAlgorithm):
     """Per-participant COHDA state machine.
@@ -255,6 +249,7 @@ class COHDAAlgorithmData(DistributedAlgorithm):
 # Core algorithmic functions
 # ---------------------------------------------------------------------------
 
+
 def merge_sysconfigs(
     sysconfig_i: SystemConfig,
     sysconfig_j: SystemConfig,
@@ -271,8 +266,7 @@ def merge_sysconfigs(
     modified = False
     for aid in all_ids:
         if aid in choices_i and (
-            aid not in choices_j
-            or choices_i[aid].counter >= choices_j[aid].counter
+            aid not in choices_j or choices_i[aid].counter >= choices_j[aid].counter
         ):
             new_choices[aid] = choices_i[aid]
         else:
@@ -378,9 +372,7 @@ def perceive(
                     counter=cohda_data.counter + 1,
                 )
                 cohda_data.counter += 1
-                current_sysconfig = SystemConfig(
-                    dict(own_memory.system_config.schedule_choices)
-                )
+                current_sysconfig = SystemConfig(dict(own_memory.system_config.schedule_choices))
             else:
                 current_sysconfig = own_memory.system_config
 
@@ -456,9 +448,7 @@ def _decide_default(
     candidate: SolutionCandidate,
 ) -> tuple[SystemConfig, SolutionCandidate]:
     """Evaluate all feasible schedules; keep the best-performing candidate."""
-    possible = [
-        np.array(s, dtype=float) for s in decider.schedule_provider(cohda_data.memory)
-    ]
+    possible = [np.array(s, dtype=float) for s in decider.schedule_provider(cohda_data.memory)]
     current_best = candidate
     if current_best.perf is None:
         current_best = _evaluated(
@@ -469,9 +459,7 @@ def _decide_default(
 
     for schedule in possible:
         if decider.is_local_acceptable(schedule):
-            new_cand = create_from_updated_sysconf(
-                cohda_data.participant_id, sysconfig, schedule
-            )
+            new_cand = create_from_updated_sysconf(cohda_data.participant_id, sysconfig, schedule)
             new_perf = cohda_data.performance_function(
                 new_cand.schedules, cohda_data.memory.target_params
             )
@@ -521,9 +509,7 @@ async def process_exchange_message(
     sysconf, candidate = perceive(algorithm_data, messages)
 
     if sysconf != old_sysconf or candidate != old_candidate:
-        sysconf, candidate = decide(
-            algorithm_data, algorithm_data.decider, sysconf, candidate
-        )
+        sysconf, candidate = decide(algorithm_data, algorithm_data.decider, sysconf, candidate)
         wm = act(algorithm_data, sysconf, candidate)
         for other in carrier.others(str(algorithm_data.participant_id)):
             carrier.send_to_other(wm, other)
@@ -532,6 +518,7 @@ async def process_exchange_message(
 # ---------------------------------------------------------------------------
 # Factory helpers
 # ---------------------------------------------------------------------------
+
 
 def create_cohda_start_message(
     target_schedule: list[float] | np.ndarray,

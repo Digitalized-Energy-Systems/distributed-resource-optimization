@@ -57,6 +57,7 @@ class Coordinator(ABC):
 # Module-level shim functions — preserved for compatibility with carrier code
 # ---------------------------------------------------------------------------
 
+
 async def on_exchange_message(
     algorithm: DistributedAlgorithm,
     carrier: "Carrier",
@@ -80,6 +81,7 @@ async def start_optimization(
 # ---------------------------------------------------------------------------
 # CoordinatedDistributedAlgorithm
 # ---------------------------------------------------------------------------
+
 
 class CoordinatedDistributedAlgorithm:
     """Bundle of a coordinator and its worker algorithms (informational only)."""
