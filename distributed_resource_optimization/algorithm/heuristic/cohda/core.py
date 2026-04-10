@@ -439,7 +439,8 @@ def decide(
     candidate: SolutionCandidate,
 ) -> tuple[SystemConfig, SolutionCandidate]:
     """Dispatch to the right decide implementation for *decider*."""
-    from .decider import LocalSearchDecider, decide as local_search_decide
+    from .decider import LocalSearchDecider
+    from .decider import decide as local_search_decide
 
     if isinstance(decider, LocalSearchDecider):
         return local_search_decide(cohda_data, decider, sysconfig, candidate)
@@ -564,7 +565,9 @@ def create_cohda_participant(
     """
     if isinstance(schedule_set, list):
         _frozen = [[float(x) for x in s] for s in schedule_set]
-        provider: Callable = lambda _: [np.array(s) for s in _frozen]
+
+        def provider(_: Any, _frozen: list = _frozen) -> list:
+            return [np.array(s) for s in _frozen]
     else:
         provider = schedule_set
 

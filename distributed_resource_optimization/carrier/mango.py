@@ -54,16 +54,18 @@ Usage example::
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from mango import Role, sender_addr as mango_sender_addr
+from mango import Role
+from mango import sender_addr as mango_sender_addr
 
 from .core import Carrier
 
 if TYPE_CHECKING:
     from mango import AgentAddress
+
     from ..algorithm.core import Coordinator, DistributedAlgorithm
 
 

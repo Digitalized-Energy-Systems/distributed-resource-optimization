@@ -12,8 +12,8 @@ from distributed_resource_optimization import (
     start_distributed_optimization,
 )
 from distributed_resource_optimization.algorithm.heuristic.cohda.decider import (
-    _find_new_value,
     _find_in_local_search_room,
+    _find_new_value,
 )
 
 
@@ -23,7 +23,8 @@ def _make_decider(
     local_perf=None,
 ) -> LocalSearchDecider:
     if local_perf is None:
-        local_perf = lambda _: 0.0
+        def local_perf(_: object) -> float:
+            return 0.0
     return LocalSearchDecider(
         initial_schedule=np.array(initial, dtype=float),
         corridors=corridors,
@@ -36,7 +37,10 @@ def _make_decider(
 class TestLocalSearchDeciderInit:
     def test_initial_schedule_returned(self):
         d = _make_decider([1.0, 2.0], [(0.0, 5.0), (0.0, 5.0)])
-        from distributed_resource_optimization.algorithm.heuristic.cohda.core import WorkingMemory, SystemConfig
+        from distributed_resource_optimization.algorithm.heuristic.cohda.core import (
+            SystemConfig,
+            WorkingMemory,
+        )
         mem = WorkingMemory(target_params=None, system_config=SystemConfig(), solution_candidate=None)
         result = d.initial_schedule(mem)
         assert np.allclose(result, [1.0, 2.0])

@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
-    COHDAAlgorithmData,
     ScheduleSelection,
     SolutionCandidate,
     SystemConfig,
@@ -23,7 +22,6 @@ from distributed_resource_optimization import (
     perceive,
 )
 from tests.carrier import TestCarrier
-
 
 # ---------------------------------------------------------------------------
 # Performance function

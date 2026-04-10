@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
 import numpy as np
+import pytest
 
 from distributed_resource_optimization import (
     ADMMFlexActor,
     create_admm_flex_actor_one_to_many,
-    create_consensus_target_reach_admm_coordinator,
     create_admm_start_consensus,
+    create_consensus_target_reach_admm_coordinator,
     start_coordinated_optimization,
 )
 
@@ -107,7 +107,7 @@ async def test_consensus_admm_complex_four_actors():
     Each actor is at its upper bound, so the solution reproduces the box limits.
     """
     flex_actor1 = ADMMFlexActor(
-        l=[0.0, 0.0, 0.0],
+        lb=[0.0, 0.0, 0.0],
         u=[6.428571428571429, 0.0, 4.5],
         C=np.array([
             [1.0, 1.0, 1.0],
@@ -120,7 +120,7 @@ async def test_consensus_admm_complex_four_actors():
         S=np.array([0.0, 0.0, 0.0]),
     )
     flex_actor2 = ADMMFlexActor(
-        l=[0.0, 0.0, 0.0],
+        lb=[0.0, 0.0, 0.0],
         u=[0.04000000000000001, 0.06, 0.1],
         C=np.array([
             [1.0, 1.0, 1.0],
@@ -133,7 +133,7 @@ async def test_consensus_admm_complex_four_actors():
         S=np.array([0.0, 0.0, 0.0]),
     )
     flex_actor3 = ADMMFlexActor(
-        l=[0.0, 0.0, 0.0],
+        lb=[0.0, 0.0, 0.0],
         u=[0.3, 0.0, 0.3333333333333333],
         C=np.array([
             [1.0, 1.0, 1.0],
@@ -146,7 +146,7 @@ async def test_consensus_admm_complex_four_actors():
         S=np.array([0.0, 0.0, 0.0]),
     )
     flex_actor4 = ADMMFlexActor(
-        l=[0.0, 0.0, 0.0],
+        lb=[0.0, 0.0, 0.0],
         u=[1.5, 0.0, 1.6666666666666665],
         C=np.array([
             [1.0, 1.0, 1.0],

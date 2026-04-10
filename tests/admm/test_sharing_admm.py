@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
 import numpy as np
+import pytest
 
 from distributed_resource_optimization import (
     create_admm_flex_actor_one_to_many,
-    create_sharing_target_distance_admm_coordinator,
     create_admm_sharing_data,
+    create_sharing_target_distance_admm_coordinator,
     start_coordinated_optimization,
 )
 from distributed_resource_optimization.algorithm.admm.sharing_admm import create_admm_start

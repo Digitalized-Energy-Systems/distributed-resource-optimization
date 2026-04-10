@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class ADMMFlexActor(DistributedAlgorithm):
     """Local ADMM actor that solves a box+coupling-constrained QP.
 
-    :param l: Lower-bound vector.
+    :param lb: Lower-bound vector.
     :param u: Upper-bound vector.
     :param C: Coupling constraint matrix (rows: constraints, cols: variables).
     :param d: Coupling RHS vector.
@@ -41,13 +41,13 @@ class ADMMFlexActor(DistributedAlgorithm):
 
     def __init__(
         self,
-        l: np.ndarray,
+        lb: np.ndarray,
         u: np.ndarray,
         C: np.ndarray,
         d: np.ndarray,
         S: np.ndarray,
     ) -> None:
-        self.l = l
+        self.lb = lb
         self.u = u
         self.C = C
         self.d = d
@@ -79,7 +79,7 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
     )
 
     constraints = [
-        x_var >= actor.l,
+        x_var >= actor.lb,
         x_var <= actor.u,
         actor.C @ x_var <= actor.d,
     ]
@@ -148,8 +148,8 @@ def create_admm_flex_actor_one_to_many(
 
     p_arr = np.zeros(len(eta_arr)) if P is None else np.asarray(P, dtype=float)
 
-    l = np.minimum(np.zeros(len(tech_cap)), tech_cap)
+    lb = np.minimum(np.zeros(len(tech_cap)), tech_cap)
     u = np.maximum(tech_cap, np.zeros(len(tech_cap)))
     C, d = _create_C_and_d(tech_cap)
 
-    return ADMMFlexActor(l=l, u=u, C=C, d=d, S=-p_arr)
+    return ADMMFlexActor(lb=lb, u=u, C=C, d=d, S=-p_arr)

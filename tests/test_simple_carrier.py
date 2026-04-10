@@ -18,10 +18,7 @@ from distributed_resource_optimization import (
 )
 from distributed_resource_optimization.algorithm.core import (
     DistributedAlgorithm,
-    OptimizationMessage,
-    on_exchange_message,
 )
-
 
 # ---------------------------------------------------------------------------
 # Minimal stub algorithm for routing tests

@@ -21,13 +21,11 @@ where :math:`\\bar{x}` is the participant average, *p* the priorities, and
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import cvxpy as cp
 import numpy as np
 
 from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMGlobalObjective, ADMMStart
-
 
 # ---------------------------------------------------------------------------
 # Global objective (currently informational only)

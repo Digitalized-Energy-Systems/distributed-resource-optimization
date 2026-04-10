@@ -64,13 +64,53 @@ Quick start — ADMM (sharing)
 """
 
 # Carrier layer
-from .carrier.core import Carrier, EventWithValue
-from .carrier.simple import (
-    ActorContainer,
-    SimpleCarrier,
-    cid,
-    start_coordinated_optimization,
-    start_distributed_optimization,
+from .algorithm.admm.consensus_admm import (
+    ADMMConsensusGlobalActor,
+    create_admm_start_consensus,
+    create_consensus_target_reach_admm_coordinator,
+)
+
+# ADMM
+from .algorithm.admm.core import (
+    ADMMAnswer,
+    ADMMGenericCoordinator,
+    ADMMGlobalActor,
+    ADMMGlobalObjective,
+    ADMMMessage,
+    ADMMStart,
+    create_admm_start,
+)
+from .algorithm.admm.flex_actor import (
+    ADMMFlexActor,
+    create_admm_flex_actor_one_to_many,
+)
+from .algorithm.admm.flex_actor import (
+    result as admm_flex_result,
+)
+from .algorithm.admm.sharing_admm import (
+    ADMMSharingData,
+    ADMMSharingGlobalActor,
+    ADMMTargetDistanceObjective,
+    create_admm_sharing_data,
+    create_sharing_admm_coordinator,
+    create_sharing_target_distance_admm_coordinator,
+)
+from .algorithm.admm.sharing_admm import (
+    create_admm_start as create_sharing_admm_start,
+)
+
+# Consensus
+from .algorithm.consensus.averaging import (
+    AveragingConsensusAlgorithm,
+    AveragingConsensusMessage,
+    ConsensusActor,
+    ConsensusFinishedMessage,
+    NoConsensusActor,
+    create_averaging_consensus_participant,
+    create_averaging_consensus_start,
+)
+from .algorithm.consensus.economic_dispatch import (
+    LinearCostEconomicDispatchConsensusActor,
 )
 
 # Algorithm base
@@ -103,52 +143,18 @@ from .algorithm.heuristic.cohda.core import (
     merge_candidates,
     merge_sysconfigs,
     perceive,
+)
+from .algorithm.heuristic.cohda.core import (
     result as cohda_result,
 )
 from .algorithm.heuristic.cohda.decider import LocalSearchDecider
-
-# ADMM
-from .algorithm.admm.core import (
-    ADMMAnswer,
-    ADMMGenericCoordinator,
-    ADMMGlobalActor,
-    ADMMGlobalObjective,
-    ADMMMessage,
-    ADMMStart,
-    create_admm_start,
-)
-from .algorithm.admm.flex_actor import (
-    ADMMFlexActor,
-    create_admm_flex_actor_one_to_many,
-    result as admm_flex_result,
-)
-from .algorithm.admm.consensus_admm import (
-    ADMMConsensusGlobalActor,
-    create_admm_start_consensus,
-    create_consensus_target_reach_admm_coordinator,
-)
-from .algorithm.admm.sharing_admm import (
-    ADMMSharingData,
-    ADMMSharingGlobalActor,
-    ADMMTargetDistanceObjective,
-    create_admm_sharing_data,
-    create_admm_start as create_sharing_admm_start,
-    create_sharing_admm_coordinator,
-    create_sharing_target_distance_admm_coordinator,
-)
-
-# Consensus
-from .algorithm.consensus.averaging import (
-    AveragingConsensusAlgorithm,
-    AveragingConsensusMessage,
-    ConsensusActor,
-    ConsensusFinishedMessage,
-    NoConsensusActor,
-    create_averaging_consensus_participant,
-    create_averaging_consensus_start,
-)
-from .algorithm.consensus.economic_dispatch import (
-    LinearCostEconomicDispatchConsensusActor,
+from .carrier.core import Carrier, EventWithValue
+from .carrier.simple import (
+    ActorContainer,
+    SimpleCarrier,
+    cid,
+    start_coordinated_optimization,
+    start_distributed_optimization,
 )
 
 # Mango carrier (optional — only imported if mango-agents is available)

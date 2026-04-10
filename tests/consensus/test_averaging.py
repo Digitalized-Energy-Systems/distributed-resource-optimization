@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import pytest
 import numpy as np
+import pytest
 
 from distributed_resource_optimization import (
     create_averaging_consensus_participant,

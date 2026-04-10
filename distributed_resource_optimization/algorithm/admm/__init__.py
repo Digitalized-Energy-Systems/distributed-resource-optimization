@@ -1,3 +1,8 @@
+from .consensus_admm import (
+    ADMMConsensusGlobalActor,
+    create_admm_start_consensus,
+    create_consensus_target_reach_admm_coordinator,
+)
 from .core import (
     ADMMAnswer,
     ADMMGenericCoordinator,
@@ -8,11 +13,6 @@ from .core import (
     create_admm_start,
 )
 from .flex_actor import ADMMFlexActor, create_admm_flex_actor_one_to_many
-from .consensus_admm import (
-    ADMMConsensusGlobalActor,
-    create_admm_start_consensus,
-    create_consensus_target_reach_admm_coordinator,
-)
 from .sharing_admm import (
     ADMMSharingData,
     ADMMSharingGlobalActor,
