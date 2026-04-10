@@ -37,63 +37,37 @@ COHDA is a gossip-style algorithm:
 Usage
 -----
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_cohda_participant,
-       create_cohda_start_message,
-       start_distributed_optimization,
-   )
-
-   async def main():
-       # Participant 1: two schedule choices, each 3-dimensional
-       actor1 = create_cohda_participant(1, [[0.0, 1.0, 2.0],
-                                             [1.0, 2.0, 3.0]])
-       actor2 = create_cohda_participant(2, [[0.0, 1.0, 2.0],
-                                             [1.0, 2.0, 3.0]])
-
-       start = create_cohda_start_message([1.2, 2.0, 3.0])
-       await start_distributed_optimization([actor1, actor2], start)
-
-       # Inspect result
-       sched = actor1.memory.solution_candidate.schedules
-       print("Combined schedule:", sched.sum(axis=0))
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_cohda_participant,
+   ...     create_cohda_start_message,
+   ...     start_distributed_optimization,
+   ... )
+   >>> actor1 = create_cohda_participant(1, [[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]])
+   >>> actor2 = create_cohda_participant(2, [[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]])
+   >>> start = create_cohda_start_message([1.2, 2.0, 3.0])
+   >>> asyncio.run(start_distributed_optimization([actor1, actor2], start))
+   >>> actor1.memory.solution_candidate.perf < 0
+   True
 
 Complete Example
 ----------------
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_cohda_participant,
-       create_cohda_start_message,
-       start_distributed_optimization,
-   )
-
-   async def main():
-       schedules_A = [[1.0, 0.0, 0.0, 0.0],
-                      [0.0, 1.0, 0.0, 0.0],
-                      [0.0, 0.0, 1.0, 0.0]]
-
-       schedules_B = [[2.0, 0.0, 0.0, 0.0],
-                      [0.0, 2.0, 0.0, 0.0],
-                      [0.0, 0.0, 0.0, 2.0]]
-
-       actors = [
-           create_cohda_participant(1, schedules_A),
-           create_cohda_participant(2, schedules_B),
-           create_cohda_participant(3, schedules_A),
-           create_cohda_participant(4, schedules_B),
-       ]
-
-       start = create_cohda_start_message([3.0, 3.0, 1.0, 2.0])
-       await start_distributed_optimization(actors, start)
-
-   asyncio.run(main())
+   >>> schedules_A = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+   >>> schedules_B = [[2.0, 0.0, 0.0, 0.0], [0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 0.0, 2.0]]
+   >>> actors = [
+   ...     create_cohda_participant(1, schedules_A),
+   ...     create_cohda_participant(2, schedules_B),
+   ...     create_cohda_participant(3, schedules_A),
+   ...     create_cohda_participant(4, schedules_B),
+   ... ]
+   >>> start = create_cohda_start_message([3.0, 3.0, 1.0, 2.0])
+   >>> asyncio.run(start_distributed_optimization(actors, start))
+   >>> actors[0].memory.solution_candidate.perf < 0
+   True
 
 Working Memory and Solution Candidates
 ---------------------------------------
@@ -118,16 +92,13 @@ when creating a participant. The function receives a 2-D NumPy array (rows = par
 columns = time steps) and a :class:`~distributed_resource_optimization.TargetParams`
 instance, and must return a ``float``:
 
-.. code-block:: python
+.. doctest::
 
-   import numpy as np
-   from distributed_resource_optimization import create_cohda_participant
-
-   def my_perf(cluster_schedule, target_params):
-       diff = target_params.schedule - cluster_schedule.sum(axis=0)
-       return -float(np.sqrt((diff ** 2).sum()))  # L2 distance
-
-   actor = create_cohda_participant(1, [[1.0, 0.0], [0.0, 1.0]], my_perf)
+   >>> from distributed_resource_optimization import create_cohda_participant
+   >>> def my_perf(cluster_schedule, target_params):
+   ...     diff = target_params.schedule - cluster_schedule.sum(axis=0)
+   ...     return -float(np.sqrt((diff ** 2).sum()))
+   >>> actor = create_cohda_participant(1, [[1.0, 0.0], [0.0, 1.0]], my_perf)
 
 Local Search Decider
 --------------------
@@ -135,23 +106,21 @@ Local Search Decider
 For participants with *continuous* feasible sets (corridors) rather than discrete schedule
 lists, use :class:`~distributed_resource_optimization.LocalSearchDecider`:
 
-.. code-block:: python
+.. doctest::
 
-   import numpy as np
-   from distributed_resource_optimization import (
-       LocalSearchDecider,
-       create_cohda_participant_with_decider,
-   )
-
-   decider = LocalSearchDecider(
-       initial_schedule=np.array([1.0, 1.0]),
-       corridors=[(0.0, 5.0), (0.0, 5.0)],
-       local_performance=lambda _: 0.0,
-       convergence_force_factor=0.1,
-       max_iterations=20,
-       sample_size_per_value=20,
-   )
-   actor = create_cohda_participant_with_decider(1, decider)
+   >>> from distributed_resource_optimization import (
+   ...     LocalSearchDecider,
+   ...     create_cohda_participant_with_decider,
+   ... )
+   >>> decider = LocalSearchDecider(
+   ...     initial_schedule=np.array([1.0, 1.0]),
+   ...     corridors=[(0.0, 5.0), (0.0, 5.0)],
+   ...     local_performance=lambda _: 0.0,
+   ...     convergence_force_factor=0.1,
+   ...     max_iterations=20,
+   ...     sample_size_per_value=20,
+   ... )
+   >>> actor = create_cohda_participant_with_decider(1, decider)
 
 .. note::
 

@@ -72,15 +72,11 @@ One-to-Many Resource
 A common model converts a single input (capacity ``in_capacity``) into ``m`` outputs
 with efficiency factors :math:`\eta \in \mathbb{R}^m`:
 
-.. code-block:: python
+.. doctest::
 
-   from distributed_resource_optimization import create_admm_flex_actor_one_to_many
-
-   # 10 kW input, three outputs; negative eta means the resource consumes that output
-   actor = create_admm_flex_actor_one_to_many(10.0, [0.1, 0.5, -1.0])
-
-   # Optional priority vector biases the solution toward specific sectors
-   actor = create_admm_flex_actor_one_to_many(10.0, [0.1, 0.5, -1.0], P=[5.0, 0.0, 0.0])
+   >>> from distributed_resource_optimization import create_admm_flex_actor_one_to_many
+   >>> actor = create_admm_flex_actor_one_to_many(10.0, [0.1, 0.5, -1.0])
+   >>> actor = create_admm_flex_actor_one_to_many(10.0, [0.1, 0.5, -1.0], P=[5.0, 0.0, 0.0])
 
 After optimization, retrieve the result via ``actor.x``.
 
@@ -110,58 +106,45 @@ Coordinator Parameters
 Complete Example — ADMM Sharing
 ---------------------------------
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_admm_flex_actor_one_to_many,
-       create_sharing_target_distance_admm_coordinator,
-       create_admm_sharing_data, create_admm_start,
-       start_coordinated_optimization,
-   )
-
-   async def main():
-       flex1 = create_admm_flex_actor_one_to_many(10.0, [0.1,  0.5, -1.0])
-       flex2 = create_admm_flex_actor_one_to_many(15.0, [0.1,  0.5, -1.0])
-       flex3 = create_admm_flex_actor_one_to_many(10.0, [-1.0, 0.0,  1.0])
-
-       coordinator = create_sharing_target_distance_admm_coordinator()
-       start = create_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
-
-       await start_coordinated_optimization([flex1, flex2, flex3], coordinator, start)
-
-       print("Resource 1:", flex1.x.round(3))
-       print("Resource 2:", flex2.x.round(3))
-       print("Resource 3:", flex3.x.round(3))
-       print("Aggregate: ", (flex1.x + flex2.x + flex3.x).round(3))
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_admm_flex_actor_one_to_many,
+   ...     create_sharing_target_distance_admm_coordinator,
+   ...     create_admm_sharing_data, create_admm_start,
+   ...     start_coordinated_optimization,
+   ... )
+   >>> flex1 = create_admm_flex_actor_one_to_many(10.0, [0.1,  0.5, -1.0])
+   >>> flex2 = create_admm_flex_actor_one_to_many(15.0, [0.1,  0.5, -1.0])
+   >>> flex3 = create_admm_flex_actor_one_to_many(10.0, [-1.0, 0.0,  1.0])
+   >>> coordinator = create_sharing_target_distance_admm_coordinator()
+   >>> start = create_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
+   >>> asyncio.run(start_coordinated_optimization([flex1, flex2, flex3], coordinator, start))
+   [...]
+   >>> np.allclose(flex1.x, [0, 0, 0], atol=1e-2)
+   True
+   >>> np.allclose(flex3.x, [-3.983, 0, 3.983], atol=1e-2)
+   True
 
 Complete Example — ADMM Consensus
 -----------------------------------
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_admm_flex_actor_one_to_many,
-       create_consensus_target_reach_admm_coordinator,
-       create_admm_start_consensus,
-       start_coordinated_optimization,
-   )
-
-   async def main():
-       actor1 = create_admm_flex_actor_one_to_many(10.0, [0.6, 0.4])
-       actor2 = create_admm_flex_actor_one_to_many(10.0, [0.6, 0.4])
-
-       coordinator = create_consensus_target_reach_admm_coordinator()
-       start = create_admm_start_consensus([1.0, 2.0])
-
-       await start_coordinated_optimization([actor1, actor2], coordinator, start)
-       print("Actor 1:", actor1.x.round(3))
-       print("Actor 2:", actor2.x.round(3))
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_admm_flex_actor_one_to_many,
+   ...     create_consensus_target_reach_admm_coordinator,
+   ...     create_admm_start_consensus,
+   ...     start_coordinated_optimization,
+   ... )
+   >>> actor1 = create_admm_flex_actor_one_to_many(10.0, [0.6, 0.4])
+   >>> actor2 = create_admm_flex_actor_one_to_many(10.0, [0.6, 0.4])
+   >>> coordinator = create_consensus_target_reach_admm_coordinator()
+   >>> start = create_admm_start_consensus([1.0, 2.0])
+   >>> asyncio.run(start_coordinated_optimization([actor1, actor2], coordinator, start))
+   [...]
+   >>> np.allclose(actor1.x, actor2.x, atol=1e-2)
+   True
 
 .. tip::
 

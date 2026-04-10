@@ -3,19 +3,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml">
-    <img src="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml/badge.svg" alt="Tests" />
-  </a>
-  <a href="https://codecov.io/gh/Digitalized-Energy-Systems/mango-optimization">
-    <img src="https://codecov.io/gh/Digitalized-Energy-Systems/mango-optimization/branch/main/graph/badge.svg" alt="Coverage" />
-  </a>
+  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml"><img src="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
+  <a href="https://codecov.io/gh/Digitalized-Energy-Systems/mango-optimization"><img src="https://codecov.io/gh/Digitalized-Energy-Systems/mango-optimization/branch/main/graph/badge.svg" alt="Coverage" /></a>
   <img src="https://img.shields.io/badge/lifecycle-experimental-blue.svg" alt="lifecycle" />
-  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" />
-  </a>
-  <a href="https://pypi.org/project/distributed-resource-optimization/">
-    <img src="https://img.shields.io/pypi/v/distributed-resource-optimization.svg" alt="PyPI" />
-  </a>
+  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" /></a>
+  <a href="https://pypi.org/project/distributed-resource-optimization/"><img src="https://img.shields.io/pypi/v/distributed-resource-optimization.svg" alt="PyPI" /></a>
 </p>
 
 # Distributed Resource Optimization

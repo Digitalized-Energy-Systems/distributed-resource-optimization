@@ -63,45 +63,39 @@ The simplest way.  Internally wraps everything in a ``SimpleCarrier``.
 
 **Distributed algorithm (COHDA):**
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_cohda_participant,
-       create_cohda_start_message,
-       start_distributed_optimization,
-   )
-
-   async def main():
-       actor1 = create_cohda_participant(1, [[0.0, 1, 2], [1, 2, 3]])
-       actor2 = create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]])
-       start = create_cohda_start_message([1.2, 2.0, 3.0])
-       await start_distributed_optimization([actor1, actor2], start)
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_cohda_participant,
+   ...     create_cohda_start_message,
+   ...     start_distributed_optimization,
+   ... )
+   >>> actor1 = create_cohda_participant(1, [[0.0, 1, 2], [1, 2, 3]])
+   >>> actor2 = create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]])
+   >>> start = create_cohda_start_message([1.2, 2.0, 3.0])
+   >>> asyncio.run(start_distributed_optimization([actor1, actor2], start))
+   >>> actor1.memory.solution_candidate.perf < 0
+   True
 
 **Coordinated algorithm (ADMM):**
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       create_admm_flex_actor_one_to_many,
-       create_sharing_target_distance_admm_coordinator,
-       create_admm_sharing_data, create_admm_start,
-       start_coordinated_optimization,
-   )
-
-   async def main():
-       flex1 = create_admm_flex_actor_one_to_many(10, [0.1,  0.5, -1.0])
-       flex2 = create_admm_flex_actor_one_to_many(15, [0.1,  0.5, -1.0])
-       flex3 = create_admm_flex_actor_one_to_many(10, [-1.0, 0.0,  1.0])
-       coordinator = create_sharing_target_distance_admm_coordinator()
-       start = create_admm_start(create_admm_sharing_data([-4, 0, 6], [5, 1, 1]))
-       await start_coordinated_optimization([flex1, flex2, flex3], coordinator, start)
-       print(flex1.x, flex2.x, flex3.x)
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_admm_flex_actor_one_to_many,
+   ...     create_sharing_target_distance_admm_coordinator,
+   ...     create_admm_sharing_data, create_admm_start,
+   ...     start_coordinated_optimization,
+   ... )
+   >>> flex1 = create_admm_flex_actor_one_to_many(10, [0.1,  0.5, -1.0])
+   >>> flex2 = create_admm_flex_actor_one_to_many(15, [0.1,  0.5, -1.0])
+   >>> flex3 = create_admm_flex_actor_one_to_many(10, [-1.0, 0.0,  1.0])
+   >>> coordinator = create_sharing_target_distance_admm_coordinator()
+   >>> start = create_admm_start(create_admm_sharing_data([-4, 0, 6], [5, 1, 1]))
+   >>> asyncio.run(start_coordinated_optimization([flex1, flex2, flex3], coordinator, start))
+   [...]
+   >>> np.allclose(flex3.x, [-3.983, 0, 3.983], atol=1e-2)
+   True
 
 
 Pattern 2 — SimpleCarrier
@@ -110,24 +104,22 @@ Pattern 2 — SimpleCarrier
 Use :class:`~distributed_resource_optimization.SimpleCarrier` when you need direct control:
 custom message routing, result inspection, or integration with a larger system.
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   from distributed_resource_optimization import (
-       ActorContainer, SimpleCarrier, cid,
-       create_cohda_participant, create_cohda_start_message,
-   )
-
-   async def main():
-       container = ActorContainer()
-       c1 = SimpleCarrier(container, create_cohda_participant(1, [[0.0, 1, 2], [1, 2, 3]]))
-       c2 = SimpleCarrier(container, create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]]))
-
-       start = create_cohda_start_message([1.2, 2.0, 3.0])
-       c1.send_to_other(start, cid(c2))
-       await container.done_event.wait()
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     ActorContainer, SimpleCarrier, cid,
+   ...     create_cohda_participant, create_cohda_start_message,
+   ... )
+   >>> async def run_simple_carrier():
+   ...     container = ActorContainer()
+   ...     c1 = SimpleCarrier(container, create_cohda_participant(1, [[0.0, 1, 2], [1, 2, 3]]))
+   ...     c2 = SimpleCarrier(container, create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]]))
+   ...     c1.send_to_other(create_cohda_start_message([1.2, 2.0, 3.0]), cid(c2))
+   ...     await container.done_event.wait()
+   ...     return c1.actor
+   >>> actor = asyncio.run(run_simple_carrier())
+   >>> actor.memory.solution_candidate.perf < 0
+   True
 
 
 Pattern 3 — MangoCarrier

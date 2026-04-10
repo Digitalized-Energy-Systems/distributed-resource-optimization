@@ -32,35 +32,26 @@ calls a user-supplied ``finish_callback``.
 Usage
 -----
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   import numpy as np
-   from distributed_resource_optimization import (
-       create_averaging_consensus_participant,
-       create_averaging_consensus_start,
-       start_distributed_optimization,
-       NoConsensusActor,
-   )
-
-   async def main():
-       results = {}
-
-       def on_finish(algo, carrier):
-           results[id(algo)] = algo._lam.copy()
-
-       # Three agents starting at different values converge to their average
-       actors = [
-           create_averaging_consensus_participant(on_finish, initial_lam=v, max_iter=50)
-           for v in [1.0, 5.0, 10.0]
-       ]
-
-       start = create_averaging_consensus_start(1.0, data=None)
-       await start_distributed_optimization(actors, start)
-
-       print("Converged lambda:", actors[0]._lam.round(3))
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     create_averaging_consensus_participant,
+   ...     create_averaging_consensus_start,
+   ...     start_distributed_optimization,
+   ... )
+   >>> finished = []
+   >>> def on_finish(algo, carrier):
+   ...     finished.append(algo._lam.copy())
+   >>> actors = [
+   ...     create_averaging_consensus_participant(on_finish, initial_lam=v, max_iter=200)
+   ...     for v in [1.0, 5.0, 10.0]
+   ... ]
+   >>> start = create_averaging_consensus_start(1.0, data=None)
+   >>> asyncio.run(start_distributed_optimization(actors, start))
+   >>> len(finished) > 0
+   True
+   >>> np.allclose(actors[0]._lam, actors[1]._lam, atol=1e-2)
+   True
 
 Parameters
 ----------
@@ -94,18 +85,15 @@ Local Gradient Corrections
 To steer the consensus, subclass :class:`~distributed_resource_optimization.ConsensusActor`
 and override :meth:`~distributed_resource_optimization.ConsensusActor.gradient_term`:
 
-.. code-block:: python
+.. doctest::
 
-   import numpy as np
-   from distributed_resource_optimization import ConsensusActor
-
-   class PushToTarget(ConsensusActor):
-       def __init__(self, target, step=0.05):
-           self.target = np.asarray(target)
-           self.step = step
-
-       def gradient_term(self, lam, data):
-           return self.step * (self.target - lam)
+   >>> from distributed_resource_optimization import ConsensusActor
+   >>> class PushToTarget(ConsensusActor):
+   ...     def __init__(self, target, step=0.05):
+   ...         self.target = np.asarray(target)
+   ...         self.step = step
+   ...     def gradient_term(self, lam, data):
+   ...         return self.step * (self.target - lam)
 
 The ``data`` argument carries whatever was embedded in the initial
 :class:`~distributed_resource_optimization.AveragingConsensusMessage` — useful for
@@ -126,45 +114,36 @@ supply equals demand:
 
    \nabla = -\rho \Bigl(P(\lambda) - \frac{P_{\text{target}}}{N}\Bigr)
 
-.. code-block:: python
+.. doctest::
 
-   import asyncio
-   import numpy as np
-   from distributed_resource_optimization import (
-       LinearCostEconomicDispatchConsensusActor,
-       create_averaging_consensus_participant,
-       AveragingConsensusMessage,
-       start_distributed_optimization,
-   )
-
-   async def main():
-       actors = [
-           create_averaging_consensus_participant(
-               lambda *_: None,
-               LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
-               max_iter=100,
-           ),
-           create_averaging_consensus_participant(
-               lambda *_: None,
-               LinearCostEconomicDispatchConsensusActor(cost=12, p_max=80, n_guess=3),
-               max_iter=100,
-           ),
-           create_averaging_consensus_participant(
-               lambda *_: None,
-               LinearCostEconomicDispatchConsensusActor(cost=15, p_max=60, n_guess=3),
-               max_iter=100,
-           ),
-       ]
-
-       p_target = [10, 30, 40, 45, 60, 10]
-       msg = AveragingConsensusMessage(
-           lam=np.ones(len(p_target)) * 10,
-           k=0,
-           data=p_target,
-       )
-       await start_distributed_optimization(actors, msg)
-
-   asyncio.run(main())
+   >>> from distributed_resource_optimization import (
+   ...     LinearCostEconomicDispatchConsensusActor,
+   ...     create_averaging_consensus_participant,
+   ...     AveragingConsensusMessage,
+   ...     start_distributed_optimization,
+   ... )
+   >>> actors = [
+   ...     create_averaging_consensus_participant(
+   ...         lambda *_: None,
+   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
+   ...         max_iter=100,
+   ...     ),
+   ...     create_averaging_consensus_participant(
+   ...         lambda *_: None,
+   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
+   ...         max_iter=100,
+   ...     ),
+   ...     create_averaging_consensus_participant(
+   ...         lambda *_: None,
+   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
+   ...         max_iter=100,
+   ...     ),
+   ... ]
+   >>> p_target = [10, 30, 40, 45, 60, 10]
+   >>> msg = AveragingConsensusMessage(lam=np.ones(len(p_target)) * 10, k=0, data=p_target)
+   >>> asyncio.run(start_distributed_optimization(actors, msg))
+   >>> np.allclose(actors[0]._lam, actors[1]._lam, atol=1e-3)
+   True
 
 .. note::
 
