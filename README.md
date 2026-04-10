@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/source/_static/logo.svg" width="200" alt="distributed-resource-optimization logo" />
+  <img src="docs/source/_static/logo.svg" width="600" alt="distributed-resource-optimization logo" />
 </p>
 
 <p align="center">
