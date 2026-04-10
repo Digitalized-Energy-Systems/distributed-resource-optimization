@@ -19,9 +19,9 @@ exclude_patterns = []
 
 html_theme = "furo"
 html_static_path = ["_static"]
-html_title = "distributed-resource-optimization"
-
 html_theme_options = {
+    "dark_logo": "logo.svg",
+    "light_logo": "logo.svg",
     "sidebar_hide_name": False,
     "source_repository": "https://github.com/Digitalized-Energy-Systems/mango-optimization/",
     "source_branch": "main",
