@@ -10,6 +10,8 @@ Algorithms
   sharing variants).
 * **Averaging Consensus** — distributed price/signal averaging with optional
   gradient correction (incl. economic dispatch).
+* **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
+  horizon (incl. economic dispatch and reservoir storage).
 
 Carriers
 --------
@@ -121,6 +123,20 @@ from .algorithm.core import (
     OptimizationMessage,
     on_exchange_message,
     start_optimization,
+)
+
+# Diffusion
+from .algorithm.diffusion.diffusion import (
+    DiffusionActor,
+    DiffusionAlgorithm,
+    DiffusionMessage,
+    NoDiffusionActor,
+    create_diffusion_participant,
+    create_diffusion_start,
+)
+from .algorithm.diffusion.economic_dispatch import (
+    LinearCostEconomicDispatchDiffusionActor,
+    ReservoirStorageDiffusionActor,
 )
 
 # COHDA
@@ -239,6 +255,15 @@ __all__ = [
     "create_averaging_consensus_participant",
     "create_averaging_consensus_start",
     "LinearCostEconomicDispatchConsensusActor",
+    # Diffusion
+    "DiffusionActor",
+    "NoDiffusionActor",
+    "DiffusionMessage",
+    "DiffusionAlgorithm",
+    "create_diffusion_participant",
+    "create_diffusion_start",
+    "LinearCostEconomicDispatchDiffusionActor",
+    "ReservoirStorageDiffusionActor",
 ]
 
 if _MANGO_AVAILABLE:
