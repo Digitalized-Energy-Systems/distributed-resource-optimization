@@ -60,7 +60,16 @@ class ADMMFlexActor(DistributedAlgorithm):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
-        self.x = _local_update(self, message_data.v, message_data.rho)
+        try:
+            self.x = _local_update(self, message_data.v, message_data.rho)
+        except Exception:
+            # Fail-safe: a malformed local QP (NaN inputs, infeasible
+            # constraints, solver crash) must not detach the asyncio
+            # task — that would hang the coordinator's gather forever.
+            # Reply with the previous solution (zeros on first round)
+            # so the round terminates and the next message can recover.
+            if self.x.size != len(message_data.v):
+                self.x = np.zeros(len(message_data.v), dtype=float)
         carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
 
 
@@ -79,8 +88,11 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
     constraints = [
         x_var >= actor.lb,
         x_var <= actor.u,
-        actor.C @ x_var <= actor.d,
     ]
+    # cvxpy rejects empty matrices in linear expressions, so skip the
+    # coupling constraint when the actor has no rows in C.
+    if actor.C.shape[0] > 0:
+        constraints.append(actor.C @ x_var <= actor.d)
 
     prob = cp.Problem(objective, constraints)
     prob.solve(solver=cp.OSQP, verbose=False)
