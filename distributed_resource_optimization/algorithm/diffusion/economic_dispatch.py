@@ -43,11 +43,7 @@ class LinearCostEconomicDispatchDiffusionActor(DiffusionActor):
 
     P: np.ndarray = field(default_factory=lambda: np.array([0.0]))
 
-    def gradient_term(
-        self,
-        lam: np.ndarray,
-        p_target: Any,
-    ) -> np.ndarray:
+    def gradient_term(self, lam: np.ndarray, p_target: Any) -> np.ndarray:
         """Compute the gradient for the adapt step.
 
         :param lam: Current price vector λ.
@@ -119,11 +115,8 @@ class ReservoirStorageDiffusionActor(DiffusionActor):
     P: np.ndarray = field(default_factory=lambda: np.array([0.0]))
     E: np.ndarray = field(default_factory=lambda: np.array([0.0]))
 
-    def gradient_term(
-        self,
-        lam: np.ndarray,
-        p_target: Any,
-    ) -> np.ndarray:
+
+    def gradient_term(self, lam: np.ndarray, p_target: Any) -> np.ndarray:
         lam = np.asarray(lam, dtype=float)
         T = len(lam)
 

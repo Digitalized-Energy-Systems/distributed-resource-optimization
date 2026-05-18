@@ -113,6 +113,7 @@ from .algorithm.consensus.averaging import (
 )
 from .algorithm.consensus.economic_dispatch import (
     LinearCostEconomicDispatchConsensusActor,
+    ReservoirStorageConsensusActor,
 )
 
 # Algorithm base
@@ -255,6 +256,7 @@ __all__ = [
     "create_averaging_consensus_participant",
     "create_averaging_consensus_start",
     "LinearCostEconomicDispatchConsensusActor",
+    "ReservoirStorageConsensusActor",
     # Diffusion
     "DiffusionActor",
     "NoDiffusionActor",
