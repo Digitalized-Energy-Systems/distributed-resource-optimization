@@ -139,6 +139,67 @@ from .algorithm.diffusion.economic_dispatch import (
     ReservoirStorageDiffusionActor,
 )
 
+# Distributed QP (gossip primal-dual)
+from .algorithm.distributed_qp.core import (
+    GossipQPAlgorithm,
+    GossipQPFinished,
+    GossipQPMessage,
+    LedgerEntry,
+    create_distributed_qp_participant,
+    create_distributed_qp_start,
+)
+
+# Waterfall ADMM (priority-cascaded sharing ADMM)
+from .algorithm.waterfall_admm.core import (
+    CPAdmmResult,
+    CPSpec,
+    SectorDemand,
+    WaterfallADMMCoordinator,
+    WaterfallADMMParticipant,
+    WaterfallADMMResult,
+    WaterfallADMMSpecReply,
+    WaterfallADMMSpecRequest,
+    WaterfallADMMStart,
+    create_waterfall_admm_coordinator,
+    create_waterfall_admm_participant,
+    create_waterfall_admm_start,
+    marginal_priority,
+    solve_cp_priority_admm,
+    tier_priority_weight,
+    waterfall_serve,
+)
+
+# Consensus Waterfall ADMM (primal-dual variant with Robbins-Monro mu)
+from .algorithm.consensus_waterfall_admm.core import (
+    ConsensusWaterfallADMMCoordinator,
+    ConsensusWaterfallADMMParticipant,
+    ConsensusWaterfallADMMResult,
+    ConsensusWaterfallADMMSpecReply,
+    ConsensusWaterfallADMMSpecRequest,
+    ConsensusWaterfallADMMStart,
+    create_consensus_waterfall_admm_coordinator,
+    create_consensus_waterfall_admm_participant,
+    create_consensus_waterfall_admm_start,
+    cutoff_tier_deficit,
+    solve_cp_consensus_waterfall_admm,
+)
+# Distributed lexicographic cascade (true-distributed sum-sharing ADMM)
+from .algorithm.distributed_lexicographic_cascade.core import (
+    DistributedLexicographicCascadeAnswer,
+    DistributedLexicographicCascadeCoordinator,
+    DistributedLexicographicCascadeDone,
+    DistributedLexicographicCascadeDoneReply,
+    DistributedLexicographicCascadeInit,
+    DistributedLexicographicCascadeInitAck,
+    DistributedLexicographicCascadeIter,
+    DistributedLexicographicCascadeParticipant,
+    DistributedLexicographicCascadeStart,
+    create_distributed_lexicographic_cascade_coordinator,
+    create_distributed_lexicographic_cascade_participant,
+    create_distributed_lexicographic_cascade_start,
+    solve_cp_distributed_lexicographic_cascade,
+)
+
 # COHDA
 from .algorithm.heuristic.cohda.core import (
     COHDAAlgorithmData,
@@ -264,6 +325,67 @@ __all__ = [
     "create_diffusion_start",
     "LinearCostEconomicDispatchDiffusionActor",
     "ReservoirStorageDiffusionActor",
+    # Distributed QP (gossip primal-dual)
+    "LedgerEntry",
+    "GossipQPMessage",
+    "GossipQPFinished",
+    "GossipQPAlgorithm",
+    "create_distributed_qp_participant",
+    "create_distributed_qp_start",
+    # Waterfall ADMM
+    "CPSpec",
+    "SectorDemand",
+    "CPAdmmResult",
+    "WaterfallADMMStart",
+    "WaterfallADMMSpecRequest",
+    "WaterfallADMMSpecReply",
+    "WaterfallADMMResult",
+    "WaterfallADMMParticipant",
+    "WaterfallADMMCoordinator",
+    "create_waterfall_admm_participant",
+    "create_waterfall_admm_coordinator",
+    "create_waterfall_admm_start",
+    "solve_cp_priority_admm",
+    "waterfall_serve",
+    "marginal_priority",
+    "tier_priority_weight",
+    # Consensus Waterfall ADMM
+    "ConsensusWaterfallADMMStart",
+    "ConsensusWaterfallADMMSpecRequest",
+    "ConsensusWaterfallADMMSpecReply",
+    "ConsensusWaterfallADMMResult",
+    "ConsensusWaterfallADMMParticipant",
+    "ConsensusWaterfallADMMCoordinator",
+    "create_consensus_waterfall_admm_participant",
+    "create_consensus_waterfall_admm_coordinator",
+    "create_consensus_waterfall_admm_start",
+    "solve_cp_consensus_waterfall_admm",
+    "cutoff_tier_deficit",
+    # Lexicographic cascade
+    "LexicographicCascadeStart",
+    "LexicographicCascadeSpecRequest",
+    "LexicographicCascadeSpecReply",
+    "LexicographicCascadeResult",
+    "LexicographicCascadeParticipant",
+    "LexicographicCascadeCoordinator",
+    "create_lexicographic_cascade_participant",
+    "create_lexicographic_cascade_coordinator",
+    "create_lexicographic_cascade_start",
+    "solve_cp_lexicographic_cascade",
+    # Distributed lexicographic cascade
+    "DistributedLexicographicCascadeStart",
+    "DistributedLexicographicCascadeInit",
+    "DistributedLexicographicCascadeInitAck",
+    "DistributedLexicographicCascadeIter",
+    "DistributedLexicographicCascadeAnswer",
+    "DistributedLexicographicCascadeDone",
+    "DistributedLexicographicCascadeDoneReply",
+    "DistributedLexicographicCascadeParticipant",
+    "DistributedLexicographicCascadeCoordinator",
+    "create_distributed_lexicographic_cascade_participant",
+    "create_distributed_lexicographic_cascade_coordinator",
+    "create_distributed_lexicographic_cascade_start",
+    "solve_cp_distributed_lexicographic_cascade",
 ]
 
 if _MANGO_AVAILABLE:
