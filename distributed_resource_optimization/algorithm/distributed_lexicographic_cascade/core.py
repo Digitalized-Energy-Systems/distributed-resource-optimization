@@ -215,6 +215,9 @@ def solve_cp_distributed_lexicographic_cascade(
     inner_iters_max: int = 500,
     inner_abs_tol: float = 1.0e-4,
     r_regularization: float = 1.0e-1,
+    adaptive_rho: bool = True,
+    rho_mu: float = 10.0,
+    rho_tau: float = 2.0,
     record_history: bool = False,
 ) -> CPAdmmResult:
     """Solve the lexicographic cascade via sum-sharing ADMM.
@@ -261,6 +264,33 @@ def solve_cp_distributed_lexicographic_cascade(
         oscillate on a degenerate optimal face (multiple
         :math:`r`-vectors give the same :math:`\\sigma`) and the
         per-iter convergence test will not trip.
+    :param adaptive_rho: When ``True`` (default), the penalty
+        :math:`\\rho` is re-balanced each inner iteration by Boyd et
+        al. §3.4.1 residual balancing — :math:`\\rho \\mathrel{*}=
+        \\tau` when the primal residual exceeds ``rho_mu`` times the
+        dual residual, :math:`\\rho \\mathrel{/}= \\tau` in the
+        opposite case, with the scaled dual ``u`` rescaled inversely
+        to keep the unscaled dual fixed.  This is essential for the
+        *binding constraint with all coupling points at the lower
+        :math:`r = 0` boundary* case (e.g. surplus P2G that should
+        stay off while a different sector's tier binds): there the
+        dual must ramp linearly to flip the per-cell
+        :func:`_z_sigma_cell_update` branch, which costs
+        :math:`O(N / \\rho)` iterations at a fixed :math:`\\rho`
+        (hundreds for tens of identical CPs).  The committed factor
+        :math:`r` is already correct from the first iterate in that
+        case — only the served :math:`\\sigma` lags — but the round
+        otherwise burns its whole ``inner_iters_max`` budget without
+        declaring convergence.  Residual balancing cranks :math:`\\rho`
+        exactly on the ``primal >> dual`` signature it exhibits and
+        collapses the cost to ``O(1)`` iterations (≈12 vs ≈270 for
+        ``N = 9``) independent of ``N``, while leaving the already-fast
+        active-CP cases untouched (their residuals stay balanced).
+        Set ``False`` to recover the fixed-:math:`\\rho` behaviour.
+    :param rho_mu: Residual-imbalance ratio that triggers a
+        :math:`\\rho` adjustment (Boyd's ``mu``; default 10).
+    :param rho_tau: Multiplicative :math:`\\rho` step (Boyd's
+        ``tau^{incr} = tau^{decr}``; default 2).
     :param record_history: When ``True`` the returned result carries
         per-round inner-iteration counts and the final
         :math:`\\theta` matrix on :attr:`CPAdmmResult.history`.
@@ -343,6 +373,12 @@ def solve_cp_distributed_lexicographic_cascade(
 
     alpha = float(r_regularization)
     rho_f = float(rho)
+    # Bounds for the adaptive penalty: residual balancing can keep
+    # cranking rho while the dual residual sits at zero (the binding /
+    # all-r=0-boundary case), so clamp it to a finite window around the
+    # caller's rho to stay numerically sane if a round never converges.
+    rho_lo = float(rho) * 1.0e-6
+    rho_hi = float(rho) * 1.0e6
 
     sigma_per_tier: dict[int, np.ndarray] = {}
     per_round_iters: list[int] = []
@@ -423,6 +459,18 @@ def solve_cp_distributed_lexicographic_cascade(
                 converged_round = True
                 break
 
+            # ----- adaptive penalty (Boyd 3.4.1 residual balancing) -----
+            # Rebalance rho when the primal/dual residuals are lopsided.
+            # The scaled dual u = u_unscaled / rho is rescaled inversely
+            # so the unscaled dual is preserved across the rho change.
+            if adaptive_rho:
+                if primal_res > rho_mu * dual_res and rho_f * rho_tau <= rho_hi:
+                    rho_f *= rho_tau
+                    u /= rho_tau
+                elif dual_res > rho_mu * primal_res and rho_f / rho_tau >= rho_lo:
+                    rho_f /= rho_tau
+                    u *= rho_tau
+
         # ----- close the tier -----
         sigma_per_tier[tier] = sigma.copy()
         theta = theta + sigma
@@ -458,6 +506,7 @@ def solve_cp_distributed_lexicographic_cascade(
             "per_round_r_changes": history_r_changes,
             "theta_final": theta.copy(),
             "sigma_per_tier": {t: v.copy() for t, v in sigma_per_tier.items()},
+            "rho_final": rho_f,
         }
 
     return CPAdmmResult(
@@ -493,6 +542,11 @@ class DistributedLexicographicCascadeStart(OptimizationMessage):
     :param inner_iters_max: Per-round inner iteration cap.
     :param inner_abs_tol: Per-step convergence tolerance.
     :param r_regularization: Quadratic ``r``-norm penalty.
+    :param adaptive_rho: Enable Boyd §3.4.1 residual balancing of the
+        penalty (default on); see
+        :func:`solve_cp_distributed_lexicographic_cascade`.
+    :param rho_mu: Residual-imbalance ratio that triggers adaptation.
+    :param rho_tau: Multiplicative penalty step.
     :param record_history: Persist per-round diagnostics on the result.
     """
 
@@ -502,6 +556,9 @@ class DistributedLexicographicCascadeStart(OptimizationMessage):
     inner_iters_max: int = 500
     inner_abs_tol: float = 1.0e-4
     r_regularization: float = 1.0e-1
+    adaptive_rho: bool = True
+    rho_mu: float = 10.0
+    rho_tau: float = 2.0
     record_history: bool = False
 
 
@@ -552,9 +609,15 @@ class DistributedLexicographicCascadeIter(OptimizationMessage):
 
     :param correction: Shape ``(n_sec, H)``, equal to ``z - u - x_bar``
         in the coordinator's current shared state.
+    :param rho: The coordinator's *current* penalty for this iteration.
+        Broadcast every round so the participant's local projection
+        tracks the coordinator's adaptive-:math:`\\rho` schedule (Boyd
+        §3.4.1 residual balancing); a fixed-:math:`\\rho` run simply
+        repeats the value set at init.
     """
 
     correction: np.ndarray
+    rho: float = 1.0
 
 
 @dataclass
@@ -646,7 +709,7 @@ class DistributedLexicographicCascadeParticipant(DistributedAlgorithm):
                 DistributedLexicographicCascadeInitAck(cp_id=self.cp_id), meta
             )
         elif isinstance(message_data, DistributedLexicographicCascadeIter):
-            self._on_iter(message_data.correction)
+            self._on_iter(message_data.correction, rho=message_data.rho)
             carrier.reply_to_other(
                 DistributedLexicographicCascadeAnswer(
                     x=self._x_i, r_change=self._last_r_change
@@ -680,7 +743,7 @@ class DistributedLexicographicCascadeParticipant(DistributedAlgorithm):
         self._x_i = np.zeros((cap_vec.size, H), dtype=float)
         self.r = np.zeros(H, dtype=float)
 
-    def _on_iter(self, correction: np.ndarray) -> None:
+    def _on_iter(self, correction: np.ndarray, rho: float | None = None) -> None:
         """Apply one Boyd §7.3 sharing-ADMM x-update locally with proximal damping.
 
         ``target = x_i + correction`` where ``correction = z - u - x_bar``
@@ -703,7 +766,8 @@ class DistributedLexicographicCascadeParticipant(DistributedAlgorithm):
         kernel checks.
         """
         cap = self._cap_vec
-        den = self._rho * self._cap_norm_sq + self._alpha
+        rho_eff = self._rho if rho is None else float(rho)
+        den = rho_eff * self._cap_norm_sq + self._alpha
         H = self._horizon
         if den <= 0.0 or cap.size == 0:
             # Idle CP (zero capacity); contribute zero forever.
@@ -712,7 +776,7 @@ class DistributedLexicographicCascadeParticipant(DistributedAlgorithm):
         r_prev = self.r.copy()
         target = self._x_i + np.asarray(correction, dtype=float)
         for k in range(H):
-            num = self._rho * float(cap @ target[:, k]) + self._alpha * r_prev[k]
+            num = rho_eff * float(cap @ target[:, k]) + self._alpha * r_prev[k]
             r_k = num / den
             if r_k < 0.0:
                 r_k = 0.0
@@ -820,6 +884,11 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
         theta = np.zeros((n_sec, H), dtype=float)
 
         rho_f = float(message_data.rho)
+        rho_lo = float(message_data.rho) * 1.0e-6
+        rho_hi = float(message_data.rho) * 1.0e6
+        adaptive_rho = bool(message_data.adaptive_rho)
+        rho_mu = float(message_data.rho_mu)
+        rho_tau = float(message_data.rho_tau)
         inner_iters_max = int(message_data.inner_iters_max)
         inner_abs_tol = float(message_data.inner_abs_tol)
         record_history = bool(message_data.record_history)
@@ -861,7 +930,9 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
 
                 # ----- broadcast Iter, await Answers, aggregate x_bar -----
                 correction = z - u - x_bar
-                iter_msg = DistributedLexicographicCascadeIter(correction=correction)
+                iter_msg = DistributedLexicographicCascadeIter(
+                    correction=correction, rho=rho_f
+                )
                 futures = [
                     carrier.send_awaitable(iter_msg, addr)
                     for addr in participant_addrs
@@ -911,6 +982,20 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
                 ):
                     converged_round = True
                     break
+
+                # ----- adaptive penalty (Boyd 3.4.1 residual balancing) -----
+                # Mirrors the reference kernel: rebalance rho on a
+                # lopsided primal/dual residual and rescale the scaled
+                # dual u inversely.  The new rho rides out on the next
+                # iteration's Iter broadcast so participants project with
+                # the same penalty the coordinator's cell update uses.
+                if adaptive_rho:
+                    if primal_res > rho_mu * dual_res and rho_f * rho_tau <= rho_hi:
+                        rho_f *= rho_tau
+                        u /= rho_tau
+                    elif dual_res > rho_mu * primal_res and rho_f / rho_tau >= rho_lo:
+                        rho_f /= rho_tau
+                        u *= rho_tau
 
             sigma_per_tier[tier] = sigma.copy()
             theta = theta + sigma
@@ -1025,6 +1110,9 @@ def create_distributed_lexicographic_cascade_start(
     inner_iters_max: int = 500,
     inner_abs_tol: float = 1.0e-4,
     r_regularization: float = 1.0e-1,
+    adaptive_rho: bool = True,
+    rho_mu: float = 10.0,
+    rho_tau: float = 2.0,
     record_history: bool = False,
 ) -> DistributedLexicographicCascadeStart:
     """Create a :class:`DistributedLexicographicCascadeStart` message.
@@ -1039,5 +1127,8 @@ def create_distributed_lexicographic_cascade_start(
         inner_iters_max=inner_iters_max,
         inner_abs_tol=inner_abs_tol,
         r_regularization=r_regularization,
+        adaptive_rho=adaptive_rho,
+        rho_mu=rho_mu,
+        rho_tau=rho_tau,
         record_history=record_history,
     )
