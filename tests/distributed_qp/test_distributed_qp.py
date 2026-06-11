@@ -11,7 +11,7 @@ from distributed_resource_optimization import (
     create_distributed_qp_participant,
     create_distributed_qp_start,
 )
-from distributed_resource_optimization.algorithm.distributed_qp.core import (
+from distributed_resource_optimization.algorithm.firstorder.gossip_qp.core import (
     GossipQPAlgorithm,
     LedgerEntry,
     _is_saturated,

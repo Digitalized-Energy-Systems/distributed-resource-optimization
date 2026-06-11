@@ -89,6 +89,32 @@ from .algorithm.admm.flex_actor import (
 from .algorithm.admm.flex_actor import (
     result as admm_flex_result,
 )
+
+# Distributed lexicographic cascade (true-distributed sum-sharing ADMM)
+from .algorithm.admm.lexicographic.coordinator import (
+    DistributedLexicographicCascadeCoordinator,
+    DistributedLexicographicCascadeDone,
+    DistributedLexicographicCascadeDoneReply,
+    DistributedLexicographicCascadeInit,
+    DistributedLexicographicCascadeInitAck,
+    DistributedLexicographicCascadeParticipant,
+    DistributedLexicographicCascadeStart,
+    LexicographicCascadeGlobalActor,
+    create_distributed_lexicographic_cascade_coordinator,
+    create_distributed_lexicographic_cascade_participant,
+    create_distributed_lexicographic_cascade_start,
+    solve_cp_distributed_lexicographic_cascade,
+)
+
+# Gossip lexicographic cascade (coordinator-free peer-to-peer variant)
+from .algorithm.admm.lexicographic.gossip import (
+    GossipCascadeInit,
+    GossipCascadeStart,
+    GossipIter,
+    GossipParticipant,
+    create_gossip_cascade_participant,
+    create_gossip_cascade_start,
+)
 from .algorithm.admm.sharing_admm import (
     ADMMSharingData,
     ADMMSharingGlobalActor,
@@ -101,59 +127,15 @@ from .algorithm.admm.sharing_admm import (
     create_admm_start as create_sharing_admm_start,
 )
 
-# Consensus
-from .algorithm.consensus.averaging import (
-    AveragingConsensusAlgorithm,
-    AveragingConsensusMessage,
-    ConsensusActor,
-    ConsensusFinishedMessage,
-    NoConsensusActor,
-    create_averaging_consensus_participant,
-    create_averaging_consensus_start,
-)
-from .algorithm.consensus.economic_dispatch import (
-    LinearCostEconomicDispatchConsensusActor,
-)
-
-# Algorithm base
-from .algorithm.core import (
-    CoordinatedDistributedAlgorithm,
-    Coordinator,
-    DistributedAlgorithm,
-    OptimizationMessage,
-    on_exchange_message,
-    start_optimization,
-)
-
-# Diffusion
-from .algorithm.diffusion.diffusion import (
-    DiffusionActor,
-    DiffusionAlgorithm,
-    DiffusionMessage,
-    NoDiffusionActor,
-    create_diffusion_participant,
-    create_diffusion_start,
-)
-from .algorithm.diffusion.economic_dispatch import (
-    LinearCostEconomicDispatchDiffusionActor,
-    ReservoirStorageDiffusionActor,
-)
-
-# Distributed QP (gossip primal-dual)
-from .algorithm.distributed_qp.core import (
-    GossipQPAlgorithm,
-    GossipQPFinished,
-    GossipQPMessage,
-    LedgerEntry,
-    create_distributed_qp_participant,
-    create_distributed_qp_start,
-)
-
-# Waterfall ADMM (priority-cascaded sharing ADMM)
-from .algorithm.waterfall_admm.core import (
+# Priority-cascade ADMM shared data contracts
+from .algorithm.admm.types import (
     CPAdmmResult,
     CPSpec,
     SectorDemand,
+)
+
+# Waterfall ADMM (priority-cascaded sharing ADMM)
+from .algorithm.admm.waterfall.core import (
     WaterfallADMMCoordinator,
     WaterfallADMMParticipant,
     WaterfallADMMResult,
@@ -169,35 +151,52 @@ from .algorithm.waterfall_admm.core import (
     waterfall_serve,
 )
 
-# Consensus Waterfall ADMM (primal-dual variant with Robbins-Monro mu)
-from .algorithm.consensus_waterfall_admm.core import (
-    ConsensusWaterfallADMMCoordinator,
-    ConsensusWaterfallADMMParticipant,
-    ConsensusWaterfallADMMResult,
-    ConsensusWaterfallADMMSpecReply,
-    ConsensusWaterfallADMMSpecRequest,
-    ConsensusWaterfallADMMStart,
-    create_consensus_waterfall_admm_coordinator,
-    create_consensus_waterfall_admm_participant,
-    create_consensus_waterfall_admm_start,
-    cutoff_tier_deficit,
-    solve_cp_consensus_waterfall_admm,
+# Algorithm base
+from .algorithm.core import (
+    CoordinatedDistributedAlgorithm,
+    Coordinator,
+    DistributedAlgorithm,
+    OptimizationMessage,
+    on_exchange_message,
+    start_optimization,
 )
-# Distributed lexicographic cascade (true-distributed sum-sharing ADMM)
-from .algorithm.distributed_lexicographic_cascade.core import (
-    DistributedLexicographicCascadeAnswer,
-    DistributedLexicographicCascadeCoordinator,
-    DistributedLexicographicCascadeDone,
-    DistributedLexicographicCascadeDoneReply,
-    DistributedLexicographicCascadeInit,
-    DistributedLexicographicCascadeInitAck,
-    DistributedLexicographicCascadeIter,
-    DistributedLexicographicCascadeParticipant,
-    DistributedLexicographicCascadeStart,
-    create_distributed_lexicographic_cascade_coordinator,
-    create_distributed_lexicographic_cascade_participant,
-    create_distributed_lexicographic_cascade_start,
-    solve_cp_distributed_lexicographic_cascade,
+
+# Consensus
+from .algorithm.firstorder.consensus.averaging import (
+    AveragingConsensusAlgorithm,
+    AveragingConsensusMessage,
+    ConsensusActor,
+    ConsensusFinishedMessage,
+    NoConsensusActor,
+    create_averaging_consensus_participant,
+    create_averaging_consensus_start,
+)
+from .algorithm.firstorder.consensus.economic_dispatch import (
+    LinearCostEconomicDispatchConsensusActor,
+)
+
+# Diffusion
+from .algorithm.firstorder.diffusion.diffusion import (
+    DiffusionActor,
+    DiffusionAlgorithm,
+    DiffusionMessage,
+    NoDiffusionActor,
+    create_diffusion_participant,
+    create_diffusion_start,
+)
+from .algorithm.firstorder.diffusion.economic_dispatch import (
+    LinearCostEconomicDispatchDiffusionActor,
+    ReservoirStorageDiffusionActor,
+)
+
+# Distributed QP (gossip primal-dual)
+from .algorithm.firstorder.gossip_qp.core import (
+    GossipQPAlgorithm,
+    GossipQPFinished,
+    GossipQPMessage,
+    LedgerEntry,
+    create_distributed_qp_participant,
+    create_distributed_qp_start,
 )
 
 # COHDA
@@ -349,43 +348,26 @@ __all__ = [
     "waterfall_serve",
     "marginal_priority",
     "tier_priority_weight",
-    # Consensus Waterfall ADMM
-    "ConsensusWaterfallADMMStart",
-    "ConsensusWaterfallADMMSpecRequest",
-    "ConsensusWaterfallADMMSpecReply",
-    "ConsensusWaterfallADMMResult",
-    "ConsensusWaterfallADMMParticipant",
-    "ConsensusWaterfallADMMCoordinator",
-    "create_consensus_waterfall_admm_participant",
-    "create_consensus_waterfall_admm_coordinator",
-    "create_consensus_waterfall_admm_start",
-    "solve_cp_consensus_waterfall_admm",
-    "cutoff_tier_deficit",
-    # Lexicographic cascade
-    "LexicographicCascadeStart",
-    "LexicographicCascadeSpecRequest",
-    "LexicographicCascadeSpecReply",
-    "LexicographicCascadeResult",
-    "LexicographicCascadeParticipant",
-    "LexicographicCascadeCoordinator",
-    "create_lexicographic_cascade_participant",
-    "create_lexicographic_cascade_coordinator",
-    "create_lexicographic_cascade_start",
-    "solve_cp_lexicographic_cascade",
     # Distributed lexicographic cascade
     "DistributedLexicographicCascadeStart",
     "DistributedLexicographicCascadeInit",
     "DistributedLexicographicCascadeInitAck",
-    "DistributedLexicographicCascadeIter",
-    "DistributedLexicographicCascadeAnswer",
     "DistributedLexicographicCascadeDone",
     "DistributedLexicographicCascadeDoneReply",
     "DistributedLexicographicCascadeParticipant",
     "DistributedLexicographicCascadeCoordinator",
+    "LexicographicCascadeGlobalActor",
     "create_distributed_lexicographic_cascade_participant",
     "create_distributed_lexicographic_cascade_coordinator",
     "create_distributed_lexicographic_cascade_start",
     "solve_cp_distributed_lexicographic_cascade",
+    # Gossip lexicographic cascade
+    "GossipCascadeStart",
+    "GossipCascadeInit",
+    "GossipIter",
+    "GossipParticipant",
+    "create_gossip_cascade_participant",
+    "create_gossip_cascade_start",
 ]
 
 if _MANGO_AVAILABLE:

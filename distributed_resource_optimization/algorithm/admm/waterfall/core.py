@@ -1,121 +1,46 @@
 """Priority-cascaded sharing ADMM with an internal waterfall projection.
 
-A specialised ADMM variant for cross-resource coupling-point coordination
-where each participant (a *coupling point*) holds a single regulation
-knob ``r_i in [0, 1]`` over an ``H``-step horizon and its commitment in
-sector ``s`` is the fixed product ``x_i[s, k] = r_i[k] * cap_i[s]``
-(``cap_i[s]`` carries the per-sector signed effective capacity in load
-convention: positive = the CP consumes from sector ``s``, negative = it
-produces into it).
+Each participant (a *coupling point*) holds one regulation knob
+``r_i in [0, 1]`` over an ``H``-step horizon; its commitment in sector
+``s`` is the fixed product ``x_i[s, k] = r_i[k] * cap_i[s]``, where
+``cap_i[s]`` is the signed effective capacity in load convention
+(positive consumes, negative produces).
 
-The standard scaled sharing ADMM is augmented with a priority-marginal
-linear penalty that is recomputed every iteration from the current
-aggregate via a per-sector waterfall.  ``lambda_s[k]`` is the priority
-weight of the highest-priority tier in sector ``s`` that is currently
-under-served by the aggregate CP-plus-base supply, and zero otherwise.
-Each participant's local subproblem then minimises
+Scaled sharing ADMM is augmented with a priority-marginal linear
+penalty recomputed each iteration via a per-sector waterfall:
+``lambda_s[k]`` is the weight of the highest-priority tier in sector
+``s`` still under-served by the aggregate, else zero. The local
+subproblem minimises
 
 .. math::
 
     (\\rho / 2)\\,\\|x_i - (z - u_i)\\|^2 \\;+\\; \\sum_s \\lambda_s \\, x_i[s]
 
-over ``r_i in [0, 1]``.  Because the linear term is signed by the
-direction of ``cap_i[s]`` it penalises consumption from a scarce sector
-and rewards production into one — the price-elastic response that
-drives near-strict priority at convergence.
+over ``r_i in [0, 1]``. Signed by ``cap_i[s]``, the linear term
+penalises consuming a scarce sector and rewards producing into it,
+driving near-strict priority. As cells get served they drop out of the
+marginal, so the system waterfalls down the priority schedule.
 
-The waterfall projection itself is the dual mechanism: as iterations
-proceed, every cell that is served drops out of the marginal and only
-the next-highest unserved tier carries weight, so the system waterfalls
-down the priority schedule.
-
-Architecture
-------------
-
-The numerical kernel :func:`solve_cp_priority_admm` is fully synchronous
-and deterministic.  It is wrapped by a :class:`WaterfallADMMCoordinator`
-that gathers each participant's :class:`CPSpec` over the carrier, runs
-the kernel locally, and dispatches the converged per-CP regulation
-factor back to each participant.  This matches the
-:class:`distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`
-pattern in which the global update is centralised on the coordinator
-while every participant contributes its local feasibility data.
+The kernel :func:`solve_cp_priority_admm` is synchronous and
+deterministic; :class:`WaterfallADMMCoordinator` gathers each
+participant's :class:`CPSpec`, runs the kernel locally, and dispatches
+the converged factor back — centralised update, distributed data
+ownership, as in ``ADMMGenericCoordinator``.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..core import Coordinator, DistributedAlgorithm, OptimizationMessage
+from ...core import Coordinator, DistributedAlgorithm, OptimizationMessage
+from ..types import CPAdmmResult, CPSpec, SectorDemand
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
-
-
-# ---------------------------------------------------------------------------
-# Public dataclasses
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CPSpec:
-    """Per-CP specification consumed by :func:`solve_cp_priority_admm`.
-
-    :param cp_id: Stable identifier for the coupling point.
-    :param capacity_by_sector: Per-sector signed effective capacity (load
-        convention).  A P2H with 10 MW input and η = 0.95 is described
-        as ``{"electricity": 10.0, "heat": -9.5}``.  A CHP with 10 MW
-        gas input, 3.5 MW electricity output, 4.5 MW heat output is
-        ``{"gas": 10.0, "electricity": -3.5, "heat": -4.5}``.
-    """
-
-    cp_id: str
-    capacity_by_sector: dict[str, float]
-
-
-@dataclass(frozen=True)
-class SectorDemand:
-    """Per-sector demand profile over the horizon.
-
-    :param sector: Sector identifier (e.g. ``"electricity"``).
-    :param demand_by_tier: ``tier -> length-H array`` of MW per priority
-        tier (lower tier index = higher priority).
-    :param base_supply: Length-H array of MW available to this sector
-        before any CP contribution (load convention: positive = supply
-        from base generators).
-    """
-
-    sector: str
-    demand_by_tier: dict[int, np.ndarray]
-    base_supply: np.ndarray
-
-
-@dataclass(frozen=True)
-class CPAdmmResult:
-    """Output of :func:`solve_cp_priority_admm`.
-
-    :param factor_by_cp: ``cp_id -> length-H regulation factor in [0, 1]``.
-    :param served_by_sector_tier: ``sector -> tier -> length-H served MW``.
-    :param iterations: Number of ADMM iterations executed.
-    :param primal_residual: Final primal residual ``||x - z||``.
-    :param dual_residual: Final dual residual ``rho * ||z - z_prev||``.
-    :param converged: ``True`` if the per-step damped factor move fell
-        below ``abs_tol`` before ``max_iters``.
-    :param history: Optional per-iteration diagnostics when the kernel
-        was invoked with ``record_history=True``.
-    """
-
-    factor_by_cp: dict[str, np.ndarray]
-    served_by_sector_tier: dict[str, dict[int, np.ndarray]]
-    iterations: int
-    primal_residual: float
-    dual_residual: float
-    converged: bool
-    history: dict[str, Any] = field(default_factory=dict)
+    from ....carrier.core import Carrier
 
 
 # ---------------------------------------------------------------------------
@@ -319,10 +244,9 @@ def solve_cp_priority_admm(
     u = np.zeros((N, n_sec, H), dtype=float)
     r_curr = np.zeros((N, H), dtype=float)
 
-    # Seed lambda from the all-zero baseline; without it the first
-    # x-update would see lambda = 0, commit r = 0, and the convergence
-    # test would declare a spurious "converged at no allocation" fixed
-    # point because primal = dual = 0.
+    # Seed lambda from the all-zero baseline; otherwise the first
+    # x-update sees lambda = 0, commits r = 0, and the convergence test
+    # spuriously declares "converged at no allocation" (primal=dual=0).
     served_init = waterfall_serve(base_supply, D)
     lam = marginal_priority(served_init, D, priorities)
 
@@ -470,17 +394,12 @@ class WaterfallADMMResult(OptimizationMessage):
 
 
 class WaterfallADMMParticipant(DistributedAlgorithm):
-    """Coupling-point participant in a waterfall-ADMM coordination round.
+    """Coupling-point participant in a waterfall-ADMM round.
 
-    A participant holds a single :class:`CPSpec` and is otherwise
-    passive: when the coordinator asks for the spec it replies, and
-    when the coordinator dispatches the converged factor it stores it
-    in :attr:`r`.
-
-    The role is light by design because the kernel itself is centralised
-    on the coordinator — the participant exists to encode the
-    distributed-data-ownership invariant (each CP knows its own
-    effective capacities; the coordinator only sees what is published).
+    Passive by design (the kernel is centralised on the coordinator):
+    replies with its :class:`CPSpec` on request and stores the converged
+    factor in :attr:`r`. Encodes distributed data ownership — each CP
+    knows its own capacities; the coordinator sees only what's published.
 
     :param spec: The participant's :class:`CPSpec`.
     """

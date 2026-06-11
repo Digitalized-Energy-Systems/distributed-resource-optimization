@@ -16,50 +16,40 @@ via a primal-dual gossip with a single shared dual variable
 Mechanism
 ---------
 
-A single *token* (an :class:`GossipQPMessage`) circulates among the
-participants in a deterministic, hash-driven order.  On every receive
-the holder performs:
+A single *token* (:class:`GossipQPMessage`) circulates in a
+deterministic, hash-driven order. On each receive the holder:
 
-* **Primal update (closed form)**:
-  ``delta_i = clamp(a_i * lambda, dmin_i, dmax_i)``.
-* **Ledger merge**: the participant's own ``(delta_i, counter,
-  weight, saturated)`` is recorded; entries from peers with a higher
+* **Primal (closed form)**: ``delta_i = clamp(a_i * lambda, dmin_i, dmax_i)``.
+* **Ledger merge**: records its own entry; peer entries with a higher
   counter overwrite local copies (defends against double-counting in
   cyclic forwarding graphs).
-* **Dual update (Robbins-Monro)**:
-  ``lambda <- lambda + gamma_k * (T - sum(delta_j)) / sum(a_j)``
-  where the denominator is restricted to *unsaturated* peers so the
-  per-step change matches the contribution of agents that can still
-  move.
-* **Forward** the token to one deterministic next-hop, chosen by SHA
-  hash of ``(negotiation_id, counter)`` so two concurrent originators
-  converge to the same routing.
+* **Dual (Robbins-Monro)**:
+  ``lambda += gamma_k * (T - sum(delta_j)) / sum(a_j)`` with the
+  denominator restricted to *unsaturated* peers (only they can move).
+* **Forward** to one next-hop chosen by SHA of ``(negotiation_id,
+  counter)`` so concurrent originators route identically.
 
-Termination is triggered when the residual ``|T - sum(delta_j)|``
-falls below the originator's ``termination_tolerance`` or when the
-hop counter exceeds ``max_hops``.  An optional rolling gap-window
-stall detector lets the originator abandon early if no movement is
-visible for several full rounds.
+Terminates when ``|T - sum(delta_j)|`` falls below
+``termination_tolerance`` or the hop counter exceeds ``max_hops``; an
+optional rolling gap-window stall detector abandons early on no
+movement.
 
-Byzantine robustness
---------------------
-
-Each ledger entry is clipped to ``byzantine_cap_multiple * max(|T|, 1)``
-on merge so a single misbehaving participant cannot poison the
-aggregate.  The default is ``5.0``, matching the original SCARE
-deployment.
+Byzantine robustness: each ledger entry is clipped to
+``byzantine_cap_multiple * max(|T|, 1)`` on merge (default ``5.0``,
+matching the original SCARE deployment) so one bad participant cannot
+poison the aggregate.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..core import DistributedAlgorithm, OptimizationMessage
+from ...core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
+    from ....carrier.core import Carrier
 
 
 # ---------------------------------------------------------------------------
@@ -68,13 +58,9 @@ if TYPE_CHECKING:
 
 
 def _deterministic_next(neighbours: list, negotiation_id: str, counter: int) -> Any:
-    """SHA-driven deterministic next-hop selection.
-
-    Replaces ``random.choice`` so two participants forwarding the same
-    ``(negotiation_id, counter)`` pair always pick the same neighbour —
-    a prerequisite for deterministic convergence and reproducible
-    test runs.
-    """
+    """SHA-driven deterministic next-hop, replacing ``random.choice`` so
+    the same ``(negotiation_id, counter)`` always picks the same
+    neighbour (deterministic convergence, reproducible tests)."""
     if not neighbours:
         return None
     h = hashlib.sha256(f"{negotiation_id}:{counter}".encode()).digest()
@@ -83,12 +69,9 @@ def _deterministic_next(neighbours: list, negotiation_id: str, counter: int) -> 
 
 
 def _is_saturated(delta: float, dmin: float, dmax: float) -> bool:
-    """True iff *delta* sits within numerical tolerance of either box bound.
-
-    Tolerance scales with the box magnitude (``1e-9 + 1e-6 * max(|dmin|,
-    |dmax|, 1)``) so large boxes don't reject near-bound primal values
-    as unsaturated due to floating-point noise.
-    """
+    """True iff *delta* is within tolerance of either box bound. The
+    tolerance scales with box magnitude so large boxes don't misclassify
+    near-bound values as unsaturated on float noise."""
     sat_tol = 1e-9 + 1e-6 * max(abs(dmin), abs(dmax), 1.0)
     return delta <= dmin + sat_tol or delta >= dmax - sat_tol
 
@@ -267,14 +250,10 @@ class GossipQPAlgorithm(DistributedAlgorithm):
         return str(carrier.get_address())
 
     def _initial_lambda(self, target: float, n_neighbours: int) -> float:
-        """Seed ``lambda`` so the originator's first primal step moves the
-        residual by roughly its fair share of the target.
-
-        ``lambda_0 = T / ((n_neighbours + 1) * a_self)`` aims the
-        originator's first ``delta`` at ``T / (n_neighbours + 1)``.
-        Clamped to ``|T|`` so a pathological weight combination cannot
-        inject an unbounded first step.
-        """
+        """Seed ``lambda_0 = T / ((n_neighbours + 1) * a_self)`` so the
+        originator's first ``delta`` targets its fair share
+        ``T / (n_neighbours + 1)``. Clamped to ``|T|`` against
+        pathological weights injecting an unbounded first step."""
         n_seed = max(2, n_neighbours + 1)
         lam = target / (n_seed * self.a)
         return max(-abs(target), min(abs(target), lam))

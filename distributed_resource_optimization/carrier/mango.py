@@ -129,6 +129,20 @@ class MangoCarrier(Carrier):
     # Carrier interface
     # ------------------------------------------------------------------
 
+    def _schedule(self, coroutine) -> asyncio.Task:
+        """Run *coroutine* via the agent scheduler, not a bare
+        :func:`asyncio.create_task`.
+
+        Under a discrete-time simulation the world only advances tasks the
+        scheduler knows about; a raw ``create_task`` would run "on a side
+        track" off the simulation clock, so message sends would not be
+        flushed within a :func:`~mango.step_simulation` convergence step.
+        Routing every send through ``schedule_instant_task`` keeps the
+        carrier in lock-step with the clock (and is equivalent to a plain
+        task under a real, free-running container).
+        """
+        return self._parent.context.schedule_instant_task(coroutine)
+
     def send_to_other(
         self,
         content: Any,
@@ -136,11 +150,7 @@ class MangoCarrier(Carrier):
         meta: dict | None = None,
     ) -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
-
-        async def _send() -> None:
-            await self._parent.context.send_message(content, receiver)
-
-        return asyncio.create_task(_send())
+        return self._schedule(self._parent.context.send_message(content, receiver))
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         """Reply to the sender stored in *meta*.
@@ -151,15 +161,12 @@ class MangoCarrier(Carrier):
         """
         addr = mango_sender_addr(meta)
         request_id = meta.get("_request_id")
-
-        async def _send() -> None:
-            if request_id:
-                reply = _CarrierReply(content=content, request_id=request_id)
-                await self._parent.context.send_message(reply, addr)
-            else:
-                await self._parent.context.send_message(content, addr)
-
-        return asyncio.create_task(_send())
+        payload = (
+            _CarrierReply(content=content, request_id=request_id)
+            if request_id
+            else content
+        )
+        return self._schedule(self._parent.context.send_message(payload, addr))
 
     def send_awaitable(
         self,
@@ -172,14 +179,12 @@ class MangoCarrier(Carrier):
         loop = asyncio.get_event_loop()
         future: asyncio.Future = loop.create_future()
         self._pending[request_id] = future
-
-        async def _send() -> None:
-            await self._parent.context.send_message(
+        self._schedule(
+            self._parent.context.send_message(
                 _CarrierRequest(content=content, request_id=request_id),
                 receiver,
             )
-
-        asyncio.create_task(_send())
+        )
         return future
 
     def _resolve_reply(self, reply: _CarrierReply) -> bool:
@@ -199,6 +204,29 @@ class MangoCarrier(Carrier):
 
     def get_address(self) -> "AgentAddress":
         return self._parent.context.addr
+
+    # ---- simulation-clock time domain (overrides the wall-clock defaults) ----
+
+    def now(self) -> float:
+        """Current *simulation* time (or wall-clock under a real container)."""
+        return self._parent.context.current_timestamp
+
+    def sleep(self, seconds: float):
+        """Sleep on the agent's clock: under ``run_with_simulation`` this
+        registers a discrete-step wakeup at ``now + seconds`` instead of
+        burning real wall-clock time."""
+        return self._parent.context.scheduler.clock.sleep(seconds)
+
+    def spawn(self, coroutine) -> asyncio.Task:
+        """Run the driver as a tracked agent-scheduler task.
+
+        The mango scheduler marks a task parked on a reply/peer future as
+        sleeping, so a discrete simulation step advances the driver as it
+        delivers the clock-gated messages the driver's sends provoke,
+        rather than deadlocking its termination detection. Under a real
+        container this is just a normal scheduled task on the event loop.
+        """
+        return self._parent.context.schedule_instant_task(coroutine)
 
     async def wait_for(self, awaitable: asyncio.Future) -> Any:
         return await awaitable
@@ -252,7 +280,9 @@ class DistributedOptimizationRole(Role):
             actual_meta = meta
             actual_content = content
 
-        asyncio.create_task(
+        # Schedule via the agent scheduler so the simulation clock tracks the
+        # handler (and any sends it issues); see MangoCarrier._schedule.
+        self.context.schedule_instant_task(
             on_exchange_message(self.algorithm, self._carrier, actual_content, actual_meta)
         )
 
@@ -312,14 +342,25 @@ class CoordinatorRole(Role):
 
         async def _run() -> None:
             results = await start_optimization(self.coordinator, self._carrier, content.input, meta)
-            for i, addr in enumerate(self._carrier.others("coordinator")):
+            neighbours = self._carrier.others("coordinator")
+            # Per-participant list (e.g. ADMMGenericCoordinator) -> fan out the
+            # matching slice; a single aggregate result (e.g. CPAdmmResult) ->
+            # broadcast the whole object to every participant.
+            per_participant = (
+                isinstance(results, (list, tuple)) and len(results) == len(neighbours)
+            )
+            for i, addr in enumerate(neighbours):
+                payload = results[i] if per_participant else results
                 await self.context.send_message(
-                    OptimizationFinishedMessage(result=results[i]), addr
+                    OptimizationFinishedMessage(result=payload), addr
                 )
             if not self._done_future.done():
                 self._done_future.set_result(results)
 
-        asyncio.create_task(_run())
+        # Run the request/reply driver via the carrier (a tracked scheduler
+        # task under simulation; see Carrier.spawn). The scheduler marks it
+        # idle while it awaits replies, so discrete stepping advances it.
+        self._carrier.spawn(_run())
 
     def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
         if self._carrier is not None:

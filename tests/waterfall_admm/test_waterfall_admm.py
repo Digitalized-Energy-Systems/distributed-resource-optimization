@@ -16,7 +16,7 @@ from distributed_resource_optimization import (
     tier_priority_weight,
     waterfall_serve,
 )
-from distributed_resource_optimization.algorithm.waterfall_admm.core import CPSpec
+from distributed_resource_optimization.algorithm.admm.types import CPSpec
 
 
 def test_tier_priority_weight_monotone():

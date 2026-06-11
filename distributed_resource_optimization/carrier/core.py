@@ -77,6 +77,33 @@ class Carrier(ABC):
     def get_address(self) -> Any:
         """Return the address of this carrier's participant."""
 
+    # ------------------------------------------------------------------
+    # Time domain — wall-clock by default; a simulation carrier overrides
+    # these so timeouts and background drivers run on the *simulation*
+    # clock instead of racing ahead on real wall-clock time.
+    # ------------------------------------------------------------------
+
+    def now(self) -> float:
+        """Current time in this carrier's clock domain (seconds)."""
+        return asyncio.get_event_loop().time()
+
+    def sleep(self, seconds: float) -> Any:
+        """Return an awaitable that resolves after *seconds* in this
+        carrier's clock domain."""
+        return asyncio.sleep(seconds)
+
+    def spawn(self, coroutine: Any) -> asyncio.Task:
+        """Launch a long-running driver coroutine (e.g. a coordinator's
+        request/reply loop or the gossip cascade round).
+
+        The base implementation runs it as a plain event-loop task. A
+        simulation-backed carrier overrides this to schedule it on the
+        agent scheduler so the simulation clock tracks it (the scheduler
+        marks a driver parked on a reply/peer future as idle, so discrete
+        stepping advances it instead of deadlocking on it).
+        """
+        return asyncio.ensure_future(coroutine)
+
     async def wait_for(self, awaitable: asyncio.Future | EventWithValue) -> Any:
         """Await *awaitable*, unwrapping an :class:`EventWithValue` if needed."""
         if isinstance(awaitable, EventWithValue):

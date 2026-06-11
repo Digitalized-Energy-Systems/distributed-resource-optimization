@@ -29,10 +29,10 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from ..core import DistributedAlgorithm, OptimizationMessage
+from ...core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
+    from ....carrier.core import Carrier
 
 
 # ---------------------------------------------------------------------------

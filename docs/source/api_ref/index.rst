@@ -37,10 +37,10 @@ ADMM
 Consensus
 ---------
 
-.. automodule:: distributed_resource_optimization.algorithm.consensus.averaging
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.averaging
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.consensus.economic_dispatch
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.economic_dispatch
    :members:
 
 Algorithm Core
