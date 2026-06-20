@@ -51,37 +51,142 @@ class ADMMTargetDistanceObjective(ADMMGlobalObjective):
 
 
 @dataclass
+class ADMMGeneratorSpec:
+    """Per-participant economic-dispatch parameters for merit-order clearing.
+
+    :param cost: Marginal cost (scalar or per-timestep vector).
+    :param lb: Lower power bound per timestep.
+    :param ub: Upper power bound per timestep.
+    """
+
+    cost: np.ndarray
+    lb: np.ndarray
+    ub: np.ndarray
+
+
+@dataclass
 class ADMMSharingData:
     """Input data for the sharing ADMM variant.
 
     :param target: Desired sum vector (length *m*).
     :param priorities: Per-element priority weights (negated so that positive
                        input values become penalties).
+    :param generators: Optional specs for merit-order clearing in ``z_update``.
+    :param epsilon: Price sensitivity used with :class:`~.economic_dispatch` actors.
     """
 
     target: np.ndarray
     priorities: np.ndarray
+    generators: list[ADMMGeneratorSpec] | None = None
+    epsilon: float = 0.1
 
 
 def create_admm_sharing_data(
     target: list | np.ndarray,
     priorities: list | np.ndarray | None = None,
+    generators: list[ADMMGeneratorSpec] | None = None,
+    epsilon: float = 0.1,
 ) -> ADMMSharingData:
     """Build :class:`ADMMSharingData` from user-friendly inputs.
 
     :param target: Target sum vector.
     :param priorities: Per-element priority weights (positive = higher priority
                        for fulfilling that element).  Default: all ones.
+    :param generators: Optional merit-order generator specs.
+    :param epsilon: Price sensitivity for economic-dispatch actors.
     :returns: :class:`ADMMSharingData` with negated priorities (penalty form).
     """
     t = np.asarray(target, dtype=float)
     p = np.ones(len(t)) if priorities is None else np.asarray(priorities, dtype=float)
-    return ADMMSharingData(target=t, priorities=-p)  # negate → penalty form
+    return ADMMSharingData(
+        target=t,
+        priorities=-p,
+        generators=generators,
+        epsilon=epsilon,
+    )
 
 
 def create_admm_start(data: ADMMSharingData) -> ADMMStart:
     """Wrap :class:`ADMMSharingData` in an :class:`~.core.ADMMStart` message."""
     return ADMMStart(data=data, solution_length=len(data.target))
+
+
+# ---------------------------------------------------------------------------
+# Merit-order clearing (economic dispatch)
+# ---------------------------------------------------------------------------
+
+
+def _supply_at_price(
+    price: float,
+    specs: list[ADMMGeneratorSpec],
+    t: int,
+    epsilon: float,
+) -> float:
+    total = 0.0
+    for spec in specs:
+        cost_t = float(np.asarray(spec.cost, dtype=float).ravel()[t])
+        lb_t = float(np.asarray(spec.lb, dtype=float).ravel()[t])
+        ub_t = float(np.asarray(spec.ub, dtype=float).ravel()[t])
+        total += float(np.clip((price - cost_t) / epsilon, lb_t, ub_t))
+    return total
+
+
+def _clearing_price(
+    target_t: float,
+    specs: list[ADMMGeneratorSpec],
+    t: int,
+    epsilon: float,
+) -> float:
+    """Find the uniform price where merit-order supply meets ``target_t``."""
+    if target_t <= 0.0:
+        return min(float(np.asarray(spec.cost, dtype=float).ravel()[t]) for spec in specs)
+
+    costs = [float(np.asarray(spec.cost, dtype=float).ravel()[t]) for spec in specs]
+    ub_sum = sum(float(np.asarray(spec.ub, dtype=float).ravel()[t]) for spec in specs)
+
+    lo = min(costs) - 1.0
+    hi = max(costs) + epsilon * ub_sum + 1.0
+
+    expansions = 0
+    while _supply_at_price(hi, specs, t, epsilon) < target_t and expansions < 30:
+        hi = hi * 2.0 + epsilon * ub_sum
+        expansions += 1
+
+    if _supply_at_price(hi, specs, t, epsilon) < target_t:
+        ub_sum_str = f"{ub_sum:.4g}"
+        raise ValueError(
+            f"Infeasible dispatch at timestep {t}: target {target_t:.4g} MW exceeds "
+            f"total generation capacity {ub_sum_str} MW."
+        )
+
+    if _supply_at_price(lo, specs, t, epsilon) >= target_t:
+        return lo
+
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if _supply_at_price(mid, specs, t, epsilon) >= target_t:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def _z_from_clearing_prices(
+    input_data: ADMMSharingData,
+    rho: float,
+    n: int,
+) -> np.ndarray:
+    """Map per-timestep clearing prices to the global ADMM consensus vector."""
+    specs = input_data.generators
+    if specs is None:
+        raise ValueError("generators are required for merit-order clearing.")
+    horizon = len(input_data.target)
+    epsilon = input_data.epsilon
+    prices = np.array(
+        [_clearing_price(float(input_data.target[t]), specs, t, epsilon) for t in range(horizon)],
+        dtype=float,
+    )
+    return prices / max(rho * n, 1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +213,9 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
         n: int,
     ) -> np.ndarray:
         """Solve QP to find the optimal global *z*."""
+        if input_data.generators is not None:
+            return _z_from_clearing_prices(input_data, rho, n)
+
         x_avg = sum(x) / len(x)
         m = len(x_avg)
 

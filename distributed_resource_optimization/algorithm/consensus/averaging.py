@@ -6,13 +6,9 @@ add a gradient term to bias the consensus toward a local optimum.
 
 The update rule is:
 
-.. math::
+λ^{k+1} = λ^k + α * (λ̄^k - λ^k) + ∇f(λ^k, data)
 
-    \\lambda^{k+1} = \\lambda^k + \\alpha (\\bar{\\lambda}^k - \\lambda^k)
-                    + \\nabla f(\\lambda^k, \\text{data})
-
-where :math:`\\bar{\\lambda}^k` is the average of all neighbours' estimates
-at iteration *k*.
+where λ̄^k is the average of all neighbours' estimates at iteration k.
 
 
 """

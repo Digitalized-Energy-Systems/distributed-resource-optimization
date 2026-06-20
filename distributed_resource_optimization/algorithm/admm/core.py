@@ -50,10 +50,13 @@ class ADMMMessage:
 
     :param v: Scaled consensus/sharing vector (the local QP reference point).
     :param rho: ADMM penalty parameter.
+    :param z: Global consensus vector (used as a uniform price signal by
+              economic-dispatch actors).
     """
 
     v: np.ndarray
     rho: float
+    z: np.ndarray | None = None
 
 
 @dataclass
@@ -224,15 +227,27 @@ class ADMMGenericCoordinator(Coordinator):
         n = len(participant_addrs)
 
         x: list[np.ndarray] = [np.zeros(m) for _ in range(n)]
-        z = actor.init_z(n, m)
         u = actor.init_u(n, m)
 
-        for k in range(1, self.max_iters + 1):
+        generators = getattr(input_data, "generators", None)
+        if generators is not None:
+            from .sharing_admm import _z_from_clearing_prices
+
+            z = _z_from_clearing_prices(input_data, rho, n)
+            max_k = 1
+        else:
+            z = actor.init_z(n, m)
+            max_k = self.max_iters
+
+        for k in range(1, max_k + 1):
             # 1. Send ADMMMessage to all participants in parallel, collect futures
             futures: list[asyncio.Future] = []
             for i, addr in enumerate(participant_addrs):
                 correction = actor.actor_correction(x, z, u, i)
-                fut = carrier.send_awaitable(ADMMMessage(v=correction, rho=rho), addr)
+                fut = carrier.send_awaitable(
+                    ADMMMessage(v=correction, rho=rho, z=np.asarray(z, dtype=float)),
+                    addr,
+                )
                 futures.append(fut)
 
             # Await all replies simultaneously

@@ -60,6 +60,8 @@ class ADMMFlexActor(DistributedAlgorithm):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
+        if not isinstance(message_data, ADMMMessage):
+            return
         self.x = _local_update(self, message_data.v, message_data.rho)
         carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
 
@@ -79,8 +81,9 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
     constraints = [
         x_var >= actor.lb,
         x_var <= actor.u,
-        actor.C @ x_var <= actor.d,
     ]
+    if actor.C.size > 0:
+        constraints.append(actor.C @ x_var <= actor.d)
 
     prob = cp.Problem(objective, constraints)
     prob.solve(solver=cp.OSQP, verbose=False)
@@ -120,6 +123,35 @@ def _create_C_and_d(tech_capacity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             C[r2, m - 1] = 1.0 / tm
 
     return C, d
+
+
+def create_admm_flex_actor_box_bounded(
+    lb: list[float] | np.ndarray,
+    u: list[float] | np.ndarray,
+    S: list[float] | np.ndarray | None = None,
+) -> ADMMFlexActor:
+    """Create a box-bounded :class:`ADMMFlexActor` with one variable per timestep.
+
+    :param lb: Lower bounds per decision variable.
+    :param u: Upper bounds per decision variable.
+    :param S: Linear cost / priority penalties (positive = penalised).
+    :returns: Configured :class:`ADMMFlexActor`.
+    """
+    lb_arr = np.asarray(lb, dtype=float)
+    u_arr = np.asarray(u, dtype=float)
+    m = len(lb_arr)
+    if u_arr.shape != lb_arr.shape:
+        raise ValueError("lb and u must have the same shape.")
+    s_arr = np.zeros(m) if S is None else np.asarray(S, dtype=float)
+    if s_arr.shape != lb_arr.shape:
+        raise ValueError("S must match lb/u length when provided.")
+    return ADMMFlexActor(
+        lb=lb_arr,
+        u=u_arr,
+        C=np.zeros((0, m)),
+        d=np.zeros(0),
+        S=s_arr,
+    )
 
 
 def create_admm_flex_actor_one_to_many(

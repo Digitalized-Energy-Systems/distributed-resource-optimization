@@ -84,12 +84,20 @@ from .algorithm.admm.core import (
 )
 from .algorithm.admm.flex_actor import (
     ADMMFlexActor,
+    create_admm_flex_actor_box_bounded,
     create_admm_flex_actor_one_to_many,
+)
+from .algorithm.admm.economic_dispatch import (
+    LinearCostEconomicDispatchADMMFlexActor,
+    StorageADMMFlexActor,
+    create_admm_economic_dispatch_actor,
+    create_admm_storage_actor,
 )
 from .algorithm.admm.flex_actor import (
     result as admm_flex_result,
 )
 from .algorithm.admm.sharing_admm import (
+    ADMMGeneratorSpec,
     ADMMSharingData,
     ADMMSharingGlobalActor,
     ADMMTargetDistanceObjective,
@@ -236,10 +244,16 @@ __all__ = [
     "create_admm_start",
     "ADMMFlexActor",
     "create_admm_flex_actor_one_to_many",
+    "create_admm_flex_actor_box_bounded",
+    "LinearCostEconomicDispatchADMMFlexActor",
+    "create_admm_economic_dispatch_actor",
+    "StorageADMMFlexActor",
+    "create_admm_storage_actor",
     "admm_flex_result",
     "ADMMConsensusGlobalActor",
     "create_consensus_target_reach_admm_coordinator",
     "create_admm_start_consensus",
+    "ADMMGeneratorSpec",
     "ADMMSharingData",
     "ADMMSharingGlobalActor",
     "ADMMTargetDistanceObjective",
