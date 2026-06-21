@@ -19,7 +19,6 @@ from distributed_resource_optimization import (
     ActorContainer,
     CPSpec,
     GossipCascadeInit,
-    GossipCascadeStart,
     GossipIter,
     GossipParticipant,
     SectorDemand,
@@ -29,7 +28,6 @@ from distributed_resource_optimization import (
     create_gossip_cascade_start,
     solve_cp_distributed_lexicographic_cascade,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,6 +77,7 @@ async def _run_gossip(
         def _cb(r: np.ndarray, converged: bool, iters: int) -> None:
             results[cp_id] = r
             commit_events[cp_id].set()
+
         return _cb
 
     container = ActorContainer()
@@ -130,15 +129,11 @@ async def test_single_p2h_matches_reference_kernel():
     cps = [_p2h_spec("p2h-1", electricity=1.0, heat=-1.0)]
     demands = [_heat_demand(demand_mw=3.0), _electricity_slack(base_mw=10.0)]
 
-    reference = solve_cp_distributed_lexicographic_cascade(
-        cps, demands, inner_iters_max=500
-    )
+    reference = solve_cp_distributed_lexicographic_cascade(cps, demands, inner_iters_max=500)
     gossip = await _run_gossip(cps, demands)
 
     assert "p2h-1" in gossip
-    assert gossip["p2h-1"][0] == pytest.approx(
-        reference.factor_by_cp["p2h-1"][0], abs=5e-3
-    )
+    assert gossip["p2h-1"][0] == pytest.approx(reference.factor_by_cp["p2h-1"][0], abs=5e-3)
 
 
 @pytest.mark.asyncio
@@ -158,9 +153,7 @@ async def test_three_cps_matches_reference():
             base_supply=np.array([5.0]),
         ),
     ]
-    reference = solve_cp_distributed_lexicographic_cascade(
-        cps, demands, inner_iters_max=500
-    )
+    reference = solve_cp_distributed_lexicographic_cascade(cps, demands, inner_iters_max=500)
     gossip = await _run_gossip(cps, demands)
     for cp in cps:
         assert gossip[cp.cp_id][0] == pytest.approx(
@@ -346,28 +339,42 @@ async def test_initiator_re_init_with_higher_round_id_replaces_state():
         capacity_by_sector={"electricity": 1.0, "heat": -1.0},
     )
     init1 = GossipCascadeInit(
-        round_id=1, initiator_cp_id="p2h-x",
+        round_id=1,
+        initiator_cp_id="p2h-x",
         participants=["p2h-x", "peer-y"],
-        sectors=["electricity", "heat"], horizon=1,
-        rho=1.0, r_regularization=0.1, adaptive_rho=True,
-        rho_mu=10.0, rho_tau=2.0,
+        sectors=["electricity", "heat"],
+        horizon=1,
+        rho=1.0,
+        r_regularization=0.1,
+        adaptive_rho=True,
+        rho_mu=10.0,
+        rho_tau=2.0,
         demands=[_heat_demand(demand_mw=1.0), _electricity_slack(base_mw=5.0)],
-        iter_timeout_s=0.05, round_timeout_s=10.0,
-        inner_iters_max=10, inner_abs_tol=1e-4,
+        iter_timeout_s=0.05,
+        round_timeout_s=10.0,
+        inner_iters_max=10,
+        inner_abs_tol=1e-4,
     )
     p._ctx = p._build_ctx(init1)
     assert p.current_round_id == 1
 
     # Higher round — should replace.
     init2 = GossipCascadeInit(
-        round_id=7, initiator_cp_id="peer-y",
+        round_id=7,
+        initiator_cp_id="peer-y",
         participants=["p2h-x", "peer-y"],
-        sectors=["electricity", "heat"], horizon=1,
-        rho=1.0, r_regularization=0.1, adaptive_rho=True,
-        rho_mu=10.0, rho_tau=2.0,
+        sectors=["electricity", "heat"],
+        horizon=1,
+        rho=1.0,
+        r_regularization=0.1,
+        adaptive_rho=True,
+        rho_mu=10.0,
+        rho_tau=2.0,
         demands=[_heat_demand(demand_mw=2.0), _electricity_slack(base_mw=5.0)],
-        iter_timeout_s=0.05, round_timeout_s=10.0,
-        inner_iters_max=10, inner_abs_tol=1e-4,
+        iter_timeout_s=0.05,
+        round_timeout_s=10.0,
+        inner_iters_max=10,
+        inner_abs_tol=1e-4,
     )
     p._ctx = p._build_ctx(init2)
     assert p.current_round_id == 7
@@ -392,10 +399,12 @@ def test_minimize_usage_flag_removes_surplus_overshoot():
         CPSpec(cp_id="b", capacity_by_sector={"electricity": 6.0, "heat": -5.0}),
     ]
     demands = [
-        SectorDemand(sector="electricity", demand_by_tier={1: np.zeros(1)},
-                     base_supply=np.array([10.0])),
-        SectorDemand(sector="heat", demand_by_tier={1: np.array([4.0])},
-                     base_supply=np.array([0.0])),
+        SectorDemand(
+            sector="electricity", demand_by_tier={1: np.zeros(1)}, base_supply=np.array([10.0])
+        ),
+        SectorDemand(
+            sector="heat", demand_by_tier={1: np.array([4.0])}, base_supply=np.array([0.0])
+        ),
     ]
 
     def heat_production(res):

@@ -48,9 +48,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def tier_priority_weight(
-    tier: int, *, priority_tiers: int = 4, base: float = 1.0e4
-) -> float:
+def tier_priority_weight(tier: int, *, priority_tiers: int = 4, base: float = 1.0e4) -> float:
     """Strictly-monotone weight: tier 1 -> ``base ** P``, tier P -> ``base``.
 
     With ``base = 1e4`` and ``P = 4`` this yields ``[1e16, 1e12, 1e8, 1e4]``
@@ -172,8 +170,9 @@ def solve_cp_priority_admm(
         return CPAdmmResult(
             factor_by_cp={},
             served_by_sector_tier={
-                d.sector: {t: np.asarray(a, dtype=float).copy()
-                           for t, a in d.demand_by_tier.items()}
+                d.sector: {
+                    t: np.asarray(a, dtype=float).copy() for t, a in d.demand_by_tier.items()
+                }
                 for d in demands
             },
             iterations=0,
@@ -183,8 +182,7 @@ def solve_cp_priority_admm(
         )
 
     all_sectors = sorted(
-        {s for c in cps for s in c.capacity_by_sector}
-        | {d.sector for d in demands}
+        {s for c in cps for s in c.capacity_by_sector} | {d.sector for d in demands}
     )
     if not all_sectors:
         raise ValueError("no sectors found in CPs or demands")
@@ -208,7 +206,7 @@ def solve_cp_priority_admm(
     for i, c in enumerate(cps):
         for s, c_val in c.capacity_by_sector.items():
             cap[i, sec_idx[s]] = float(c_val)
-    cap_norm_sq = (cap ** 2).sum(axis=1)
+    cap_norm_sq = (cap**2).sum(axis=1)
 
     D = np.zeros((n_sec, n_tier, H), dtype=float)
     base_supply = np.zeros((n_sec, H), dtype=float)
@@ -217,8 +215,7 @@ def solve_cp_priority_admm(
         bs = np.asarray(d.base_supply, dtype=float)
         if bs.shape != (H,):
             raise ValueError(
-                f"base_supply for sector {d.sector!r} must have shape ({H},), "
-                f"got {bs.shape}"
+                f"base_supply for sector {d.sector!r} must have shape ({H},), got {bs.shape}"
             )
         base_supply[s, :] = bs
         for tier, arr in d.demand_by_tier.items():
@@ -233,9 +230,10 @@ def solve_cp_priority_admm(
             D[s, tier_idx[tier], :] = a
 
     priorities = np.array(
-        [tier_priority_weight(t, priority_tiers=priority_tiers,
-                              base=priority_weight_base)
-         for t in all_tiers],
+        [
+            tier_priority_weight(t, priority_tiers=priority_tiers, base=priority_weight_base)
+            for t in all_tiers
+        ],
         dtype=float,
     )
 
@@ -301,15 +299,11 @@ def solve_cp_priority_admm(
             converged = True
             break
 
-    factor_by_cp: dict[str, np.ndarray] = {
-        c.cp_id: r_curr[i].copy() for i, c in enumerate(cps)
-    }
+    factor_by_cp: dict[str, np.ndarray] = {c.cp_id: r_curr[i].copy() for i, c in enumerate(cps)}
 
     served_by_sector_tier = {
         d.sector: {
-            t: served[sec_idx[d.sector], tier_idx[t], :].copy()
-            for t in all_tiers
-            if t in tier_idx
+            t: served[sec_idx[d.sector], tier_idx[t], :].copy() for t in all_tiers if t in tier_idx
         }
         for d in demands
     }
@@ -449,8 +443,7 @@ class WaterfallADMMCoordinator(Coordinator):
         participant_addrs = carrier.others("coordinator")
 
         spec_futures = [
-            carrier.send_awaitable(WaterfallADMMSpecRequest(), addr)
-            for addr in participant_addrs
+            carrier.send_awaitable(WaterfallADMMSpecRequest(), addr) for addr in participant_addrs
         ]
         spec_replies = await asyncio.gather(*spec_futures)
         specs = [reply.spec for reply in spec_replies]
@@ -469,9 +462,7 @@ class WaterfallADMMCoordinator(Coordinator):
         )
 
         send_tasks = [
-            carrier.send_to_other(
-                WaterfallADMMResult(r=result.factor_by_cp[spec.cp_id]), addr
-            )
+            carrier.send_to_other(WaterfallADMMResult(r=result.factor_by_cp[spec.cp_id]), addr)
             for addr, spec in zip(participant_addrs, specs)
         ]
         await asyncio.gather(*send_tasks)

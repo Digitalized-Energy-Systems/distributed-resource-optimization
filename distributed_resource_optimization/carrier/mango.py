@@ -61,10 +61,8 @@ from uuid import uuid4
 from mango import AgentAddress, Role
 from mango import sender_addr as mango_sender_addr
 
-from .core import Carrier
-
 from ..algorithm.core import Coordinator, DistributedAlgorithm
-
+from .core import Carrier
 
 # ---------------------------------------------------------------------------
 # Message types
@@ -158,11 +156,7 @@ class MangoCarrier(Carrier):
         """
         addr = mango_sender_addr(meta)
         request_id = meta.get("_request_id")
-        payload = (
-            _CarrierReply(content=content, request_id=request_id)
-            if request_id
-            else content
-        )
+        payload = _CarrierReply(content=content, request_id=request_id) if request_id else content
         return self._schedule(self._parent.context.send_message(payload, addr))
 
     def send_awaitable(
@@ -343,14 +337,10 @@ class CoordinatorRole(Role):
             # Per-participant list (e.g. ADMMGenericCoordinator) -> fan out the
             # matching slice; a single aggregate result (e.g. CPAdmmResult) ->
             # broadcast the whole object to every participant.
-            per_participant = (
-                isinstance(results, (list, tuple)) and len(results) == len(neighbours)
-            )
+            per_participant = isinstance(results, (list, tuple)) and len(results) == len(neighbours)
             for i, addr in enumerate(neighbours):
                 payload = results[i] if per_participant else results
-                await self.context.send_message(
-                    OptimizationFinishedMessage(result=payload), addr
-                )
+                await self.context.send_message(OptimizationFinishedMessage(result=payload), addr)
             if not self._done_future.done():
                 self._done_future.set_result(results)
 

@@ -94,8 +94,13 @@ def test_solve_cp_priority_admm_p2h_serves_heat_deficit():
         ),
     ]
     result = solve_cp_priority_admm(
-        cps, demands, rho=1.0, max_iters=500, abs_tol=1e-5,
-        priority_weight_base=10.0, r_damping=0.5,
+        cps,
+        demands,
+        rho=1.0,
+        max_iters=500,
+        abs_tol=1e-5,
+        priority_weight_base=10.0,
+        r_damping=0.5,
     )
     assert result.converged is True
     assert result.factor_by_cp["p2h-1"][0] > 0.85
@@ -138,8 +143,12 @@ def test_solve_cp_priority_admm_heterogeneous_cps_prefers_efficient():
         ),
     ]
     result = solve_cp_priority_admm(
-        cps, demands, max_iters=5000, abs_tol=1e-5,
-        priority_weight_base=10.0, r_damping=0.1,
+        cps,
+        demands,
+        max_iters=5000,
+        abs_tol=1e-5,
+        priority_weight_base=10.0,
+        r_damping=0.1,
     )
     r_eff = result.factor_by_cp["eff"][0]
     r_ineff = result.factor_by_cp["ineff"][0]

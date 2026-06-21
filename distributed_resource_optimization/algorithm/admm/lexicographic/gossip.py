@@ -244,15 +244,15 @@ class GossipParticipant(DistributedAlgorithm):
     # Entry points
     # ------------------------------------------------------------------
 
-    async def _on_start(
-        self, carrier: "Carrier", start: GossipCascadeStart
-    ) -> None:
+    async def _on_start(self, carrier: "Carrier", start: GossipCascadeStart) -> None:
         """Initiator kickoff: broadcast Init to peers, then run the
         cascade locally as if we'd received our own Init."""
         if self._ctx is not None and start.round_id <= self._ctx.round_id:
             logger.debug(
                 "[%s] dropping stale Start round_id=%d (current=%d)",
-                self.cp_id, start.round_id, self._ctx.round_id,
+                self.cp_id,
+                start.round_id,
+                self._ctx.round_id,
             )
             return
         sectors = sorted({d.sector for d in start.demands})
@@ -278,20 +278,21 @@ class GossipParticipant(DistributedAlgorithm):
             carrier.send_to_other(init, addr)
         await self._begin_round(carrier, init)
 
-    async def _on_init(
-        self, carrier: "Carrier", init: GossipCascadeInit
-    ) -> None:
+    async def _on_init(self, carrier: "Carrier", init: GossipCascadeInit) -> None:
         """Init arrived from an initiator peer.  Join the round."""
         if self._ctx is not None:
             if init.round_id < self._ctx.round_id:
                 return  # stale
-            if (init.round_id == self._ctx.round_id
-                    and self._ctx.initiator_id == init.initiator_cp_id):
+            if (
+                init.round_id == self._ctx.round_id
+                and self._ctx.initiator_id == init.initiator_cp_id
+            ):
                 return  # already in this round
         if self.cp_id not in init.participants:
             logger.debug(
                 "[%s] not in Init participants %s — ignoring",
-                self.cp_id, init.participants,
+                self.cp_id,
+                init.participants,
             )
             return
         await self._begin_round(carrier, init)
@@ -314,8 +315,7 @@ class GossipParticipant(DistributedAlgorithm):
         if msg.done:
             ctx.done_peers.add(msg.cp_id)
         # Advance the loop once every live peer has reported this iter.
-        if (msg.tier_index == ctx.tier_index
-                and msg.iter_k == ctx.iter_k):
+        if msg.tier_index == ctx.tier_index and msg.iter_k == ctx.iter_k:
             ctx.reported_this_iter.add(msg.cp_id)
             live = (set(ctx.participants) - {self.cp_id}) - ctx.done_peers
             if ctx.reported_this_iter >= live and ctx.iter_ready is not None:
@@ -325,9 +325,7 @@ class GossipParticipant(DistributedAlgorithm):
     # Round lifecycle
     # ------------------------------------------------------------------
 
-    async def _begin_round(
-        self, carrier: "Carrier", init: GossipCascadeInit
-    ) -> None:
+    async def _begin_round(self, carrier: "Carrier", init: GossipCascadeInit) -> None:
         """Cancel any in-flight round, build a fresh context, launch
         the cascade coroutine."""
         if self._run_task is not None and not self._run_task.done():
@@ -424,7 +422,10 @@ class GossipParticipant(DistributedAlgorithm):
                         converged_total = False
                         logger.warning(
                             "[%s] gossip cascade round %d timed out at tier %d iter %d",
-                            self.cp_id, ctx.round_id, tier_pos, iter_k,
+                            self.cp_id,
+                            ctx.round_id,
+                            tier_pos,
+                            iter_k,
                         )
                         break
                     ctx.iter_k = iter_k
@@ -432,9 +433,7 @@ class GossipParticipant(DistributedAlgorithm):
                     ctx.iter_ready = asyncio.Event()
 
                     # No live peers left to wait for → skip the timeout.
-                    live_peers_now = (
-                        set(ctx.participants) - {self.cp_id} - ctx.done_peers
-                    )
+                    live_peers_now = set(ctx.participants) - {self.cp_id} - ctx.done_peers
                     if not live_peers_now:
                         ctx.iter_ready.set()
 
@@ -510,24 +509,19 @@ class GossipParticipant(DistributedAlgorithm):
                     # else: zero-capacity CP contributes nothing.
 
                     # Residuals + local convergence.
-                    primal_res = (
-                        float(np.max(np.abs(x_bar_new - ctx.z)))
-                        if ctx.z.size else 0.0
-                    )
+                    primal_res = float(np.max(np.abs(x_bar_new - ctx.z))) if ctx.z.size else 0.0
                     dual_res = ctx.rho_f * (
-                        float(np.max(np.abs(ctx.z - z_prev)))
-                        if ctx.z.size else 0.0
+                        float(np.max(np.abs(ctx.z - z_prev))) if ctx.z.size else 0.0
                     )
-                    r_change = (
-                        float(np.max(np.abs(ctx.r - r_prev)))
-                        if ctx.r.size else 0.0
-                    )
+                    r_change = float(np.max(np.abs(ctx.r - r_prev))) if ctx.r.size else 0.0
                     ctx.x_bar = x_bar_new
                     total_iters += 1
 
-                    if (primal_res < ctx.inner_abs_tol
-                            and dual_res < ctx.inner_abs_tol
-                            and r_change < ctx.inner_abs_tol):
+                    if (
+                        primal_res < ctx.inner_abs_tol
+                        and dual_res < ctx.inner_abs_tol
+                        and r_change < ctx.inner_abs_tol
+                    ):
                         converged_round = True
                         break
 
@@ -564,7 +558,9 @@ class GossipParticipant(DistributedAlgorithm):
             return
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "[%s] gossip cascade run failed: %s", self.cp_id, exc,
+                "[%s] gossip cascade run failed: %s",
+                self.cp_id,
+                exc,
             )
 
     # ------------------------------------------------------------------

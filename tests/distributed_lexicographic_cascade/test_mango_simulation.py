@@ -80,15 +80,11 @@ def _heat(demand_mw: float) -> SectorDemand:
 def _build_world_pieces(cps: list[CPSpec]):
     """Wire one CoordinatorRole + N follower roles into mango agents."""
     participants = [
-        create_distributed_lexicographic_cascade_participant(
-            c.cp_id, c.capacity_by_sector
-        )
+        create_distributed_lexicographic_cascade_participant(c.cp_id, c.capacity_by_sector)
         for c in cps
     ]
     follower_roles = [DistributedOptimizationRole(p) for p in participants]
-    coordinator_role = CoordinatorRole(
-        create_distributed_lexicographic_cascade_coordinator()
-    )
+    coordinator_role = CoordinatorRole(create_distributed_lexicographic_cascade_coordinator())
     follower_agents = [agent_composed_of(r) for r in follower_roles]
     coordinator_agent = agent_composed_of(coordinator_role)
     return participants, coordinator_role, coordinator_agent, follower_agents
@@ -154,9 +150,7 @@ async def test_mango_simulation_matches_kernel():
     ref = solve_cp_distributed_lexicographic_cascade(cps, demands)
     for participant, cp in zip(participants, cps):
         assert participant.r.size > 0
-        np.testing.assert_allclose(
-            participant.r, ref.factor_by_cp[cp.cp_id], atol=1e-6
-        )
+        np.testing.assert_allclose(participant.r, ref.factor_by_cp[cp.cp_id], atol=1e-6)
 
 
 @pytest.mark.asyncio
@@ -179,9 +173,7 @@ async def test_mango_simulation_is_clock_gated_no_side_track():
     participants, coordinator_role, coord_agent, follower_agents = _build_world_pieces(cps)
     comm = SimpleCommunicationSimulation(default_delay_s=delay_s)
 
-    async with run_with_simulation(
-        coord_agent, *follower_agents, communication_sim=comm
-    ) as world:
+    async with run_with_simulation(coord_agent, *follower_agents, communication_sim=comm) as world:
         with create_topology() as topo:
             n_coord = topo.add_node(coord_agent)
             for fa in follower_agents:
@@ -224,9 +216,7 @@ async def test_mango_simulation_is_clock_gated_no_side_track():
 
     ref = solve_cp_distributed_lexicographic_cascade(cps, demands)
     for participant, cp in zip(participants, cps):
-        np.testing.assert_allclose(
-            participant.r, ref.factor_by_cp[cp.cp_id], atol=1e-6
-        )
+        np.testing.assert_allclose(participant.r, ref.factor_by_cp[cp.cp_id], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +230,7 @@ def _gossip_world_pieces(cps: list[CPSpec], results: dict):
     def make_cb(cp_id: str):
         def _cb(r, converged, iters):
             results[cp_id] = (np.asarray(r, dtype=float), bool(converged), int(iters))
+
         return _cb
 
     participants = [
@@ -295,7 +286,7 @@ async def test_gossip_cascade_completes_and_is_feasible_under_simulation():
             round_id=1,
             participants=[c.cp_id for c in cps],
             demands=demands,
-            iter_timeout_s=3.0,      # > comm delay, so peers answer before timeout
+            iter_timeout_s=3.0,  # > comm delay, so peers answer before timeout
             round_timeout_s=500.0,
             inner_iters_max=500,
             inner_abs_tol=1e-5,

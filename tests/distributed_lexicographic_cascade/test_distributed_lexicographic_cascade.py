@@ -515,9 +515,7 @@ def test_history_records_per_round_data():
             base_supply=np.array([0.0]),
         ),
     ]
-    result = solve_cp_distributed_lexicographic_cascade(
-        cps, demands, record_history=True
-    )
+    result = solve_cp_distributed_lexicographic_cascade(cps, demands, record_history=True)
     assert "per_round_iters" in result.history
     assert "per_round_primal_residuals" in result.history
     assert "per_round_dual_residuals" in result.history
@@ -595,28 +593,30 @@ def test_arbitrary_cap_angle_matches_lp(angle_deg):
     """
     cap_a = np.array([2.0, -2.0])
     theta = np.deg2rad(angle_deg)
-    rot = np.array([[np.cos(theta), -np.sin(theta)],
-                    [np.sin(theta), np.cos(theta)]])
+    rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
     cap_b = rot @ cap_a
     cps = [
-        CPSpec(cp_id="a", capacity_by_sector={"electricity": float(cap_a[0]),
-                                              "heat": float(cap_a[1])}),
-        CPSpec(cp_id="b", capacity_by_sector={"electricity": float(cap_b[0]),
-                                              "heat": float(cap_b[1])}),
+        CPSpec(
+            cp_id="a", capacity_by_sector={"electricity": float(cap_a[0]), "heat": float(cap_a[1])}
+        ),
+        CPSpec(
+            cp_id="b", capacity_by_sector={"electricity": float(cap_b[0]), "heat": float(cap_b[1])}
+        ),
     ]
     demands = [
-        SectorDemand(sector="electricity", demand_by_tier={1: np.array([0.0])},
-                     base_supply=np.array([20.0])),
-        SectorDemand(sector="heat", demand_by_tier={1: np.array([3.0])},
-                     base_supply=np.array([0.0])),
+        SectorDemand(
+            sector="electricity", demand_by_tier={1: np.array([0.0])}, base_supply=np.array([20.0])
+        ),
+        SectorDemand(
+            sector="heat", demand_by_tier={1: np.array([3.0])}, base_supply=np.array([0.0])
+        ),
     ]
     result = solve_cp_distributed_lexicographic_cascade(cps, demands)
     lp = solve_cp_lexicographic_cascade(cps, demands)
     d_heat = float(result.served_by_sector_tier["heat"][1][0])
     lp_heat = float(lp.served_by_sector_tier["heat"][1][0])
     assert d_heat == pytest.approx(lp_heat, abs=1e-2), (
-        f"angle={angle_deg} deg: distributed served {d_heat:.3f} MW, "
-        f"LP served {lp_heat:.3f} MW"
+        f"angle={angle_deg} deg: distributed served {d_heat:.3f} MW, LP served {lp_heat:.3f} MW"
     )
 
 
@@ -700,9 +700,7 @@ async def test_coordinator_never_receives_capacity_data():
     assert "DistributedLexicographicCascadeDone" in received_message_types
     # The Init message carries only the *coordinate frame* (sectors,
     # horizon, rho, alpha) — never the participant's capacity vector.
-    init_field_names = set(
-        DistributedLexicographicCascadeInit.__dataclass_fields__.keys()
-    )
+    init_field_names = set(DistributedLexicographicCascadeInit.__dataclass_fields__.keys())
     assert "capacity_by_sector" not in init_field_names
     assert "cap_vec" not in init_field_names
     # The per-iteration ADMMMessage carries only the shared correction (v)

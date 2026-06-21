@@ -111,19 +111,31 @@ async def test_gossip_qp_with_saturation_distributes_remainder():
     """One small box plus two large boxes — small one saturates, rest absorbs."""
     participants = [
         create_distributed_qp_participant(
-            a=1.0, dmin=-0.5, dmax=0.5,
-            convergence_rate=1.0, step_decay_k0=10,
-            termination_tolerance=1e-3, max_hops=500,
+            a=1.0,
+            dmin=-0.5,
+            dmax=0.5,
+            convergence_rate=1.0,
+            step_decay_k0=10,
+            termination_tolerance=1e-3,
+            max_hops=500,
         ),
         create_distributed_qp_participant(
-            a=1.0, dmin=-5.0, dmax=5.0,
-            convergence_rate=1.0, step_decay_k0=10,
-            termination_tolerance=1e-3, max_hops=500,
+            a=1.0,
+            dmin=-5.0,
+            dmax=5.0,
+            convergence_rate=1.0,
+            step_decay_k0=10,
+            termination_tolerance=1e-3,
+            max_hops=500,
         ),
         create_distributed_qp_participant(
-            a=1.0, dmin=-5.0, dmax=5.0,
-            convergence_rate=1.0, step_decay_k0=10,
-            termination_tolerance=1e-3, max_hops=500,
+            a=1.0,
+            dmin=-5.0,
+            dmax=5.0,
+            convergence_rate=1.0,
+            step_decay_k0=10,
+            termination_tolerance=1e-3,
+            max_hops=500,
         ),
     ]
     container = ActorContainer()

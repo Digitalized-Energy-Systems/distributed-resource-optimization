@@ -225,8 +225,9 @@ def solve_cp_distributed_lexicographic_cascade(
         return CPAdmmResult(
             factor_by_cp={},
             served_by_sector_tier={
-                d.sector: {t: np.asarray(a, dtype=float).copy()
-                           for t, a in d.demand_by_tier.items()}
+                d.sector: {
+                    t: np.asarray(a, dtype=float).copy() for t, a in d.demand_by_tier.items()
+                }
                 for d in demands
             },
             iterations=0,
@@ -236,8 +237,7 @@ def solve_cp_distributed_lexicographic_cascade(
         )
 
     all_sectors = sorted(
-        {s for c in cps for s in c.capacity_by_sector}
-        | {d.sector for d in demands}
+        {s for c in cps for s in c.capacity_by_sector} | {d.sector for d in demands}
     )
     if not all_sectors:
         raise ValueError("no sectors found in CPs or demands")
@@ -261,7 +261,7 @@ def solve_cp_distributed_lexicographic_cascade(
     for i, c in enumerate(cps):
         for s, c_val in c.capacity_by_sector.items():
             cap[i, sec_idx[s]] = float(c_val)
-    cap_norm_sq = (cap ** 2).sum(axis=1)
+    cap_norm_sq = (cap**2).sum(axis=1)
 
     D = np.zeros((n_sec, n_tier, H), dtype=float)
     base_supply = np.zeros((n_sec, H), dtype=float)
@@ -270,8 +270,7 @@ def solve_cp_distributed_lexicographic_cascade(
         bs = np.asarray(d.base_supply, dtype=float)
         if bs.shape != (H,):
             raise ValueError(
-                f"base_supply for sector {d.sector!r} must have shape ({H},), "
-                f"got {bs.shape}"
+                f"base_supply for sector {d.sector!r} must have shape ({H},), got {bs.shape}"
             )
         base_supply[s, :] = bs
         for tier, arr in d.demand_by_tier.items():
@@ -375,11 +374,7 @@ def solve_cp_distributed_lexicographic_cascade(
             dual_res = rho_f * float(np.linalg.norm(z - z_prev, ord=np.inf)) if z.size else 0.0
             r_change = float(np.max(np.abs(r_curr - r_prev))) if r_curr.size else 0.0
 
-            if (
-                primal_res < inner_abs_tol
-                and dual_res < inner_abs_tol
-                and r_change < inner_abs_tol
-            ):
+            if primal_res < inner_abs_tol and dual_res < inner_abs_tol and r_change < inner_abs_tol:
                 converged_round = True
                 break
 
@@ -408,14 +403,10 @@ def solve_cp_distributed_lexicographic_cascade(
     converged = bool(all(per_round_converged))
     total_iters = int(sum(per_round_iters))
 
-    factor_by_cp: dict[str, np.ndarray] = {
-        c.cp_id: r_curr[i].copy() for i, c in enumerate(cps)
-    }
+    factor_by_cp: dict[str, np.ndarray] = {c.cp_id: r_curr[i].copy() for i, c in enumerate(cps)}
     served_by_sector_tier = {
         d.sector: {
-            t: sigma_per_tier[t][sec_idx[d.sector], :].copy()
-            for t in all_tiers
-            if t in tier_idx
+            t: sigma_per_tier[t][sec_idx[d.sector], :].copy() for t in all_tiers if t in tier_idx
         }
         for d in demands
     }
@@ -675,9 +666,7 @@ class LexicographicCascadeGlobalActor(ADMMGlobalActor):
         self.last_primal = primal_res
         self.last_dual = dual_res
         self.converged = bool(
-            primal_res < abs_tol
-            and dual_res < abs_tol
-            and max_r_change < abs_tol
+            primal_res < abs_tol and dual_res < abs_tol and max_r_change < abs_tol
         )
         return self.converged
 
@@ -735,19 +724,13 @@ class DistributedLexicographicCascadeParticipant(DistributedAlgorithm):
     ) -> None:
         if isinstance(message_data, DistributedLexicographicCascadeInit):
             self._on_init(message_data)
-            carrier.reply_to_other(
-                DistributedLexicographicCascadeInitAck(cp_id=self.cp_id), meta
-            )
+            carrier.reply_to_other(DistributedLexicographicCascadeInitAck(cp_id=self.cp_id), meta)
         elif isinstance(message_data, ADMMMessage):
             self._x_update(message_data.v, message_data.rho)
-            carrier.reply_to_other(
-                ADMMAnswer(x=self._x_i.copy(), aux=self._last_r_change), meta
-            )
+            carrier.reply_to_other(ADMMAnswer(x=self._x_i.copy(), aux=self._last_r_change), meta)
         elif isinstance(message_data, DistributedLexicographicCascadeDone):
             carrier.reply_to_other(
-                DistributedLexicographicCascadeDoneReply(
-                    cp_id=self.cp_id, r=self.r
-                ),
+                DistributedLexicographicCascadeDoneReply(cp_id=self.cp_id, r=self.r),
                 meta,
             )
 
@@ -823,7 +806,7 @@ class _RoundFrame:
     tier_idx: dict[int, int]
     n_sec: int
     horizon: int
-    D: np.ndarray            # (n_sec, n_tier, H) per-tier demand
+    D: np.ndarray  # (n_sec, n_tier, H) per-tier demand
     base_supply: np.ndarray  # (n_sec, H)
 
 
@@ -868,17 +851,20 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
         if not frame.tiers or not participant_addrs:
             # No demand / no followers -> short-circuit to an empty result.
             return await self._finalize(
-                carrier, participant_addrs,
+                carrier,
+                participant_addrs,
                 served_by_sector_tier={d.sector: {} for d in message_data.demands},
-                iterations=0, primal_residual=0.0, dual_residual=0.0,
-                converged=True, history={},
+                iterations=0,
+                primal_residual=0.0,
+                dual_residual=0.0,
+                converged=True,
+                history={},
             )
 
-        sweep = await self._run_tiers(
-            carrier, participant_addrs, frame, message_data
-        )
+        sweep = await self._run_tiers(carrier, participant_addrs, frame, message_data)
         return await self._finalize(
-            carrier, participant_addrs,
+            carrier,
+            participant_addrs,
             served_by_sector_tier=self._collect_served(message_data.demands, frame, sweep),
             iterations=int(sum(sweep.per_round_iters)),
             primal_residual=sweep.primal_res,
@@ -917,8 +903,7 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
             bs = np.asarray(d.base_supply, dtype=float)
             if bs.shape != (H,):
                 raise ValueError(
-                    f"base_supply for sector {d.sector!r} must have shape ({H},), "
-                    f"got {bs.shape}"
+                    f"base_supply for sector {d.sector!r} must have shape ({H},), got {bs.shape}"
                 )
             base_supply[s, :] = bs
             for tier, arr in d.demand_by_tier.items():
@@ -933,8 +918,14 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
                 D[s, tier_idx[tier], :] = a
 
         return _RoundFrame(
-            sectors=sectors, sec_idx=sec_idx, tiers=tiers, tier_idx=tier_idx,
-            n_sec=n_sec, horizon=H, D=D, base_supply=base_supply,
+            sectors=sectors,
+            sec_idx=sec_idx,
+            tiers=tiers,
+            tier_idx=tier_idx,
+            n_sec=n_sec,
+            horizon=H,
+            D=D,
+            base_supply=base_supply,
         )
 
     @staticmethod
@@ -990,9 +981,14 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
         # Warm-start primal, carried follower-for-follower across tiers.
         x_state = [np.zeros((frame.n_sec, frame.horizon)) for _ in range(N)]
         sweep = _TierSweep(
-            sigma_per_tier={}, per_round_iters=[], per_round_converged=[],
-            theta_final=actor.theta, primal_res=0.0, dual_res=0.0,
-            history_primal=[], history_dual=[],
+            sigma_per_tier={},
+            per_round_iters=[],
+            per_round_converged=[],
+            theta_final=actor.theta,
+            primal_res=0.0,
+            dual_res=0.0,
+            history_primal=[],
+            history_dual=[],
         )
         record_history = bool(message_data.record_history)
 
@@ -1065,8 +1061,7 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
             ]
         )
         factor_by_cp = {
-            reply.cp_id: np.asarray(reply.r, dtype=float).copy()
-            for reply in done_replies
+            reply.cp_id: np.asarray(reply.r, dtype=float).copy() for reply in done_replies
         }
         return CPAdmmResult(
             factor_by_cp=factor_by_cp,
@@ -1105,7 +1100,9 @@ def create_distributed_lexicographic_cascade_participant(
     )
 
 
-def create_distributed_lexicographic_cascade_coordinator() -> DistributedLexicographicCascadeCoordinator:
+def create_distributed_lexicographic_cascade_coordinator() -> (
+    DistributedLexicographicCascadeCoordinator
+):
     """Create a :class:`DistributedLexicographicCascadeCoordinator`."""
     return DistributedLexicographicCascadeCoordinator()
 
