@@ -220,6 +220,9 @@ class GossipParticipant(DistributedAlgorithm):
         self._ctx: _RoundCtx | None = None  # None until first Init/Start
         self._run_task: asyncio.Task | None = None
 
+    def is_round_active(self) -> bool:
+        return self._run_task is not None and not self._run_task.done()
+
     # ------------------------------------------------------------------
     # DistributedAlgorithm contract
     # ------------------------------------------------------------------

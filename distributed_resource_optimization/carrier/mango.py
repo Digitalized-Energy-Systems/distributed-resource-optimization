@@ -55,18 +55,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
-from mango import Role
+from mango import AgentAddress, Role
 from mango import sender_addr as mango_sender_addr
 
 from .core import Carrier
 
-if TYPE_CHECKING:
-    from mango import AgentAddress
-
-    from ..algorithm.core import Coordinator, DistributedAlgorithm
+from ..algorithm.core import Coordinator, DistributedAlgorithm
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +143,7 @@ class MangoCarrier(Carrier):
     def send_to_other(
         self,
         content: Any,
-        receiver: "AgentAddress",
+        receiver: AgentAddress,
         meta: dict | None = None,
     ) -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
@@ -171,7 +168,7 @@ class MangoCarrier(Carrier):
     def send_awaitable(
         self,
         content: Any,
-        receiver: "AgentAddress",
+        receiver: AgentAddress,
         meta: dict | None = None,
     ) -> asyncio.Future:
         """Send *content* and return a Future that resolves when the reply arrives."""
@@ -195,14 +192,14 @@ class MangoCarrier(Carrier):
             return True
         return False
 
-    def others(self, participant_id: str) -> list["AgentAddress"]:
+    def others(self, participant_id: str) -> list[Any]:
         """Return topology neighbours; optionally include own address."""
         neighbors = list(self._parent.context.neighbors())
         if self._include_self:
             neighbors.append(self._parent.context.addr)
         return neighbors
 
-    def get_address(self) -> "AgentAddress":
+    def get_address(self) -> AgentAddress:
         return self._parent.context.addr
 
     # ---- simulation-clock time domain (overrides the wall-clock defaults) ----
