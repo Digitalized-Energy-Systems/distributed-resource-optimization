@@ -92,6 +92,7 @@ from .algorithm.admm.economic_dispatch import (
     StorageADMMFlexActor,
     create_admm_economic_dispatch_actor,
     create_admm_storage_actor,
+    solve_battery_price_schedule,
 )
 from .algorithm.admm.flex_actor import (
     result as admm_flex_result,

@@ -22,6 +22,7 @@ from .economic_dispatch import (
     StorageADMMFlexActor,
     create_admm_economic_dispatch_actor,
     create_admm_storage_actor,
+    solve_battery_price_schedule,
 )
 from .sharing_admm import (
     ADMMGeneratorSpec,
@@ -47,6 +48,7 @@ __all__ = [
     "create_admm_economic_dispatch_actor",
     "StorageADMMFlexActor",
     "create_admm_storage_actor",
+    "solve_battery_price_schedule",
     "ADMMConsensusGlobalActor",
     "create_consensus_target_reach_admm_coordinator",
     "create_admm_start_consensus",
