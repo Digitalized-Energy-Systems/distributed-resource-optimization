@@ -14,7 +14,7 @@ Provides:
 Usage example::
 
     from mango import create_tcp_container, agent_composed_of, activate, complete_topology
-    from distributed_resource_optimization.carrier.mango import (
+    from distributed_resource_optimization.carrier.mango_carrier import (
         CoordinatorRole, DistributedOptimizationRole,
         StartCoordinatedDistributedOptimization, OptimizationFinishedMessage,
     )

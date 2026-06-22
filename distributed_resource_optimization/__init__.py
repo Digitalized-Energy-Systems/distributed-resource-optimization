@@ -17,7 +17,7 @@ Carriers
 --------
 * :class:`~.carrier.simple.SimpleCarrier` — asyncio-backed in-process carrier
   (no network stack required).
-* :class:`~.carrier.mango.MangoCarrier` — integrates with *mango-agents* for
+* :class:`~.carrier.mango_carrier.MangoCarrier` — integrates with *mango-agents* for
   networked multi-agent deployments.
 
 Quick start — COHDA
@@ -236,7 +236,7 @@ from .carrier.simple import (
 # Mango carrier (optional — only imported if mango-agents is available)
 _MANGO_AVAILABLE = False
 try:
-    from .carrier.mango import (
+    from .carrier.mango_carrier import (
         CoordinatorRole,
         DistributedOptimizationRole,
         MangoCarrier,

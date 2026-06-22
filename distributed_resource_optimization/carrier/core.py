@@ -27,7 +27,7 @@ class Carrier(ABC):
 
     * :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier`
       — lightweight in-process carrier backed by asyncio tasks.
-    * :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`
+    * :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`
       — integrates with the *mango-agents* framework for networked deployments.
     """
 

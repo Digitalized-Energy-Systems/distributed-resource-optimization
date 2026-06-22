@@ -1,7 +1,7 @@
 """Mango-carrier integration tests under a discrete-time simulation.
 
 These exercise the leader-follower lexicographic cascade end-to-end over
-the :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`
+the :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`
 inside a mango ``run_with_simulation`` world, driven by explicit
 :func:`mango.step_simulation` calls (discrete time stepping).
 
@@ -51,7 +51,7 @@ from distributed_resource_optimization import (  # noqa: E402
 from distributed_resource_optimization.algorithm.admm.types import (  # noqa: E402
     CPSpec,
 )
-from distributed_resource_optimization.carrier.mango import (  # noqa: E402
+from distributed_resource_optimization.carrier.mango_carrier import (  # noqa: E402
     CoordinatorRole,
     DistributedOptimizationRole,
     StartCoordinatedDistributedOptimization,
