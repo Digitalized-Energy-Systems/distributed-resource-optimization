@@ -135,6 +135,20 @@ from .algorithm.core import (
     start_optimization,
 )
 
+# FDGDM
+from .algorithm.fdgdm.fdgdm import (
+    FDGDMActor,
+    FDGDMAlgorithm,
+    FDGDMMessage,
+    NoFDGDMActor,
+    create_fdgdm_participant,
+    create_fdgdm_start,
+)
+from .algorithm.fdgdm.economic_dispatch import (
+    LinearCostEconomicDispatchFDGDMActor,
+    ReservoirStorageFDGDMActor,
+)
+
 # Diffusion
 from .algorithm.diffusion.diffusion import (
     DiffusionActor,
@@ -147,6 +161,17 @@ from .algorithm.diffusion.diffusion import (
 from .algorithm.diffusion.economic_dispatch import (
     LinearCostEconomicDispatchDiffusionActor,
     ReservoirStorageDiffusionActor,
+)
+
+# DEED-ADMM
+from .algorithm.deed_admm import (
+    DEEDADMMAlgorithm,
+    DEEDADMMFinishedMessage,
+    DEEDADMMMessage,
+    DEEDADMMStorageAlgorithm,
+    create_deed_admm_renewable_participant,
+    create_deed_admm_storage_participant,
+    create_deed_admm_thermal_participant,
 )
 
 # COHDA
@@ -272,6 +297,23 @@ __all__ = [
     "create_averaging_consensus_start",
     "LinearCostEconomicDispatchConsensusActor",
     "ReservoirStorageConsensusActor",
+    # FDGDM
+    "FDGDMActor",
+    "NoFDGDMActor",
+    "FDGDMMessage",
+    "FDGDMAlgorithm",
+    "create_fdgdm_participant",
+    "create_fdgdm_start",
+    "LinearCostEconomicDispatchFDGDMActor",
+    "ReservoirStorageFDGDMActor",
+    # DEED-ADMM
+    "DEEDADMMAlgorithm",
+    "DEEDADMMStorageAlgorithm",
+    "DEEDADMMMessage",
+    "DEEDADMMFinishedMessage",
+    "create_deed_admm_thermal_participant",
+    "create_deed_admm_renewable_participant",
+    "create_deed_admm_storage_participant",
     # Diffusion
     "DiffusionActor",
     "NoDiffusionActor",
