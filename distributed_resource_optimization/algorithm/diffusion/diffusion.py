@@ -122,8 +122,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self._message_queue: dict[int, list[DiffusionMessage]] = {}
         self._first_message: bool = True
         self._k: int = 0
-        self._lam: np.ndarray = np.array([1.0])
-        self._phi: np.ndarray = np.array([1.0])
+        self._lam: np.ndarray = np.full(horizon, initial_lam)
+        self._phi: np.ndarray = np.full(horizon, initial_lam)
 
     async def on_exchange_message(
         self,
@@ -161,6 +161,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                     ),
                     addr,
                 )
+
+            if message_data.initial:
+                return  # kick-off is not a topology neighbour; do not queue
 
         # --- Queue the message ---
         queue = self._message_queue.setdefault(message_data.k, [])
@@ -229,16 +232,19 @@ def create_diffusion_participant(
 def create_diffusion_start(
     initial_lam: float,
     data: Any = None,
+    horizon: int = 1,
 ) -> DiffusionMessage:
     """Create the initial kick-off message for a diffusion run.
 
     :param initial_lam: Starting scalar; broadcast to all λ dimensions.
     :param data: Auxiliary payload forwarded to each participant's
                  :meth:`DiffusionActor.gradient_term`.
+    :param horizon: Number of time steps; sets the length of the φ vector that
+                    recipients use to infer their own horizon.
     :returns: A :class:`DiffusionMessage` with ``initial=True``.
     """
     return DiffusionMessage(
-        phi=np.array([initial_lam]),
+        phi=np.full(horizon, initial_lam),
         k=0,
         data=data,
         initial=True,
