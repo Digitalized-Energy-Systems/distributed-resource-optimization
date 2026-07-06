@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml"><img src="https://github.com/Digitalized-Energy-Systems/mango-optimization/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
+  <a href="https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization/actions/workflows/test.yml"><img src="https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
   <a href="https://app.codecov.io/gh/Digitalized-Energy-Systems/distributed-resource-optimization"><img src="https://codecov.io/gh/Digitalized-Energy-Systems/distributed-resource-optimization/branch/main/graph/badge.svg" alt="Coverage" /></a>
   <img src="https://img.shields.io/badge/lifecycle-experimental-blue.svg" alt="lifecycle" />
-  <a href="https://github.com/Digitalized-Energy-Systems/mango-optimization/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" /></a>
+  <a href="https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" /></a>
   <a href="https://pypi.org/project/distributed-resource-optimization/"><img src="https://img.shields.io/pypi/v/distributed-resource-optimization.svg" alt="PyPI" /></a>
 </p>
 
@@ -17,7 +17,7 @@ resources. Algorithms are implemented independently of any particular communicat
 backend — a pluggable *carrier* abstraction lets you run the same algorithm code in a
 single asyncio process or across a real network via [mango-agents](https://github.com/OFFIS-DAI/mango).
 
-Three algorithm families are available:
+Several algorithm families are available:
 
 | Algorithm | Problem type | Coordination |
 |-----------|-------------|--------------|
@@ -25,6 +25,9 @@ Three algorithm families are available:
 | **ADMM Consensus** | Agents converge to a shared target vector | Coordinator required |
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Averaging Consensus** | Distributed averaging with optional gradient terms | Fully distributed |
+| **Diffusion** | Adapt-then-combine averaging over a scheduling horizon | Fully distributed |
+| **FDGDM** | Fast distributed gradient descent for economic dispatch (Bai et al. 2022) | Fully distributed |
+| **DEED-ADMM** | Economic dispatch via ADMM with dynamic consensus (Zhu et al. 2025) | Fully distributed |
 
 Two carriers are included:
 
@@ -52,8 +55,8 @@ pip install "distributed-resource-optimization[mango]"
 For development:
 
 ```bash
-git clone https://github.com/Digitalized-Energy-Systems/mango-optimization
-cd mango-optimization
+git clone https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization
+cd distributed-resource-optimization
 pip install -e ".[dev,docs]"
 ```
 
@@ -72,7 +75,7 @@ from distributed_resource_optimization import (
     create_admm_flex_actor_one_to_many,
     create_sharing_target_distance_admm_coordinator,
     create_admm_sharing_data,
-    create_admm_start,
+    create_sharing_admm_start,
     start_coordinated_optimization,
 )
 
@@ -85,7 +88,7 @@ async def main():
 
     # Target combined output [-4, 0, 6] with first sector weighted x5
     coordinator = create_sharing_target_distance_admm_coordinator()
-    start = create_admm_start(create_admm_sharing_data([-4, 0, 6], [5, 1, 1]))
+    start = create_sharing_admm_start(create_admm_sharing_data([-4, 0, 6], [5, 1, 1]))
 
     await start_coordinated_optimization([flex1, flex2, flex3], coordinator, start)
 
@@ -121,6 +124,14 @@ async def main():
 asyncio.run(main())
 ```
 
+### Diffusion, FDGDM, and DEED-ADMM
+
+These follow the same `create_<algorithm>_participant(...)` + `finish_callback` shape as
+COHDA/consensus above — see the full documentation for worked examples of each:
+`create_diffusion_participant`, `create_fdgdm_participant`,
+`create_deed_admm_thermal_participant` / `create_deed_admm_renewable_participant` /
+`create_deed_admm_storage_participant`.
+
 ### Using SimpleCarrier directly
 
 For full control over message flow, create the container and carriers yourself:
@@ -150,14 +161,14 @@ asyncio.run(main())
 
 Full documentation including algorithm background, tutorials, and API reference is available at:
 
-**https://digitalized-energy-systems.github.io/mango-optimization/**
+**https://digitalized-energy-systems.github.io/distributed-resource-optimization/**
 
 ---
 
 ## Contributing
 
 Contributions are welcome. Please open an issue or pull request on
-[GitHub](https://github.com/Digitalized-Energy-Systems/mango-optimization).
+[GitHub](https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization).
 
 ---
 

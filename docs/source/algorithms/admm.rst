@@ -29,7 +29,7 @@ The ADMM iterations with dual variable :math:`u` and penalty :math:`\rho` are:
    u^{k+1} &= u^k + \bar{x}^{\,k+1} - z^{k+1}
 
 Use :func:`~distributed_resource_optimization.create_sharing_target_distance_admm_coordinator`
-and :func:`~distributed_resource_optimization.create_admm_start`.
+and :func:`~distributed_resource_optimization.create_sharing_admm_start`.
 
 Consensus
 ~~~~~~~~~
@@ -111,14 +111,14 @@ Complete Example — ADMM Sharing
    >>> from distributed_resource_optimization import (
    ...     create_admm_flex_actor_one_to_many,
    ...     create_sharing_target_distance_admm_coordinator,
-   ...     create_admm_sharing_data, create_admm_start,
+   ...     create_admm_sharing_data, create_sharing_admm_start,
    ...     start_coordinated_optimization,
    ... )
    >>> flex1 = create_admm_flex_actor_one_to_many(10.0, [0.1,  0.5, -1.0])
    >>> flex2 = create_admm_flex_actor_one_to_many(15.0, [0.1,  0.5, -1.0])
    >>> flex3 = create_admm_flex_actor_one_to_many(10.0, [-1.0, 0.0,  1.0])
    >>> coordinator = create_sharing_target_distance_admm_coordinator()
-   >>> start = create_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
+   >>> start = create_sharing_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
    >>> asyncio.run(start_coordinated_optimization([flex1, flex2, flex3], coordinator, start))
    [...]
    >>> np.allclose(flex1.x, [0, 0, 0], atol=1e-2)
@@ -161,7 +161,7 @@ See Also
 - :class:`~distributed_resource_optimization.ADMMFlexActor`,
   :func:`~distributed_resource_optimization.create_admm_flex_actor_one_to_many`
 - :func:`~distributed_resource_optimization.create_sharing_target_distance_admm_coordinator`,
-  :func:`~distributed_resource_optimization.create_admm_start`,
+  :func:`~distributed_resource_optimization.create_sharing_admm_start`,
   :func:`~distributed_resource_optimization.create_admm_sharing_data`
 - :func:`~distributed_resource_optimization.create_consensus_target_reach_admm_coordinator`,
   :func:`~distributed_resource_optimization.create_admm_start_consensus`

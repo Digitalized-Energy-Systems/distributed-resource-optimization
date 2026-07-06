@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import cvxpy as cp
 import numpy as np
 
+from ...misc.util import project_storage_schedule_from_price
 from .core import ADMMAnswer, ADMMMessage
 from .flex_actor import ADMMFlexActor
 
@@ -82,7 +83,9 @@ def create_admm_economic_dispatch_actor(
     """Create a box-bounded economic-dispatch ADMM participant."""
     lb_arr = np.asarray(lb, dtype=float)
     u_arr = np.asarray(u, dtype=float)
-    cost_arr = np.full(len(lb_arr), float(cost)) if np.isscalar(cost) else np.asarray(cost, dtype=float)
+    cost_arr = (
+        np.full(len(lb_arr), float(cost)) if np.isscalar(cost) else np.asarray(cost, dtype=float)
+    )
     return LinearCostEconomicDispatchADMMFlexActor(
         lb_arr, u_arr, cost_arr, n_participants=n_participants, epsilon=epsilon
     )
@@ -153,83 +156,10 @@ def _storage_schedule_from_price(actor: StorageADMMFlexActor, pi: np.ndarray) ->
     """Build a price-responsive storage schedule that meets the target final SOC.
 
     Uses the same bias-bisection approach as the consensus and diffusion storage
-    actors: a uniform power bias is searched via bisection so that the projected
-    schedule's final SOC matches ``actor.e_final``.
+    actors (see :func:`~distributed_resource_optimization.misc.util.project_storage_schedule_from_price`).
     """
-    pi = np.asarray(pi, dtype=float)
-    T = len(pi)
-    e_min = actor.soc_min * actor.e_max
-    e_max_limit = actor.soc_max * actor.e_max
-    e_initial_abs = float(np.clip(actor.e_initial * actor.e_max, e_min, e_max_limit))
-    e_final_abs = float(np.clip(actor.e_final * actor.e_max, e_min, e_max_limit))
-    discharge_threshold = actor.discharge_cost + actor.charge_cost
-
-    desired = np.zeros(T, dtype=float)
-    for t in range(T):
-        if pi[t] > discharge_threshold:
-            desired[t] = (pi[t] - discharge_threshold) / actor.epsilon
-        elif pi[t] < actor.charge_cost:
-            desired[t] = (pi[t] - actor.charge_cost) / actor.epsilon
-
-    def _project(power_request: np.ndarray) -> tuple[np.ndarray, float]:
-        p = np.zeros(T, dtype=float)
-        e_t = e_initial_abs
-        for t in range(T):
-            max_discharge_by_soc = (e_t - e_min) * actor.eta_discharge
-            max_charge_by_soc = (e_max_limit - e_t) / actor.eta_charge
-            p_low = max(-actor.p_charge_max, -max_charge_by_soc)
-            p_high = min(actor.p_discharge_max, max_discharge_by_soc)
-            p[t] = float(np.clip(power_request[t], p_low, p_high))
-            if p[t] >= 0.0:
-                e_t = e_t - p[t] / actor.eta_discharge
-            else:
-                e_t = e_t - p[t] * actor.eta_charge
-            e_t = float(np.clip(e_t, e_min, e_max_limit))
-        return p, e_t
-
-    p0, e_end0 = _project(desired)
-    f0 = e_end0 - e_final_abs
-    best_p, best_err = p0, abs(f0)
-
-    if best_err > 1e-3 and T > 0:
-        lo, hi = -1.0, 1.0
-        p_lo, e_end_lo = _project(desired + lo)
-        p_hi, e_end_hi = _project(desired + hi)
-        f_lo = e_end_lo - e_final_abs
-        f_hi = e_end_hi - e_final_abs
-
-        if abs(f_lo) < best_err:
-            best_p, best_err = p_lo, abs(f_lo)
-        if abs(f_hi) < best_err:
-            best_p, best_err = p_hi, abs(f_hi)
-
-        expansions = 0
-        while f_lo * f_hi > 0 and expansions < 20:
-            lo *= 2.0
-            hi *= 2.0
-            p_lo, e_end_lo = _project(desired + lo)
-            p_hi, e_end_hi = _project(desired + hi)
-            f_lo = e_end_lo - e_final_abs
-            f_hi = e_end_hi - e_final_abs
-            if abs(f_lo) < best_err:
-                best_p, best_err = p_lo, abs(f_lo)
-            if abs(f_hi) < best_err:
-                best_p, best_err = p_hi, abs(f_hi)
-            expansions += 1
-
-        if f_lo * f_hi <= 0:
-            for _ in range(35):
-                mid = 0.5 * (lo + hi)
-                p_mid, e_end_mid = _project(desired + mid)
-                f_mid = e_end_mid - e_final_abs
-                if abs(f_mid) < best_err:
-                    best_p, best_err = p_mid, abs(f_mid)
-                if f_lo * f_mid <= 0:
-                    hi, f_hi = mid, f_mid
-                else:
-                    lo, f_lo = mid, f_mid
-
-    return best_p
+    p, _, _ = project_storage_schedule_from_price(actor, pi)
+    return p
 
 
 def solve_battery_price_schedule(

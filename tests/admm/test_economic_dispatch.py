@@ -22,7 +22,7 @@ from distributed_resource_optimization.algorithm.admm.sharing_admm import (
     _clearing_price,
     _supply_at_price,
     _z_from_clearing_prices,
-    create_admm_start,
+    create_sharing_admm_start,
 )
 
 
@@ -36,22 +36,32 @@ def _spec(cost: float, lb: float, ub: float, horizon: int = 1) -> ADMMGeneratorS
 
 class TestSupplyAtPrice:
     def test_below_cost_returns_lower_bound(self):
-        assert _supply_at_price(5.0, [_spec(10.0, 0.0, 5.0)], t=0, epsilon=1.0) == pytest.approx(0.0)
+        assert _supply_at_price(5.0, [_spec(10.0, 0.0, 5.0)], t=0, epsilon=1.0) == pytest.approx(
+            0.0
+        )
 
     def test_at_cost_returns_lower_bound(self):
         # (cost - cost) / epsilon = 0, clipped to lb=0
-        assert _supply_at_price(10.0, [_spec(10.0, 0.0, 5.0)], t=0, epsilon=1.0) == pytest.approx(0.0)
+        assert _supply_at_price(10.0, [_spec(10.0, 0.0, 5.0)], t=0, epsilon=1.0) == pytest.approx(
+            0.0
+        )
 
     def test_above_cost_responds_proportionally(self):
         # (15 - 10) / 1 = 5, fits within [0, 100]
-        assert _supply_at_price(15.0, [_spec(10.0, 0.0, 100.0)], t=0, epsilon=1.0) == pytest.approx(5.0)
+        assert _supply_at_price(15.0, [_spec(10.0, 0.0, 100.0)], t=0, epsilon=1.0) == pytest.approx(
+            5.0
+        )
 
     def test_capped_at_upper_bound(self):
-        assert _supply_at_price(1000.0, [_spec(10.0, 0.0, 3.0)], t=0, epsilon=1.0) == pytest.approx(3.0)
+        assert _supply_at_price(1000.0, [_spec(10.0, 0.0, 3.0)], t=0, epsilon=1.0) == pytest.approx(
+            3.0
+        )
 
     def test_two_generators_sum_correctly(self):
         # price=25, eps=1 → g1: (25-10)/1=15 capped at 5; g2: (25-20)/1=5
-        total = _supply_at_price(25.0, [_spec(10.0, 0.0, 5.0), _spec(20.0, 0.0, 5.0)], t=0, epsilon=1.0)
+        total = _supply_at_price(
+            25.0, [_spec(10.0, 0.0, 5.0), _spec(20.0, 0.0, 5.0)], t=0, epsilon=1.0
+        )
         assert total == pytest.approx(10.0)
 
     def test_uses_correct_timestep(self):
@@ -242,7 +252,9 @@ class TestMeritOrderViaADMM:
         coordinator = create_sharing_target_distance_admm_coordinator()
         coordinator.rho = 0.2
         data = create_admm_sharing_data(target, generators=specs)
-        await start_coordinated_optimization([cheap, expensive], coordinator, create_admm_start(data))
+        await start_coordinated_optimization(
+            [cheap, expensive], coordinator, create_sharing_admm_start(data)
+        )
 
         # Cheap should dispatch, expensive should be idle
         assert np.all(cheap.x >= expensive.x - 0.1)
@@ -268,7 +280,9 @@ class TestMeritOrderViaADMM:
         coordinator = create_sharing_target_distance_admm_coordinator()
         coordinator.rho = 0.2
         data = create_admm_sharing_data(target, generators=specs)
-        await start_coordinated_optimization([cheap, expensive], coordinator, create_admm_start(data))
+        await start_coordinated_optimization(
+            [cheap, expensive], coordinator, create_sharing_admm_start(data)
+        )
 
         # Cheap at capacity, expensive fills the gap
         assert cheap.x[0] == pytest.approx(5.0, abs=0.1)
@@ -292,7 +306,7 @@ class TestMeritOrderViaADMM:
         coordinator = create_sharing_target_distance_admm_coordinator()
         coordinator.rho = 0.2
         data = create_admm_sharing_data(target, generators=specs)
-        await start_coordinated_optimization(actors, coordinator, create_admm_start(data))
+        await start_coordinated_optimization(actors, coordinator, create_sharing_admm_start(data))
 
         # Dispatch must respect merit order: cheapest ≥ second ≥ most expensive
         assert actors[0].x[0] >= actors[1].x[0] - 0.1

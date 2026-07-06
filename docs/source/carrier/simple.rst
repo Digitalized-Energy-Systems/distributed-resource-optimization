@@ -98,7 +98,7 @@ For coordinated algorithms (e.g. ADMM), use
    from distributed_resource_optimization import (
        create_admm_flex_actor_one_to_many,
        create_sharing_target_distance_admm_coordinator,
-       create_admm_sharing_data, create_admm_start,
+       create_admm_sharing_data, create_sharing_admm_start,
        start_coordinated_optimization,
    )
 
@@ -107,7 +107,7 @@ For coordinated algorithms (e.g. ADMM), use
        flex2 = create_admm_flex_actor_one_to_many(15.0, [0.1,  0.5, -1.0])
        flex3 = create_admm_flex_actor_one_to_many(10.0, [-1.0, 0.0,  1.0])
        coordinator = create_sharing_target_distance_admm_coordinator()
-       start = create_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
+       start = create_sharing_admm_start(create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1]))
        await start_coordinated_optimization([flex1, flex2, flex3], coordinator, start)
 
    asyncio.run(main())

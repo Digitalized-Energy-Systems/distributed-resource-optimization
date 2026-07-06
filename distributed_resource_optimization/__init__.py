@@ -12,6 +12,10 @@ Algorithms
   gradient correction (incl. economic dispatch).
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
   horizon (incl. economic dispatch and reservoir storage).
+* **FDGDM** — Fast Distributed Gradient Descent Method for economic dispatch
+  (Bai et al. 2022), using per-participant gradient/curvature bounds.
+* **DEED-ADMM** — Distributed Economic Dispatch via ADMM with dynamic
+  consensus (Zhu et al. 2025), incl. a storage-aware variant.
 
 Carriers
 --------
@@ -49,7 +53,7 @@ Quick start — ADMM (sharing)
         create_admm_flex_actor_one_to_many,
         create_sharing_target_distance_admm_coordinator,
         create_admm_sharing_data,
-        create_admm_start,
+        create_sharing_admm_start,
         start_coordinated_optimization,
     )
 
@@ -59,7 +63,7 @@ Quick start — ADMM (sharing)
             create_admm_flex_actor_one_to_many(15, [0.1, 0.5, -1.0]),
         ]
         coordinator = create_sharing_target_distance_admm_coordinator()
-        start = create_admm_start(create_admm_sharing_data([-4, 0, 6]))
+        start = create_sharing_admm_start(create_admm_sharing_data([-4, 0, 6]))
         await start_coordinated_optimization(actors, coordinator, start)
 
     asyncio.run(main())
@@ -104,10 +108,8 @@ from .algorithm.admm.sharing_admm import (
     ADMMTargetDistanceObjective,
     create_admm_sharing_data,
     create_sharing_admm_coordinator,
+    create_sharing_admm_start,
     create_sharing_target_distance_admm_coordinator,
-)
-from .algorithm.admm.sharing_admm import (
-    create_admm_start as create_sharing_admm_start,
 )
 
 # Consensus

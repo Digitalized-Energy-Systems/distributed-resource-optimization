@@ -12,7 +12,10 @@ from distributed_resource_optimization import (
     create_sharing_target_distance_admm_coordinator,
     start_coordinated_optimization,
 )
-from distributed_resource_optimization.algorithm.admm.sharing_admm import ADMMGeneratorSpec, create_admm_start
+from distributed_resource_optimization.algorithm.admm.sharing_admm import (
+    ADMMGeneratorSpec,
+    create_sharing_admm_start,
+)
 
 
 def _energy_path(
@@ -32,7 +35,9 @@ def _energy_path(
     return np.asarray(e[1:], dtype=float)
 
 
-def _specs_for(actors_meta: list[tuple[np.ndarray, np.ndarray, np.ndarray]]) -> list[ADMMGeneratorSpec]:
+def _specs_for(
+    actors_meta: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> list[ADMMGeneratorSpec]:
     return [ADMMGeneratorSpec(cost=c, lb=lb, ub=ub) for c, lb, ub in actors_meta]
 
 
@@ -68,7 +73,7 @@ async def test_storage_actor_respects_soc_limits():
     )
     coordinator = create_sharing_target_distance_admm_coordinator()
     coordinator.rho = 0.2
-    start = create_admm_start(create_admm_sharing_data(target, generators=specs))
+    start = create_sharing_admm_start(create_admm_sharing_data(target, generators=specs))
     await start_coordinated_optimization([storage, thermal], coordinator, start)
 
     # Power limits must be respected.
@@ -134,12 +139,12 @@ async def test_storage_prefers_discharge_when_cheap():
     await start_coordinated_optimization(
         [cheap_storage],
         coordinator,
-        create_admm_start(create_admm_sharing_data(target, generators=cheap_specs)),
+        create_sharing_admm_start(create_admm_sharing_data(target, generators=cheap_specs)),
     )
     await start_coordinated_optimization(
         [expensive_storage],
         coordinator,
-        create_admm_start(create_admm_sharing_data(target, generators=expensive_specs)),
+        create_sharing_admm_start(create_admm_sharing_data(target, generators=expensive_specs)),
     )
 
     # Cheap storage tracks the price signal: it should discharge during the peak

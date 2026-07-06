@@ -106,7 +106,7 @@ def create_admm_sharing_data(
     )
 
 
-def create_admm_start(data: ADMMSharingData) -> ADMMStart:
+def create_sharing_admm_start(data: ADMMSharingData) -> ADMMStart:
     """Wrap :class:`ADMMSharingData` in an :class:`~.core.ADMMStart` message."""
     return ADMMStart(data=data, solution_length=len(data.target))
 

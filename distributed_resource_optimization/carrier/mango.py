@@ -22,7 +22,7 @@ Usage example::
         create_admm_flex_actor_one_to_many,
     )
     from distributed_resource_optimization.algorithm.admm.sharing_admm import (
-        create_sharing_target_distance_admm_coordinator, create_admm_start,
+        create_sharing_target_distance_admm_coordinator, create_sharing_admm_start,
         create_admm_sharing_data,
     )
 
@@ -44,7 +44,7 @@ Usage example::
         async with activate(container):
             await a1.send_message(
                 StartCoordinatedDistributedOptimization(
-                    create_admm_start(create_admm_sharing_data([-4, 0, 6]))
+                    create_sharing_admm_start(create_admm_sharing_data([-4, 0, 6]))
                 ),
                 ac.addr,
             )

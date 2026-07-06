@@ -49,10 +49,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Digitalized-Energy-Systems/mango-optimization"
-Documentation = "https://digitalized-energy-systems.github.io/mango-optimization/"
-Repository = "https://github.com/Digitalized-Energy-Systems/mango-optimization"
-Issues = "https://github.com/Digitalized-Energy-Systems/mango-optimization/issues"
+Homepage = "https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization"
+Documentation = "https://digitalized-energy-systems.github.io/distributed-resource-optimization/"
+Repository = "https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization"
+Issues = "https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["distributed_resource_optimization"]

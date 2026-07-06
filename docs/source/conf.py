@@ -29,7 +29,7 @@ html_theme_options = {
     "dark_logo": "logo.svg",
     "light_logo": "logo.svg",
     "sidebar_hide_name": True,
-    "source_repository": "https://github.com/Digitalized-Energy-Systems/mango-optimization/",
+    "source_repository": "https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization/",
     "source_branch": "main",
     "source_directory": "docs/source/",
     "top_of_page_buttons": ["view", "edit"],

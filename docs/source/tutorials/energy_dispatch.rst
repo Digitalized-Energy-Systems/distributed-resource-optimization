@@ -68,11 +68,11 @@ vector and priority weights:
 
 .. code-block:: python
 
-   from distributed_resource_optimization import create_admm_sharing_data, create_admm_start
+   from distributed_resource_optimization import create_admm_sharing_data, create_sharing_admm_start
 
    # target = [-4, 0, 6], priorities = [5, 1, 1]
    problem_data = create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1])
-   start_msg    = create_admm_start(problem_data)
+   start_msg    = create_sharing_admm_start(problem_data)
 
 The priority weight ``5`` for the first sector means deviations there are penalised five
 times more than deviations in the other two sectors.
@@ -116,7 +116,7 @@ Complete Script
    from distributed_resource_optimization import (
        create_admm_flex_actor_one_to_many,
        create_sharing_target_distance_admm_coordinator,
-       create_admm_sharing_data, create_admm_start,
+       create_admm_sharing_data, create_sharing_admm_start,
        start_coordinated_optimization,
    )
 
@@ -127,7 +127,7 @@ Complete Script
 
        coordinator  = create_sharing_target_distance_admm_coordinator()
        problem_data = create_admm_sharing_data([-4.0, 0.0, 6.0], [5, 1, 1])
-       start_msg    = create_admm_start(problem_data)
+       start_msg    = create_sharing_admm_start(problem_data)
 
        await start_coordinated_optimization(
            [resource1, resource2, resource3], coordinator, start_msg
