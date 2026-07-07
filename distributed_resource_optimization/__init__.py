@@ -12,6 +12,8 @@ Algorithms
   gradient correction (incl. economic dispatch).
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
   horizon (incl. economic dispatch and reservoir storage).
+* **Exact Diffusion** — adapt-correct-combine diffusion (Ces et al. 2025;
+  Yuan, Ling & Sayed 2018) removing classical Diffusion's steady-state bias.
 * **FDGDM** — Fast Distributed Gradient Descent Method for economic dispatch
   (Bai et al. 2022), using per-participant gradient/curvature bounds.
 * **DEED-ADMM** — Distributed Economic Dispatch via ADMM with dynamic
@@ -163,6 +165,11 @@ from .algorithm.diffusion.diffusion import (
 from .algorithm.diffusion.economic_dispatch import (
     LinearCostEconomicDispatchDiffusionActor,
     ReservoirStorageDiffusionActor,
+)
+from .algorithm.diffusion.exact_diffusion import (
+    ExactDiffusionAlgorithm,
+    create_exact_diffusion_participant,
+    create_exact_diffusion_start,
 )
 
 # DEED-ADMM
@@ -323,6 +330,9 @@ __all__ = [
     "DiffusionAlgorithm",
     "create_diffusion_participant",
     "create_diffusion_start",
+    "ExactDiffusionAlgorithm",
+    "create_exact_diffusion_participant",
+    "create_exact_diffusion_start",
     "LinearCostEconomicDispatchDiffusionActor",
     "ReservoirStorageDiffusionActor",
 ]
