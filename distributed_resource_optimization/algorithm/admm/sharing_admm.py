@@ -57,11 +57,20 @@ class ADMMGeneratorSpec:
     :param cost: Marginal cost (scalar or per-timestep vector).
     :param lb: Lower power bound per timestep.
     :param ub: Upper power bound per timestep.
+    :param epsilon: Per-generator price sensitivity override. A generator's
+        price-response band (the range above its marginal cost needed to ramp
+        from ``lb`` to ``ub``) is ``epsilon * ub`` — with one shared epsilon,
+        large-capacity generators need a far wider price margin to reach full
+        output than small ones, breaking merit order once capacities are
+        heterogeneous (real networks) rather than similar (toy network).
+        Defaults to ``None``, which falls back to the shared
+        :attr:`ADMMSharingData.epsilon`.
     """
 
     cost: np.ndarray
     lb: np.ndarray
     ub: np.ndarray
+    epsilon: float | None = None
 
 
 @dataclass
@@ -127,7 +136,8 @@ def _supply_at_price(
         cost_t = float(np.asarray(spec.cost, dtype=float).ravel()[t])
         lb_t = float(np.asarray(spec.lb, dtype=float).ravel()[t])
         ub_t = float(np.asarray(spec.ub, dtype=float).ravel()[t])
-        total += float(np.clip((price - cost_t) / epsilon, lb_t, ub_t))
+        eps = spec.epsilon if spec.epsilon is not None else epsilon
+        total += float(np.clip((price - cost_t) / eps, lb_t, ub_t))
     return total
 
 
@@ -143,13 +153,16 @@ def _clearing_price(
 
     costs = [float(np.asarray(spec.cost, dtype=float).ravel()[t]) for spec in specs]
     ub_sum = sum(float(np.asarray(spec.ub, dtype=float).ravel()[t]) for spec in specs)
+    max_eps = max(
+        (spec.epsilon if spec.epsilon is not None else epsilon) for spec in specs
+    )
 
     lo = min(costs) - 1.0
-    hi = max(costs) + epsilon * ub_sum + 1.0
+    hi = max(costs) + max_eps * ub_sum + 1.0
 
     expansions = 0
     while _supply_at_price(hi, specs, t, epsilon) < target_t and expansions < 30:
-        hi = hi * 2.0 + epsilon * ub_sum
+        hi = hi * 2.0 + max_eps * ub_sum
         expansions += 1
 
     if _supply_at_price(hi, specs, t, epsilon) < target_t:
