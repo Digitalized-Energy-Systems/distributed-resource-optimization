@@ -1,134 +1,81 @@
-"""Diffusion algorithm (adapt-then-combine).
+"""Exact Diffusion algorithm (adapt-correct-combine).
 
-Each participant maintains a local price estimate λ and a power iterate φ over a
-scheduling horizon.  At every iteration a participant
+Classical Diffusion (:mod:`.diffusion`) converges, for a constant step size,
+to a point that is *biased* relative to the true minimiser of the network's
+aggregate cost whenever participants' local costs differ -- the combine step
+mixes already-adapted iterates, so the network never quite agrees on the
+gradient direction it collectively descends along. Exact Diffusion (Ces
+et al. 2025, Sec. 3.4, eqs. 28-30; underlying theory: Yuan, Ling & Sayed,
+"Exact Diffusion for Distributed Optimization and Learning", 2018) removes
+that bias by inserting a **correction** stage between adapt and combine that
+cancels the first-order bias term, at the cost of one extra state variable
+per participant (the previous iteration's uncorrected φ).
 
-1. **adapts** its power iterate via a local gradient step
-   ``φ = λ - ε · ∇J(λ, data)``,
-2. broadcasts ``φ`` to its neighbours, and
-3. **combines** its own φ with all received φ's using the Mean-Metropolis
-   weight matrix (Ces et al. 2025, eq. 19 -- the same doubly-stochastic
-   matrix used for consensus) to form the next λ.
+Per iteration, each participant:
 
-The update rule is:
+1. **adapts**: :math:`\\varphi_i^k = \\lambda_i^{k-1} - \\varepsilon_i \\nabla J(\\lambda_i^{k-1}, \\text{data})`
+   (eq. 28),
+2. **corrects**: :math:`\\bar\\varphi_i^k = \\varphi_i^k + \\lambda_i^{k-1} - \\varphi_i^{k-1}`
+   (eq. 30) -- skipped on the very first iteration, where
+   :math:`\\bar\\varphi_i^0 := \\varphi_i^0` (no :math:`\\varphi_i^{-1}` exists yet),
+3. broadcasts :math:`\\bar\\varphi_i^k` to its neighbours, and
+4. **combines**: :math:`\\lambda_i^k = \\sum_{j \\in \\mathcal{N}_i} \\bar w_{ij} \\bar\\varphi_j^k`
+   (eq. 29), using a left-stochastic (not necessarily doubly-stochastic)
+   weight matrix -- selectable among the four rules Ces et al. evaluate via
+   :mod:`.._weight_rules` (``weight_rule``).
 
-.. math::
+The per-agent feedback gain :math:`\\varepsilon_i = \\varepsilon / p_i` (eq. 31)
+uses the Perron eigenvector entry :math:`p_i` of the weight matrix. Since the
+weight matrix is fully determined by the (static, centrally-known) topology
+at scenario-setup time, :math:`p_i` is expected to be computed once centrally
+(see :func:`~.._weight_rules.perron_vector`) and passed in as *perron_scale*
+-- mirroring how ``n_guess`` is already precomputed centrally for the
+economic-dispatch actors. On a degree-regular graph :math:`p_i \\equiv 1`, so
+*perron_scale* defaults to ``1.0`` (no scaling).
 
-    \\lambda_i^{k+1} = w_{ii} \\varphi_i^k +
-                    \\sum_{j \\in \\mathcal{N}_i} w_{ij} \\, \\varphi_j^k,
-    \\qquad
-    \\varphi_i^{k+1} = \\lambda_i^{k+1} - \\varepsilon \\, \\nabla J(\\lambda_i^{k+1}, \\text{data}),
-
-with :math:`w_{ij} = 2 / (n_i + n_j + 1)` and :math:`w_{ii} = 1 - \\sum_j w_{ij}`.
-Weights are computed via :func:`~..._weight_rules.regular_graph_weights`,
-which assumes a degree-regular communication graph (true both for this
-codebase's complete-graph topologies and for the paper's own ring network);
-the paper notes this doubly-stochastic requirement is what allows classical
-Diffusion to converge at all.
-
-The optional :class:`DiffusionActor` plug-in supplies ``∇J``; the default
-:class:`NoDiffusionActor` returns zero.
+Reuses :class:`~.diffusion.DiffusionActor` (same gradient-term interface) and
+:class:`~.diffusion.DiffusionMessage` (same wire shape -- the ``phi`` field
+just carries the corrected :math:`\\bar\\varphi` instead of the raw one).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
 from .._weight_rules import WeightRule, regular_graph_weights
-from ..core import DistributedAlgorithm, OptimizationMessage
+from ..core import DistributedAlgorithm
+from .diffusion import DiffusionActor, DiffusionMessage, NoDiffusionActor
 
 if TYPE_CHECKING:
     from ...carrier.core import Carrier
 
 
-# ---------------------------------------------------------------------------
-# DiffusionActor hierarchy
-# ---------------------------------------------------------------------------
-
-
-class DiffusionActor:
-    """Optional plug-in that supplies the gradient term for the adapt step.
-
-    Subclass this to bias the diffusion iterates toward a local optimum
-    (e.g. economic dispatch or battery storage scheduling).
-    """
-
-    def gradient_term(self, lam: np.ndarray, data: Any) -> np.ndarray | float:
-        """Return the gradient ``∇J(λ, data)`` for the current iterate *lam*.
-
-        :param lam: Current local price/λ estimate over the schedule.
-        :param data: Auxiliary data forwarded from the start message.
-        :returns: Additive gradient (default: 0).
-        """
-        return 0
-
-
-class NoDiffusionActor(DiffusionActor):
-    """Neutral diffusion actor — gradient is identically zero."""
-
-
-# ---------------------------------------------------------------------------
-# Message types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DiffusionMessage(OptimizationMessage):
-    """Message exchanged between diffusion participants.
-
-    :param phi: Current power iterate φ of the sender.
-    :param k: Current iteration counter.
-    :param data: Auxiliary payload forwarded to :meth:`DiffusionActor.gradient_term`.
-    :param initial: If ``True`` this is the kick-off message; recipients
-                    (re-)initialise their state.
-    :param degree: Sender's own neighbour count.  Used only to verify the
-                   degree-regular-graph assumption :func:`regular_graph_weights`
-                   relies on -- ignored on the ``initial`` kick-off message.
-    :param weight_rule: Sender's own combination-weight rule.  Used only to
-                        verify every participant agrees on the same rule --
-                        ignored on the ``initial`` kick-off message.
-    """
-
-    phi: np.ndarray
-    k: int
-    data: Any
-    initial: bool = False
-    degree: int = 0
-    weight_rule: str = ""
-
-
-# ---------------------------------------------------------------------------
-# DiffusionAlgorithm
-# ---------------------------------------------------------------------------
-
-
-class DiffusionAlgorithm(DistributedAlgorithm):
-    """Distributed adapt-then-combine diffusion over a scheduling horizon.
+class ExactDiffusionAlgorithm(DistributedAlgorithm):
+    """Distributed adapt-correct-combine exact diffusion over a scheduling horizon.
 
     ``on_exchange_message`` shares its termination/kick-off/message-queueing
-    skeleton with :class:`~.exact_diffusion.ExactDiffusionAlgorithm` -- a fix
-    to one (e.g. the stale-message-after-termination guard below) likely
-    needs to be applied to the other too.
+    skeleton with :class:`~.diffusion.DiffusionAlgorithm` -- a fix to one
+    (e.g. the stale-message-after-termination guard below) likely needs to
+    be applied to the other too.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when
                             :attr:`max_iter` is reached.
     :param diffusion_actor: Optional :class:`DiffusionActor` supplying the
                             gradient.  ``None`` → :class:`NoDiffusionActor`.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
-    :param epsilon: Gradient step size (ε).
+    :param epsilon: Base gradient step size (ε in eq. 31).
+    :param perron_scale: This agent's Perron-eigenvector entry :math:`p_i`
+                         (eq. 31); ``epsilon_i = epsilon / perron_scale``.
+                         Defaults to ``1.0`` (valid on a degree-regular graph).
     :param max_iter: Maximum number of diffusion iterations.
     :param horizon: Number of time steps in the schedule.
-    :param weight_rule: Combination-weight rule for the combine step.  The
-                        paper requires a doubly-stochastic matrix for
-                        classical Diffusion to converge.  ``"mean_metropolis"``
-                        (the default) and ``"hastings"`` are doubly stochastic
-                        on any graph; on the degree-regular graphs this
-                        codebase always uses, ``"averaging"`` and
-                        ``"relative_degree"`` collapse to the same uniform
-                        doubly-stochastic matrix too (see :mod:`.._weight_rules`).
+    :param weight_rule: Combination-weight rule for the combine step; any of
+                        ``"averaging"``, ``"relative_degree"``,
+                        ``"mean_metropolis"``, ``"hastings"`` (left-stochastic
+                        is sufficient -- unlike classical Diffusion, Exact
+                        Diffusion does not require a doubly-stochastic matrix).
     """
 
     def __init__(
@@ -137,6 +84,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         diffusion_actor: DiffusionActor | None = None,
         initial_lam: float = 10.0,
         epsilon: float = 0.1,
+        perron_scale: float = 1.0,
         max_iter: int = 300,
         horizon: int = 24,
         weight_rule: WeightRule = "mean_metropolis",
@@ -146,7 +94,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
             diffusion_actor if diffusion_actor is not None else NoDiffusionActor()
         )
         self.initial_lam = initial_lam
-        self.epsilon = epsilon
+        self.epsilon = epsilon / perron_scale
         self.max_iter = max_iter
         self.horizon = horizon
         self.weight_rule = weight_rule
@@ -156,7 +104,19 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
         self._lam: np.ndarray = np.full(horizon, initial_lam)
-        self._phi: np.ndarray = np.full(horizon, initial_lam)
+        self._phi_prev: np.ndarray | None = None
+        self._phi_bar: np.ndarray = np.full(horizon, initial_lam)
+
+    def _adapt_and_correct(self, data: Any) -> np.ndarray:
+        """Adapt (eq. 28) then correct (eq. 30); advances :attr:`_phi_prev`."""
+        grad_J = self.actor.gradient_term(self._lam, data)
+        phi = self._lam - self.epsilon * np.asarray(grad_J)
+        if self._phi_prev is None:
+            phi_bar = phi.copy()
+        else:
+            phi_bar = phi + self._lam - self._phi_prev
+        self._phi_prev = phi
+        return phi_bar
 
     async def on_exchange_message(
         self,
@@ -164,7 +124,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         message_data: DiffusionMessage,
         meta: Any,
     ) -> None:
-        """Process one incoming diffusion message."""
+        """Process one incoming exact-diffusion message."""
         neighbours = carrier.others("")
 
         # --- Termination path ---
@@ -187,11 +147,10 @@ class DiffusionAlgorithm(DistributedAlgorithm):
             self._started = True
             self._k = 0
             self._lam = np.ones(len(message_data.phi)) * self.initial_lam
+            self._phi_prev = None
+            self._phi_bar = self._adapt_and_correct(message_data.data)
 
-            grad_J = self.actor.gradient_term(self._lam, message_data.data)
-            self._phi = self._lam - self.epsilon * np.asarray(grad_J)
-
-            phi_out = self._phi.copy()
+            phi_out = self._phi_bar.copy()
             for addr in neighbours:
                 carrier.send_to_other(
                     DiffusionMessage(
@@ -221,34 +180,32 @@ class DiffusionAlgorithm(DistributedAlgorithm):
             for m in queue:
                 if m.degree != own_degree:
                     raise ValueError(
-                        f"Diffusion requires a degree-regular communication graph: "
+                        f"Exact Diffusion requires a degree-regular communication graph: "
                         f"this node has {own_degree} neighbours but received a message "
                         f"from a node with {m.degree} neighbours."
                     )
                 if m.weight_rule != self.weight_rule:
                     raise ValueError(
-                        f"All Diffusion participants must share the same weight_rule: "
+                        f"All Exact Diffusion participants must share the same weight_rule: "
                         f"this node uses {self.weight_rule!r} but received a message "
                         f"from a node using {m.weight_rule!r}."
                     )
 
-            # Combination: Mean-Metropolis weighted average of own φ and all
-            # received φ's (eq. 19; doubly stochastic).
+            # Combination: weighted average of own φ̄ and all received φ̄'s.
             self_w, neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
-            lam_new = self_w * self._phi
+            lam_new = self_w * self._phi_bar
             for m in queue:
                 lam_new = lam_new + neighbor_w * m.phi
             self._lam = lam_new
 
             del self._message_queue[message_data.k]
 
-            # Adaptation
-            grad_J = self.actor.gradient_term(self._lam, message_data.data)
-            self._phi = self._lam - self.epsilon * np.asarray(grad_J)
+            # Adapt + correct
+            self._phi_bar = self._adapt_and_correct(message_data.data)
 
             self._k += 1
 
-            phi_out = self._phi.copy()
+            phi_out = self._phi_bar.copy()
             for addr in neighbours:
                 carrier.send_to_other(
                     DiffusionMessage(
@@ -267,42 +224,45 @@ class DiffusionAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 
 
-def create_diffusion_participant(
+def create_exact_diffusion_participant(
     finish_callback: Callable,
     diffusion_actor: DiffusionActor | None = None,
     initial_lam: float = 10.0,
     epsilon: float = 0.1,
+    perron_scale: float = 1.0,
     max_iter: int = 300,
     horizon: int = 24,
     weight_rule: WeightRule = "mean_metropolis",
-) -> DiffusionAlgorithm:
-    """Create a :class:`DiffusionAlgorithm` participant.
+) -> ExactDiffusionAlgorithm:
+    """Create an :class:`ExactDiffusionAlgorithm` participant.
 
     :param finish_callback: ``(algorithm, carrier) -> None`` — called when done.
     :param diffusion_actor: Optional gradient actor.  ``None`` → no gradient.
     :param initial_lam: Initial λ scalar.
-    :param epsilon: Gradient step size.
+    :param epsilon: Base gradient step size.
+    :param perron_scale: This agent's Perron-eigenvector entry (eq. 31).
     :param max_iter: Maximum iterations.
     :param horizon: Number of schedule time steps.
     :param weight_rule: Combination-weight rule for the combine step.
     """
-    return DiffusionAlgorithm(
+    return ExactDiffusionAlgorithm(
         finish_callback=finish_callback,
         diffusion_actor=diffusion_actor,
         initial_lam=initial_lam,
         epsilon=epsilon,
+        perron_scale=perron_scale,
         max_iter=max_iter,
         horizon=horizon,
         weight_rule=weight_rule,
     )
 
 
-def create_diffusion_start(
+def create_exact_diffusion_start(
     initial_lam: float,
     data: Any = None,
     horizon: int = 1,
 ) -> DiffusionMessage:
-    """Create the initial kick-off message for a diffusion run.
+    """Create the initial kick-off message for an exact-diffusion run.
 
     :param initial_lam: Starting scalar; broadcast to all λ dimensions.
     :param data: Auxiliary payload forwarded to each participant's

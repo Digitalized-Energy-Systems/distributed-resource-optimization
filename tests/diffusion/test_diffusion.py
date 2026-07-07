@@ -78,6 +78,44 @@ async def test_diffusion_no_actor_converges_to_consensus():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "weight_rule", ["mean_metropolis", "averaging", "relative_degree", "hastings"]
+)
+async def test_diffusion_converges_under_every_weight_rule(weight_rule):
+    """Each weight_rule must actually be wired through the full async
+    message-passing path, not just the standalone _weight_rules unit tests."""
+    n = 3
+    horizon = 1
+    results: dict[int, np.ndarray] = {}
+
+    def make_finish(idx: int):
+        def finish(algo, carrier):
+            results[idx] = algo._lam.copy()
+
+        return finish
+
+    actors = [
+        create_diffusion_participant(
+            make_finish(i),
+            diffusion_actor=NoDiffusionActor(),
+            initial_lam=float((i + 1) * 5),
+            max_iter=100,
+            horizon=horizon,
+            weight_rule=weight_rule,
+        )
+        for i in range(n)
+    ]
+    start = create_diffusion_start(initial_lam=5.0, horizon=horizon)
+    await start_distributed_optimization(actors, start)
+
+    assert len(results) == n
+    for i in range(1, n):
+        assert np.allclose(results[0], results[i], atol=0.5), (
+            f"λ values differ: agent 0={results[0]} vs agent {i}={results[i]}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_diffusion_merit_order():
     """Cheap generator should receive more load than the expensive one."""
     horizon = 2
