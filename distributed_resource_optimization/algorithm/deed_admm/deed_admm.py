@@ -480,22 +480,28 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         if abs(e_fin0 - e_target) < 1e-3:
             return x0
 
-        # Exponential expansion to bracket the root.
+        # Exponential expansion to bracket the root. f(bias) is decreasing in
+        # bias (larger bias -> more discharge -> lower terminal energy), so
+        # when f0 < 0 (ended below target) the bias must go negative (more
+        # charging) to raise it back up, and vice versa.
         f0 = e_fin0 - e_target
-        lo, hi = 0.0, (1.0 if f0 < 0.0 else -1.0)
+        best_x, best_err = x0, abs(f0)
+        lo, hi = 0.0, (-1.0 if f0 < 0.0 else 1.0)
         f_lo, f_hi = f0, f(hi)
+        if abs(f_hi) < best_err:
+            best_x, best_err = self._project_soc_forward(x_desired, hi)[0], abs(f_hi)
         for _ in range(20):
             if f_lo * f_hi <= 0.0:
                 break
             hi *= 2.0
             f_hi = f(hi)
+            if abs(f_hi) < best_err:
+                best_x, best_err = self._project_soc_forward(x_desired, hi)[0], abs(f_hi)
         else:
-            # Couldn't bracket — return best effort (bias=0).
-            return x0
+            # Couldn't bracket — return the best bias tried so far.
+            return best_x
 
         # 35-iteration bisection.
-        best_x = x0
-        best_err = abs(f_lo)
         for _ in range(35):
             mid = 0.5 * (lo + hi)
             f_mid = f(mid)
