@@ -78,8 +78,11 @@ class ADMMSharingData:
     """Input data for the sharing ADMM variant.
 
     :param target: Desired sum vector (length *m*).
-    :param priorities: Per-element priority weights (negated so that positive
-                       input values become penalties).
+    :param priorities: Per-element priority weights.  Only the magnitude
+                       matters: the z-update uses them inside symmetric
+                       absolute-value constraints, so the sign is immaterial
+                       (:func:`create_admm_sharing_data` stores them negated
+                       for historical reasons).
     :param generators: Optional specs for merit-order clearing in ``z_update``.
     :param epsilon: Price sensitivity used with :class:`~.economic_dispatch` actors.
     """
@@ -103,7 +106,10 @@ def create_admm_sharing_data(
                        for fulfilling that element).  Default: all ones.
     :param generators: Optional merit-order generator specs.
     :param epsilon: Price sensitivity for economic-dispatch actors.
-    :returns: :class:`ADMMSharingData` with negated priorities (penalty form).
+    :returns: :class:`ADMMSharingData`.  Priorities are stored negated (a
+              historical convention); the sign is immaterial to the z-update,
+              which only uses them inside symmetric absolute-value constraints
+              — only the magnitude weights the target-distance penalty.
     """
     t = np.asarray(target, dtype=float)
     p = np.ones(len(t)) if priorities is None else np.asarray(priorities, dtype=float)

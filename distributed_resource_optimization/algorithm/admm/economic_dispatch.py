@@ -162,68 +162,6 @@ def _storage_schedule_from_price(actor: StorageADMMFlexActor, pi: np.ndarray) ->
     return p
 
 
-def solve_battery_price_schedule(
-    *,
-    horizon: int,
-    pi: np.ndarray,
-    e_max: float,
-    p_charge_max: float,
-    p_discharge_max: float,
-    eta_charge: float = 1.0,
-    eta_discharge: float = 1.0,
-    e_initial: float = 0.5,
-    e_final: float | None = None,
-    soc_min: float = 0.0,
-    soc_max: float = 1.0,
-    charge_cost: float = 0.0,
-    discharge_cost: float = 0.0,
-) -> np.ndarray:
-    """Battery dispatch LP for a given per-timestep clearing-price vector *pi*.
-
-    Returns net power (positive = discharge, negative = charge), respecting
-    power limits, SOC bounds, and the terminal-SOC constraint.
-    """
-    pi = np.asarray(pi, dtype=float)
-    T = horizon
-    e_final_frac = e_initial if e_final is None else e_final
-    e_min_abs = soc_min * e_max
-    e_max_abs = soc_max * e_max
-    e_init = float(np.clip(e_initial * e_max, e_min_abs, e_max_abs))
-    e_end = float(np.clip(e_final_frac * e_max, e_min_abs, e_max_abs))
-
-    p_d = cp.Variable(T, nonneg=True)  # discharge power
-    p_c = cp.Variable(T, nonneg=True)  # charge power
-    E = cp.Variable(T + 1)
-    x = p_d - p_c  # net power (positive = discharge)
-
-    # Discharge earns (pi - discharge_cost); charge costs (pi + charge_cost).
-    objective = cp.Minimize((discharge_cost - pi) @ p_d + (charge_cost + pi) @ p_c)
-
-    constraints = [
-        p_d <= p_discharge_max,
-        p_c <= p_charge_max,
-        E[0] == e_init,
-        E[1:] == E[:-1] - p_d / eta_discharge + p_c * eta_charge,
-        E >= e_min_abs,
-        E <= e_max_abs,
-        E[-1] == e_end,
-    ]
-    prob = cp.Problem(objective, constraints)
-    prob.solve(solver=cp.OSQP, verbose=False)
-
-    if x.value is None:
-        # Terminal SOC constraint infeasible — relax it and find the best-effort schedule.
-        constraints_relaxed = constraints[:-1]
-        prob2 = cp.Problem(objective, constraints_relaxed)
-        prob2.solve(solver=cp.OSQP, verbose=False)
-        if x.value is None:
-            raise RuntimeError(
-                f"Battery price LP infeasible (status={prob2.status}). Check capacity parameters."
-            )
-
-    return np.asarray(x.value, dtype=float)
-
-
 class ProximalStorageADMMActor(ADMMFlexActor):
     """SOC-constrained storage participant for the iterative exchange ADMM.
 
@@ -409,5 +347,4 @@ __all__ = [
     "create_admm_economic_dispatch_actor",
     "create_admm_proximal_storage_actor",
     "create_admm_storage_actor",
-    "solve_battery_price_schedule",
 ]

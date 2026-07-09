@@ -105,6 +105,18 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
 
 
 def _create_C_and_d(tech_capacity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Coupling constraints for a one-to-many conversion device.
+
+    *tech_capacity* is the per-output capacity ``in_capacity * eta``.  Row 0
+    caps the total allocation: each output enters with the sign of its
+    capacity, so ``Σ |x_i| ≤ Σ |tech_capacity|``.  The remaining row pairs
+    tie every output *j* to the last output via
+    ``x_j / t_j == x_{m-1} / t_{m-1}`` (two ``≤`` rows per equality): all
+    outputs of the device must run at the same utilisation fraction of their
+    capacity, which is what a single shared input implies.  Pairs involving a
+    zero-capacity output are skipped (all-zero rows) since their ratio is
+    undefined and the box bounds already pin those outputs to 0.
+    """
     m = len(tech_capacity)
     n_rows = 1 + 2 * (m - 1)
     C = np.zeros((n_rows, m))
