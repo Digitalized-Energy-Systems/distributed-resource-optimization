@@ -73,6 +73,14 @@ def result(actor: ADMMFlexActor) -> np.ndarray:
 
 def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray:
     m = len(v)
+
+    if actor.C.size == 0:
+        # Box-only case: the QP is separable with closed-form solution
+        #   min (rho/2)||x||^2 + (rho*v + S)^T x  s.t.  lb <= x <= u
+        #   =>  x* = clip(-v - S/rho, lb, u)
+        center = -np.asarray(v, dtype=float) - np.asarray(actor.S, dtype=float) / rho
+        return np.clip(center, actor.lb, actor.u)
+
     x_var = cp.Variable(m)
 
     h = rho * np.asarray(v, dtype=float) + np.asarray(actor.S, dtype=float)

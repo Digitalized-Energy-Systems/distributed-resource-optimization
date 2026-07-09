@@ -1,17 +1,29 @@
-"""Consensus ADMM — all participants reach the same value summing to *target*.
+"""Consensus ADMM — participants' solutions sum to *target* (exchange ADMM).
 
-The global actor implements the consensus variant where z and u are lists of
+The global actor implements the variant where z and u are lists of
 per-participant vectors (one entry per agent).
 
 The z-update is:
 
 .. math::
 
-    \\delta = \\frac{\\text{target} - \\sum_i (x_i + u_i)}{N + \\alpha / \\rho}
+    \\delta = \\frac{\\text{target} - \\sum_i (x_i + u_i)}{N + \\rho / \\alpha}
 
     z_i \\leftarrow x_i + u_i + \\delta
 
+With ``alpha = 0`` (the default) the denominator is exactly *N*, which is the
+projection of :math:`(x_i + u_i)` onto the hard constraint
+:math:`\\sum_i z_i = \\text{target}` — this makes the iteration **exactly
+Boyd's exchange ADMM** (Boyd et al. 2011, §7.3.2, shifted by *target*): the
+scaled dual accumulates :math:`u \\leftarrow u + \\bar{x} - \\text{target}/N`
+and converges to the (scaled) market-clearing price.
 
+With ``alpha > 0`` the hard constraint is relaxed to a soft quadratic penalty
+:math:`\\frac{\\alpha}{2}\\|\\sum_i z_i - \\text{target}\\|^2`, whose exact
+minimiser has denominator :math:`N + \\rho/\\alpha`.  Note that a soft penalty
+biases the fixed point: with cost-bearing local objectives the converged sum
+misses *target* by :math:`(\\rho/\\alpha)\\,\\delta^*`, so keep ``alpha = 0``
+for economic dispatch.
 """
 
 from __future__ import annotations
@@ -25,13 +37,16 @@ from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMStart
 
 @dataclass
 class ADMMConsensusGlobalActor(ADMMGlobalActor):
-    """Global actor for the consensus ADMM variant.
+    """Global actor for the consensus (exchange) ADMM variant.
 
-    :param alpha: Regularisation weight that penalises deviation from the
-                  consensus (default 100).
+    :param alpha: Soft-penalty weight on the sum constraint.  ``0`` (default)
+                  enforces ``Σ zᵢ = target`` exactly — Boyd's exchange ADMM.
+                  ``alpha > 0`` relaxes it to a quadratic penalty
+                  ``(alpha/2)·‖Σz − target‖²`` and biases the converged sum
+                  by ``(rho/alpha)·δ*`` when local objectives carry costs.
     """
 
-    alpha: int = 100
+    alpha: float = 0.0
 
     def z_update(
         self,
@@ -46,7 +61,8 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
         S = np.zeros(m)
         for xi, ui in zip(x, u):
             S += xi + ui
-        delta = (np.asarray(input_data, dtype=float) - S) / (n + self.alpha / rho)
+        denom = n + (rho / self.alpha if self.alpha > 0.0 else 0.0)
+        delta = (np.asarray(input_data, dtype=float) - S) / denom
         return [xi + ui + delta for xi, ui in zip(x, u)]
 
     def u_update(
@@ -83,9 +99,22 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
 # ---------------------------------------------------------------------------
 
 
-def create_consensus_target_reach_admm_coordinator() -> ADMMGenericCoordinator:
-    """Create an :class:`ADMMGenericCoordinator` for the consensus variant."""
-    return ADMMGenericCoordinator(global_actor=ADMMConsensusGlobalActor())
+def create_consensus_target_reach_admm_coordinator(
+    rho: float = 1.0,
+    max_iters: int = 1000,
+    alpha: float = 0.0,
+) -> ADMMGenericCoordinator:
+    """Create an :class:`ADMMGenericCoordinator` for the consensus variant.
+
+    :param rho: ADMM penalty parameter.
+    :param max_iters: Maximum number of iterations.
+    :param alpha: Sum-constraint softness (``0`` = exact exchange ADMM).
+    """
+    return ADMMGenericCoordinator(
+        global_actor=ADMMConsensusGlobalActor(alpha=alpha),
+        rho=rho,
+        max_iters=max_iters,
+    )
 
 
 def create_admm_start_consensus(target: list | np.ndarray) -> ADMMStart:

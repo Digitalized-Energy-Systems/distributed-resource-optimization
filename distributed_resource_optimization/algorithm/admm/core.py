@@ -183,6 +183,14 @@ class ADMMGenericCoordinator(Coordinator):
     :param max_iters: Maximum number of iterations (default: 1000).
     :param abs_tol: Absolute convergence tolerance (default: 1e-4).
     :param rel_tol: Relative convergence tolerance (default: 1e-3).
+    :param single_shot_clearing: If ``True`` (default, historical behaviour)
+        and the input data carries merit-order ``generators`` specs, skip the
+        ADMM loop entirely: *z* is set from closed-form clearing prices and a
+        single x-update round distributes the dispatch.  Only valid when every
+        registered participant is a price-responsive economic-dispatch actor
+        (e.g. :class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`);
+        structurally different actors (storage, coupled QPs) need the
+        iterative loop.  Set to ``False`` to always iterate.
     """
 
     def __init__(
@@ -192,12 +200,14 @@ class ADMMGenericCoordinator(Coordinator):
         max_iters: int = 1000,
         abs_tol: float = 1e-4,
         rel_tol: float = 1e-3,
+        single_shot_clearing: bool = True,
     ) -> None:
         self.global_actor = global_actor
         self.rho = rho
         self.max_iters = max_iters
         self.abs_tol = abs_tol
         self.rel_tol = rel_tol
+        self.single_shot_clearing = single_shot_clearing
 
     async def start_optimization(
         self,
@@ -230,7 +240,21 @@ class ADMMGenericCoordinator(Coordinator):
         u = actor.init_u(n, m)
 
         generators = getattr(input_data, "generators", None)
-        if generators is not None:
+        if generators is not None and self.single_shot_clearing:
+            if len(generators) != n:
+                raise ValueError(
+                    f"Single-shot merit-order clearing has {len(generators)} generator "
+                    f"specs but {n} registered participants. This coordinator was "
+                    "constructed with a merit-order clearing input, which assumes every "
+                    "participant is a price-responsive economic-dispatch actor "
+                    "(e.g. LinearCostEconomicDispatchADMMFlexActor). A participant-count "
+                    "mismatch usually means a structurally different actor (e.g. storage) "
+                    "was registered without a matching generator spec — its response won't "
+                    "match the linear price-clip curve the clearing price assumes, and "
+                    "single-shot mode gives it no further rounds to correct that. Either "
+                    "add matching specs for every participant, or construct the coordinator "
+                    "with single_shot_clearing=False to run the full iterative ADMM loop."
+                )
             from .sharing_admm import _z_from_clearing_prices
 
             z = _z_from_clearing_prices(input_data, rho, n)

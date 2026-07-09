@@ -12,17 +12,19 @@ from .core import (
     ADMMStart,
     create_admm_start,
 )
+from .economic_dispatch import (
+    LinearCostEconomicDispatchADMMFlexActor,
+    ProximalStorageADMMActor,
+    StorageADMMFlexActor,
+    create_admm_economic_dispatch_actor,
+    create_admm_proximal_storage_actor,
+    create_admm_storage_actor,
+    solve_battery_price_schedule,
+)
 from .flex_actor import (
     ADMMFlexActor,
     create_admm_flex_actor_box_bounded,
     create_admm_flex_actor_one_to_many,
-)
-from .economic_dispatch import (
-    LinearCostEconomicDispatchADMMFlexActor,
-    StorageADMMFlexActor,
-    create_admm_economic_dispatch_actor,
-    create_admm_storage_actor,
-    solve_battery_price_schedule,
 )
 from .sharing_admm import (
     ADMMGeneratorSpec,
@@ -46,6 +48,8 @@ __all__ = [
     "create_admm_flex_actor_box_bounded",
     "LinearCostEconomicDispatchADMMFlexActor",
     "create_admm_economic_dispatch_actor",
+    "ProximalStorageADMMActor",
+    "create_admm_proximal_storage_actor",
     "StorageADMMFlexActor",
     "create_admm_storage_actor",
     "solve_battery_price_schedule",

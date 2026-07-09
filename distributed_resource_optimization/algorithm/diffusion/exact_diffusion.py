@@ -20,9 +20,12 @@ Per iteration, each participant:
    :math:`\\bar\\varphi_i^0 := \\varphi_i^0` (no :math:`\\varphi_i^{-1}` exists yet),
 3. broadcasts :math:`\\bar\\varphi_i^k` to its neighbours, and
 4. **combines**: :math:`\\lambda_i^k = \\sum_{j \\in \\mathcal{N}_i} \\bar w_{ij} \\bar\\varphi_j^k`
-   (eq. 29), using a left-stochastic (not necessarily doubly-stochastic)
-   weight matrix -- selectable among the four rules Ces et al. evaluate via
-   :mod:`.._weight_rules` (``weight_rule``).
+   (eq. 29), using the left-stochastic matrix :math:`\\bar W = (I + W)/2`
+   (eq. 31), where *W* is built from one of the four rules Ces et al.
+   evaluate via :mod:`.._weight_rules` (``weight_rule``). The averaging with
+   *I* is what keeps :math:`\\bar W` positive semi-definite -- required by
+   Exact Diffusion's convergence proof -- since the raw rule matrices alone
+   can have a negative eigenvalue (e.g. Mean Metropolis on a complete graph).
 
 The per-agent feedback gain :math:`\\varepsilon_i = \\varepsilon / p_i` (eq. 31)
 uses the Perron eigenvector entry :math:`p_i` of the weight matrix. Since the
@@ -69,7 +72,18 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
     :param perron_scale: This agent's Perron-eigenvector entry :math:`p_i`
                          (eq. 31); ``epsilon_i = epsilon / perron_scale``.
                          Defaults to ``1.0`` (valid on a degree-regular graph).
-    :param max_iter: Maximum number of diffusion iterations.
+    :param max_iter: Maximum number of diffusion iterations (failsafe; the
+                     ``tol`` criterion normally terminates the run first).
+    :param tol: Convergence tolerance — a participant flags itself converged
+                once ``max|λ_k − λ_{k−1}| ≤ tol`` has held for ``patience``
+                consecutive rounds, and the run terminates in the first round
+                where *every* participant is flagged (Ces et al. 2025 use
+                1e-4 on the incremental cost).
+    :param patience: Consecutive sub-``tol`` rounds required before a
+                     participant flags itself converged.  Guards against the
+                     turning points of oscillatory transients (the corrected
+                     second-order recursion has complex eigenmodes), where λ
+                     momentarily stops moving for a single round.
     :param horizon: Number of time steps in the schedule.
     :param weight_rule: Combination-weight rule for the combine step; any of
                         ``"averaging"``, ``"relative_degree"``,
@@ -86,6 +100,8 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         epsilon: float = 0.1,
         perron_scale: float = 1.0,
         max_iter: int = 300,
+        tol: float = 1e-4,
+        patience: int = 3,
         horizon: int = 24,
         weight_rule: WeightRule = "mean_metropolis",
     ) -> None:
@@ -96,8 +112,16 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         self.initial_lam = initial_lam
         self.epsilon = epsilon / perron_scale
         self.max_iter = max_iter
+        self.tol = tol
+        self.patience = patience
         self.horizon = horizon
         self.weight_rule = weight_rule
+
+        #: How the last run ended: ``True`` if the tol criterion fired,
+        #: ``False`` if it hit the max_iter failsafe (or never ran).
+        self.converged: bool = False
+        #: Iterations completed when the last run terminated.
+        self.iterations: int = 0
 
         self._message_queue: dict[int, list[DiffusionMessage]] = {}
         self._first_message: bool = True
@@ -106,6 +130,8 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         self._lam: np.ndarray = np.full(horizon, initial_lam)
         self._phi_prev: np.ndarray | None = None
         self._phi_bar: np.ndarray = np.full(horizon, initial_lam)
+        self._converged_flag: bool = False  # own flag from the last combine
+        self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
     def _adapt_and_correct(self, data: Any) -> np.ndarray:
         """Adapt (eq. 28) then correct (eq. 30); advances :attr:`_phi_prev`."""
@@ -127,10 +153,12 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         """Process one incoming exact-diffusion message."""
         neighbours = carrier.others("")
 
-        # --- Termination path ---
+        # --- Termination path (max_iter failsafe) ---
         if message_data.k >= self.max_iter:
             if self._first_message:
                 return
+            self.converged = False
+            self.iterations = self._k
             self.finish_callback(self, carrier)
             self._first_message = True
             self._message_queue.clear()
@@ -146,6 +174,9 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
             self._first_message = False
             self._started = True
             self._k = 0
+            self._converged_flag = False
+            self._stable_rounds = 0
+            self.converged = False
             self._lam = np.ones(len(message_data.phi)) * self.initial_lam
             self._phi_prev = None
             self._phi_bar = self._adapt_and_correct(message_data.data)
@@ -191,11 +222,35 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
                         f"from a node using {m.weight_rule!r}."
                     )
 
-            # Combination: weighted average of own φ̄ and all received φ̄'s.
-            self_w, neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
+            # --- Termination path (tol criterion) ---
+            # Own flag and every message in this round's queue reflect the
+            # λ change of round k−1.  On the complete graphs this codebase
+            # uses, every participant therefore evaluates the same set of
+            # flags in the same round and terminates simultaneously.
+            if self._converged_flag and all(m.converged for m in queue):
+                self.converged = True
+                self.iterations = self._k
+                self.finish_callback(self, carrier)
+                self._first_message = True
+                self._message_queue.clear()
+                return
+
+            # Combination: weighted average of own φ̄ and all received φ̄'s,
+            # using W̄ = (I + W)/2 (eq. 31) rather than the raw rule weights —
+            # this is what makes the combine matrix satisfy the PSD condition
+            # Exact Diffusion's convergence proof relies on (the raw rule
+            # matrices have a negative eigenvalue on a complete graph).
+            raw_self_w, raw_neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
+            self_w = (1.0 + raw_self_w) / 2.0
+            neighbor_w = raw_neighbor_w / 2.0
             lam_new = self_w * self._phi_bar
             for m in queue:
                 lam_new = lam_new + neighbor_w * m.phi
+            if np.max(np.abs(lam_new - self._lam)) <= self.tol:
+                self._stable_rounds += 1
+            else:
+                self._stable_rounds = 0
+            self._converged_flag = self._stable_rounds >= self.patience
             self._lam = lam_new
 
             del self._message_queue[message_data.k]
@@ -214,6 +269,7 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
                         data=message_data.data,
                         degree=len(neighbours),
                         weight_rule=self.weight_rule,
+                        converged=self._converged_flag,
                     ),
                     addr,
                 )
@@ -231,6 +287,8 @@ def create_exact_diffusion_participant(
     epsilon: float = 0.1,
     perron_scale: float = 1.0,
     max_iter: int = 300,
+    tol: float = 1e-4,
+    patience: int = 3,
     horizon: int = 24,
     weight_rule: WeightRule = "mean_metropolis",
 ) -> ExactDiffusionAlgorithm:
@@ -241,7 +299,9 @@ def create_exact_diffusion_participant(
     :param initial_lam: Initial λ scalar.
     :param epsilon: Base gradient step size.
     :param perron_scale: This agent's Perron-eigenvector entry (eq. 31).
-    :param max_iter: Maximum iterations.
+    :param max_iter: Maximum iterations (failsafe; ``tol`` normally stops first).
+    :param tol: Per-round λ-change convergence tolerance.
+    :param patience: Consecutive sub-``tol`` rounds required to flag convergence.
     :param horizon: Number of schedule time steps.
     :param weight_rule: Combination-weight rule for the combine step.
     """
@@ -252,6 +312,8 @@ def create_exact_diffusion_participant(
         epsilon=epsilon,
         perron_scale=perron_scale,
         max_iter=max_iter,
+        tol=tol,
+        patience=patience,
         horizon=horizon,
         weight_rule=weight_rule,
     )

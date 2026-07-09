@@ -46,26 +46,38 @@ async def test_consensus_admm_basic():
 async def test_consensus_admm_two_actors_conv_create():
     """Two identical actors converge to the same allocation.
 
-    With η=[0.6, 0.4] both actors should reach x≈[0.816, 0.544].
+    η=[0.6, 0.4] forces each actor's split onto the ratio line x1 = (2/3)x0.
+    The previous target [1.0, 2.0] had the opposite ratio (2:1, not 2:3) and
+    was therefore infeasible for the exact ``Σx = target`` constraint — exact
+    exchange ADMM (``alpha=0``) correctly never converges on an infeasible
+    target, so the old pinned expectation was an artifact of the (buggy)
+    heavy-damping default rather than a true optimum. [1.5, 1.0] respects the
+    ratio (1.0 = (2/3)*1.5); by symmetry between two identical actors the true
+    optimum (verified independently via cvxpy) splits it evenly:
+    x≈[0.75, 0.5] each.
     """
     actors = [
         create_admm_flex_actor_one_to_many(10, [0.6, 0.4]),
         create_admm_flex_actor_one_to_many(10, [0.6, 0.4]),
     ]
     coordinator = create_consensus_target_reach_admm_coordinator()
-    start = create_admm_start_consensus([1.0, 2.0])
+    start = create_admm_start_consensus([1.5, 1.0])
     results = await start_coordinated_optimization(actors, coordinator, start)
 
-    expected = np.array([0.8163816641254231, 0.5442936838263125])
-    assert np.allclose(results[0], expected, rtol=1e-2)
-    assert np.allclose(results[1], expected, rtol=1e-2)
+    expected = np.array([0.75, 0.5])
+    assert np.allclose(results[0], expected, atol=1e-2)
+    assert np.allclose(results[1], expected, atol=1e-2)
+    assert np.allclose(sum(results), [1.5, 1.0], atol=1e-2)
 
 
 @pytest.mark.asyncio
 async def test_consensus_admm_three_actors_coord_as_actor():
     """Three identical actors with coordinator-as-actor converge uniformly.
 
-    All three actors should reach x≈[0.545, 0.364].
+    Same ratio-feasibility fix as the two-actor case above: target [3.0, 2.0]
+    respects the η=[0.6, 0.4] coupling ratio (2.0 = (2/3)*3.0), so the exact
+    Σx=target constraint is satisfiable and the symmetric optimum
+    x≈[1.0, 0.667] per actor (verified via cvxpy) is well-defined.
     """
     actors = [
         create_admm_flex_actor_one_to_many(10, [0.6, 0.4]),
@@ -73,12 +85,13 @@ async def test_consensus_admm_three_actors_coord_as_actor():
         create_admm_flex_actor_one_to_many(10, [0.6, 0.4]),
     ]
     coordinator = create_consensus_target_reach_admm_coordinator()
-    start = create_admm_start_consensus([1.0, 2.0])
+    start = create_admm_start_consensus([3.0, 2.0])
     results = await start_coordinated_optimization(actors, coordinator, start)
 
-    expected = np.array([0.545531954256762, 0.3637335132272603])
+    expected = np.array([1.0, 0.6666666666666666])
     for r in results:
-        assert np.allclose(r, expected, rtol=1e-2)
+        assert np.allclose(r, expected, atol=1e-2)
+    assert np.allclose(sum(results), [3.0, 2.0], atol=1e-2)
 
 
 @pytest.mark.asyncio

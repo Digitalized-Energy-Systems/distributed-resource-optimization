@@ -15,6 +15,7 @@ from distributed_resource_optimization import (
     create_exact_diffusion_start,
     start_distributed_optimization,
 )
+from distributed_resource_optimization.algorithm._weight_rules import regular_graph_weights
 
 # ---------------------------------------------------------------------------
 # Integration tests (full async runs via SimpleCarrier)
@@ -113,6 +114,57 @@ async def test_exact_diffusion_converges_under_every_weight_rule(weight_rule):
         assert np.allclose(results[0], results[i], atol=0.5), (
             f"λ values differ: agent 0={results[0]} vs agent {i}={results[i]}"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "weight_rule", ["mean_metropolis", "averaging", "relative_degree", "hastings"]
+)
+async def test_exact_diffusion_combine_uses_ibar_w_over_two(weight_rule):
+    """The combine step must use W̄ = (I + W)/2 (eq. 31), not the raw rule matrix.
+
+    With NoDiffusionActor (zero gradient) φ̄ = λ exactly on the first round, so
+    the post-combine λ is directly checkable against the hand-computed halved
+    weights. max_iter=1 stops right after that first combine.
+    """
+    lam0, lam1 = 10.0, 20.0
+    results: dict[int, np.ndarray] = {}
+
+    def make_finish(idx: int):
+        def finish(algo, carrier):
+            results[idx] = algo._lam.copy()
+
+        return finish
+
+    actors = [
+        create_exact_diffusion_participant(
+            make_finish(0),
+            diffusion_actor=NoDiffusionActor(),
+            initial_lam=lam0,
+            max_iter=1,
+            horizon=1,
+            weight_rule=weight_rule,
+        ),
+        create_exact_diffusion_participant(
+            make_finish(1),
+            diffusion_actor=NoDiffusionActor(),
+            initial_lam=lam1,
+            max_iter=1,
+            horizon=1,
+            weight_rule=weight_rule,
+        ),
+    ]
+    start = create_exact_diffusion_start(initial_lam=0.0, horizon=1)
+    await start_distributed_optimization(actors, start)
+
+    raw_self_w, raw_neighbor_w = regular_graph_weights(1, weight_rule)
+    self_w = (1.0 + raw_self_w) / 2.0
+    neighbor_w = raw_neighbor_w / 2.0
+
+    expected0 = self_w * lam0 + neighbor_w * lam1
+    expected1 = self_w * lam1 + neighbor_w * lam0
+    assert results[0] == pytest.approx(expected0, abs=1e-8)
+    assert results[1] == pytest.approx(expected1, abs=1e-8)
 
 
 @pytest.mark.asyncio

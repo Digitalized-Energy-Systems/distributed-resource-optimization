@@ -95,8 +95,10 @@ from .algorithm.admm.flex_actor import (
 )
 from .algorithm.admm.economic_dispatch import (
     LinearCostEconomicDispatchADMMFlexActor,
+    ProximalStorageADMMActor,
     StorageADMMFlexActor,
     create_admm_economic_dispatch_actor,
+    create_admm_proximal_storage_actor,
     create_admm_storage_actor,
     solve_battery_price_schedule,
 )
@@ -282,8 +284,11 @@ __all__ = [
     "create_admm_flex_actor_box_bounded",
     "LinearCostEconomicDispatchADMMFlexActor",
     "create_admm_economic_dispatch_actor",
+    "ProximalStorageADMMActor",
+    "create_admm_proximal_storage_actor",
     "StorageADMMFlexActor",
     "create_admm_storage_actor",
+    "solve_battery_price_schedule",
     "admm_flex_result",
     "ADMMConsensusGlobalActor",
     "create_consensus_target_reach_admm_coordinator",

@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    ADMMGeneratorSpec,
+    create_admm_economic_dispatch_actor,
     create_admm_flex_actor_one_to_many,
+    create_admm_proximal_storage_actor,
     create_admm_sharing_data,
     create_sharing_target_distance_admm_coordinator,
     start_coordinated_optimization,
@@ -81,3 +84,39 @@ async def test_flex_admm_sharing_heterogeneous_actors():
     assert np.allclose(actors[0].x, [0.155, 0.776, -1.553], atol=1e-2)
     assert np.allclose(actors[1].x, [0.155, 0.776, -1.553], atol=1e-2)
     assert np.allclose(actors[2].x, [0.893, 0, -0.893], atol=1e-2)
+
+
+@pytest.mark.asyncio
+async def test_single_shot_clearing_rejects_participant_count_mismatch():
+    """Registering an extra actor (e.g. storage) beyond the generator specs
+    must raise, not silently mis-dispatch.
+
+    This is the historical failure mode: merit-order clearing sizes its
+    price-response formula off ``len(generators)``, so a third registered
+    participant not covered by a spec gets one round of a price signal
+    computed for two, with no further iteration to correct it.
+    """
+    horizon = 2
+    lb = np.zeros(horizon)
+    gens = [
+        create_admm_economic_dispatch_actor(
+            lb=lb, u=np.full(horizon, 10.0), cost=10.0, n_participants=2, epsilon=0.1
+        ),
+        create_admm_economic_dispatch_actor(
+            lb=lb, u=np.full(horizon, 10.0), cost=50.0, n_participants=2, epsilon=0.1
+        ),
+    ]
+    storage = create_admm_proximal_storage_actor(
+        horizon=horizon, e_max=10.0, p_charge_max=5.0, p_discharge_max=5.0
+    )
+    specs = [
+        ADMMGeneratorSpec(cost=np.full(horizon, 10.0), lb=lb, ub=np.full(horizon, 10.0)),
+        ADMMGeneratorSpec(cost=np.full(horizon, 50.0), lb=lb, ub=np.full(horizon, 10.0)),
+    ]
+    coordinator = create_sharing_target_distance_admm_coordinator()
+    data = create_admm_sharing_data(np.array([3.0, 3.0]), generators=specs)
+
+    with pytest.raises(ValueError, match="participant"):
+        await start_coordinated_optimization(
+            [*gens, storage], coordinator, create_sharing_admm_start(data)
+        )

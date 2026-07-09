@@ -90,6 +90,11 @@ class DiffusionMessage(OptimizationMessage):
     :param weight_rule: Sender's own combination-weight rule.  Used only to
                         verify every participant agrees on the same rule --
                         ignored on the ``initial`` kick-off message.
+    :param converged: Whether the sender's λ has changed by at most ``tol``
+                      for ``patience`` consecutive combine steps.  A round in
+                      which every participant's flag is ``True`` terminates
+                      the run (Ces et al. 2025 stop when the largest per-agent
+                      incremental-cost change falls below their tolerance).
     """
 
     phi: np.ndarray
@@ -98,6 +103,7 @@ class DiffusionMessage(OptimizationMessage):
     initial: bool = False
     degree: int = 0
     weight_rule: str = ""
+    converged: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +125,17 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                             gradient.  ``None`` → :class:`NoDiffusionActor`.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
     :param epsilon: Gradient step size (ε).
-    :param max_iter: Maximum number of diffusion iterations.
+    :param max_iter: Maximum number of diffusion iterations (failsafe; the
+                     ``tol`` criterion normally terminates the run first).
+    :param tol: Convergence tolerance — a participant flags itself converged
+                once ``max|λ_k − λ_{k−1}| ≤ tol`` has held for ``patience``
+                consecutive rounds, and the run terminates in the first round
+                where *every* participant is flagged (Ces et al. 2025 use
+                1e-4 on the incremental cost).
+    :param patience: Consecutive sub-``tol`` rounds required before a
+                     participant flags itself converged.  Guards against the
+                     turning points of oscillatory transients, where λ
+                     momentarily stops moving for a single round.
     :param horizon: Number of time steps in the schedule.
     :param weight_rule: Combination-weight rule for the combine step.  The
                         paper requires a doubly-stochastic matrix for
@@ -138,6 +154,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         initial_lam: float = 10.0,
         epsilon: float = 0.1,
         max_iter: int = 300,
+        tol: float = 1e-4,
+        patience: int = 3,
         horizon: int = 24,
         weight_rule: WeightRule = "mean_metropolis",
     ) -> None:
@@ -148,8 +166,16 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self.initial_lam = initial_lam
         self.epsilon = epsilon
         self.max_iter = max_iter
+        self.tol = tol
+        self.patience = patience
         self.horizon = horizon
         self.weight_rule = weight_rule
+
+        #: How the last run ended: ``True`` if the tol criterion fired,
+        #: ``False`` if it hit the max_iter failsafe (or never ran).
+        self.converged: bool = False
+        #: Iterations completed when the last run terminated.
+        self.iterations: int = 0
 
         self._message_queue: dict[int, list[DiffusionMessage]] = {}
         self._first_message: bool = True
@@ -157,6 +183,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self._k: int = 0
         self._lam: np.ndarray = np.full(horizon, initial_lam)
         self._phi: np.ndarray = np.full(horizon, initial_lam)
+        self._converged_flag: bool = False  # own flag from the last combine
+        self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
     async def on_exchange_message(
         self,
@@ -167,10 +195,12 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         """Process one incoming diffusion message."""
         neighbours = carrier.others("")
 
-        # --- Termination path ---
+        # --- Termination path (max_iter failsafe) ---
         if message_data.k >= self.max_iter:
             if self._first_message:
                 return
+            self.converged = False
+            self.iterations = self._k
             self.finish_callback(self, carrier)
             self._first_message = True
             self._message_queue.clear()
@@ -186,6 +216,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
             self._first_message = False
             self._started = True
             self._k = 0
+            self._converged_flag = False
+            self._stable_rounds = 0
+            self.converged = False
             self._lam = np.ones(len(message_data.phi)) * self.initial_lam
 
             grad_J = self.actor.gradient_term(self._lam, message_data.data)
@@ -232,12 +265,30 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                         f"from a node using {m.weight_rule!r}."
                     )
 
+            # --- Termination path (tol criterion) ---
+            # Own flag and every message in this round's queue reflect the
+            # λ change of round k−1.  On the complete graphs this codebase
+            # uses, every participant therefore evaluates the same set of
+            # flags in the same round and terminates simultaneously.
+            if self._converged_flag and all(m.converged for m in queue):
+                self.converged = True
+                self.iterations = self._k
+                self.finish_callback(self, carrier)
+                self._first_message = True
+                self._message_queue.clear()
+                return
+
             # Combination: Mean-Metropolis weighted average of own φ and all
             # received φ's (eq. 19; doubly stochastic).
             self_w, neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
             lam_new = self_w * self._phi
             for m in queue:
                 lam_new = lam_new + neighbor_w * m.phi
+            if np.max(np.abs(lam_new - self._lam)) <= self.tol:
+                self._stable_rounds += 1
+            else:
+                self._stable_rounds = 0
+            self._converged_flag = self._stable_rounds >= self.patience
             self._lam = lam_new
 
             del self._message_queue[message_data.k]
@@ -257,6 +308,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                         data=message_data.data,
                         degree=len(neighbours),
                         weight_rule=self.weight_rule,
+                        converged=self._converged_flag,
                     ),
                     addr,
                 )
@@ -273,6 +325,8 @@ def create_diffusion_participant(
     initial_lam: float = 10.0,
     epsilon: float = 0.1,
     max_iter: int = 300,
+    tol: float = 1e-4,
+    patience: int = 3,
     horizon: int = 24,
     weight_rule: WeightRule = "mean_metropolis",
 ) -> DiffusionAlgorithm:
@@ -282,7 +336,9 @@ def create_diffusion_participant(
     :param diffusion_actor: Optional gradient actor.  ``None`` → no gradient.
     :param initial_lam: Initial λ scalar.
     :param epsilon: Gradient step size.
-    :param max_iter: Maximum iterations.
+    :param max_iter: Maximum iterations (failsafe; ``tol`` normally stops first).
+    :param tol: Per-round λ-change convergence tolerance.
+    :param patience: Consecutive sub-``tol`` rounds required to flag convergence.
     :param horizon: Number of schedule time steps.
     :param weight_rule: Combination-weight rule for the combine step.
     """
@@ -292,6 +348,8 @@ def create_diffusion_participant(
         initial_lam=initial_lam,
         epsilon=epsilon,
         max_iter=max_iter,
+        tol=tol,
+        patience=patience,
         horizon=horizon,
         weight_rule=weight_rule,
     )
