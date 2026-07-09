@@ -176,6 +176,13 @@ see ``tests/consensus/test_consensus_sc.py::test_merit_order_dispatch_with_heter
    residual-based stopping criterion.  In a fully connected graph convergence is typically
    fast (10–30 rounds); increase ``max_iter`` for larger or sparser networks.
 
+.. note::
+
+   The leader reconstructs :math:`\Delta P` from its own projected power plus the powers
+   attached to the messages it receives, so it must be a direct neighbour of every other
+   participant (complete or leader-star topology).  On a sparser graph the leader would pin
+   :math:`\lambda` against a partial, understated imbalance.
+
 See Also
 --------
 

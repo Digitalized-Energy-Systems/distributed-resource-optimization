@@ -83,20 +83,6 @@ class AveragingConsensusMessage(OptimizationMessage):
     initial: bool = False
 
 
-@dataclass
-class ConsensusFinishedMessage:
-    """Emitted (internally) when a participant finishes the consensus run.
-
-    :param lam: Final λ estimate.
-    :param k: Iteration at which convergence / max_iter was reached.
-    :param actor: The :class:`ConsensusActor` instance of this participant.
-    """
-
-    lam: np.ndarray
-    k: int
-    actor: ConsensusActor
-
-
 # ---------------------------------------------------------------------------
 # AveragingConsensusAlgorithm
 # ---------------------------------------------------------------------------
@@ -110,6 +96,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     ΔP`` where ``ΔP`` is the real system-wide power imbalance, recovered
     each round from every participant's projected power. Followers do pure
     neighbour averaging.
+
+    The leader reconstructs ΔP from its own power plus the powers attached
+    to the messages it receives, so it must be a direct neighbour of every
+    other participant (complete or leader-star topology) — on a sparser
+    graph it would pin λ against a partial, understated imbalance.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when the run
                             ends (either :attr:`max_iter` reached or all
@@ -181,6 +172,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._first_message = False
             self._started = True
             self._k = 0
+            self._message_queue.clear()
             self._lam = np.ones(len(message_data.lam)) * self.initial_lam
             self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
             for addr in neighbours:
@@ -194,6 +186,13 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                 # This is the external kick-off trigger, not a neighbour's
                 # round-0 contribution — don't queue it for averaging/ΔP.
                 return
+
+        # Drop stragglers from iterations we have already advanced past.
+        # Under packet loss / reordering, a late message could otherwise
+        # complete an old iteration's queue, stepping ``self._k`` backwards
+        # and re-broadcasting duplicate rounds.
+        if message_data.k < self._k:
+            return
 
         # --- Queue the message ---
         queue = self._message_queue.setdefault(message_data.k, [])
@@ -214,7 +213,10 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
             self._k = message_data.k + 1
 
-            del self._message_queue[message_data.k]
+            # Purge this and any older iteration's queue: after jumping past
+            # a lossy iteration, its partial queue must not linger.
+            for k in [k for k in self._message_queue if k < self._k]:
+                del self._message_queue[k]
 
             for addr in neighbours:
                 carrier.send_to_other(

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    AveragingConsensusMessage,
     create_averaging_consensus_participant,
     create_averaging_consensus_start,
     start_distributed_optimization,
@@ -13,6 +14,20 @@ from distributed_resource_optimization import (
 from distributed_resource_optimization.algorithm.consensus.economic_dispatch import (
     LinearCostEconomicDispatchConsensusActor,
 )
+
+
+class _RecordingCarrier:
+    """Minimal carrier stub: fixed neighbour list, records every send."""
+
+    def __init__(self, neighbours: list[str]) -> None:
+        self._neighbours = neighbours
+        self.sent: list[tuple[str, AveragingConsensusMessage]] = []
+
+    def others(self, participant_id: str) -> list[str]:
+        return self._neighbours
+
+    def send_to_other(self, content, receiver, meta=None) -> None:
+        self.sent.append((receiver, content))
 
 
 @pytest.mark.asyncio
@@ -98,3 +113,43 @@ async def test_averaging_consensus_leader_follower_merit_order():
     assert powers[1] == pytest.approx(30.0, abs=1.0)
     assert powers[2] == pytest.approx(0.0, abs=1.0)
     assert powers[3] == pytest.approx(0.0, abs=1.0)
+
+
+@pytest.mark.asyncio
+async def test_stale_messages_do_not_rewind_iteration():
+    """Out-of-order/lossy delivery must never step the iteration backwards.
+
+    A participant that jumps ahead on a newer-k message (partial queue, the
+    loss-tolerance path) used to reprocess an older iteration once that
+    iteration's stragglers completed its queue — rewinding ``_k`` and
+    re-broadcasting duplicate rounds.
+    """
+    algo = create_averaging_consensus_participant(lambda *_: None, max_iter=50)
+    carrier = _RecordingCarrier(["n1", "n2"])
+
+    def neighbour_msg(k: int, lam: float = 1.0) -> AveragingConsensusMessage:
+        return AveragingConsensusMessage(lam=np.array([lam]), k=k, data=None, p=np.array([0.0]))
+
+    # External kick-off; participant initialises at k=0 and broadcasts.
+    await algo.on_exchange_message(
+        carrier,
+        AveragingConsensusMessage(lam=np.array([1.0]), k=0, data=None, initial=True),
+        None,
+    )
+    assert algo._k == 0
+
+    # n1's round-0 message: only 1 of 2 neighbours — no advance yet.
+    await algo.on_exchange_message(carrier, neighbour_msg(0), None)
+    assert algo._k == 0
+
+    # n2 is already at round 1: jump ahead on the partial queue.
+    await algo.on_exchange_message(carrier, neighbour_msg(1), None)
+    assert algo._k == 2
+    assert algo._message_queue == {}  # stale round-0 queue purged
+
+    # n2's round-0 straggler finally arrives: must be dropped, not rewind
+    # the counter to 1 and re-broadcast.
+    ks_sent_before = [msg.k for _, msg in carrier.sent]
+    await algo.on_exchange_message(carrier, neighbour_msg(0), None)
+    assert algo._k == 2
+    assert [msg.k for _, msg in carrier.sent] == ks_sent_before
