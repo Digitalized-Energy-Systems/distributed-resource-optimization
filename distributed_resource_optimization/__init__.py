@@ -175,7 +175,6 @@ from .algorithm.diffusion.exact_diffusion import (
 # DEED-ADMM
 from .algorithm.deed_admm import (
     DEEDADMMAlgorithm,
-    DEEDADMMFinishedMessage,
     DEEDADMMMessage,
     DEEDADMMStorageAlgorithm,
     create_deed_admm_renewable_participant,
@@ -320,7 +319,6 @@ __all__ = [
     "DEEDADMMAlgorithm",
     "DEEDADMMStorageAlgorithm",
     "DEEDADMMMessage",
-    "DEEDADMMFinishedMessage",
     "create_deed_admm_thermal_participant",
     "create_deed_admm_renewable_participant",
     "create_deed_admm_storage_participant",

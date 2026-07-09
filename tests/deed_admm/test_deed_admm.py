@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from distributed_resource_optimization import (
     DEEDADMMAlgorithm,
     DEEDADMMMessage,
-    create_deed_admm_thermal_participant,
     create_deed_admm_renewable_participant,
     create_deed_admm_storage_participant,
+    create_deed_admm_thermal_participant,
     start_distributed_optimization,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -326,3 +324,107 @@ async def test_storage_generator_balance():
     total = results[0] + results[1]
     # Overall supply should track demand (storage shifts power, not destroys it)
     np.testing.assert_allclose(total.sum(), demand.sum(), atol=demand.sum() * 0.05)
+
+
+async def test_storage_reaches_terminal_soc_target():
+    """Terminal SOC must hit e_final (regression: inverted bisection direction
+    in _project_soc silently skipped the terminal correction, leaving the
+    battery drained instead of returning to its target)."""
+    tau = 24
+    e_max = 40.0
+    eta = 0.95
+    demand = np.full(tau, 30.0)
+    n_agents = 2
+
+    results: dict[int, np.ndarray] = {}
+    storage_alg_holder: dict[str, object] = {}
+
+    def storage_cb(algorithm, carrier) -> None:
+        results[1] = algorithm.P.copy()
+        storage_alg_holder["alg"] = algorithm
+
+    agents = [
+        create_deed_admm_thermal_participant(
+            _make_finish_cb(results, 0),
+            p_min=0.0,
+            p_max=60.0,
+            marginal_cost=5.0,
+            d_i=demand,
+            gamma=0.05,
+            max_iter=600,
+            n_agents=n_agents,
+        ),
+        create_deed_admm_storage_participant(
+            storage_cb,
+            e_max=e_max,
+            p_charge_max=10.0,
+            p_discharge_max=10.0,
+            eta_charge=eta,
+            eta_discharge=eta,
+            e_initial=1.0,  # start full
+            e_final=0.5,  # must end half-full
+            tau=tau,
+            gamma=0.05,
+            max_iter=600,
+            n_agents=n_agents,
+        ),
+    ]
+
+    start_msg = DEEDADMMMessage(
+        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
+    )
+    await start_distributed_optimization(agents, start_msg)
+
+    P_stor = results[1]
+    # Recompute the SOC path independently from the reported schedule.
+    e = 1.0 * e_max
+    for p in P_stor:
+        e -= p / eta if p >= 0 else p * eta
+    e_target = 0.5 * e_max
+    assert abs(e - e_target) < 0.5, (
+        f"Terminal energy {e:.2f} MWh missed target {e_target:.2f} MWh"
+    )
+    # The algorithm's own SOC trajectory must agree and end on target.
+    E = storage_alg_holder["alg"].E
+    assert E.shape == (tau + 1,)
+    assert abs(E[-1] - e_target) < 0.5
+
+
+async def test_quadratic_cost_three_agents():
+    """Quadratic costs: dispatch must equalise marginal costs 2aᵢxᵢ = λ.
+
+    a = [0.1, 0.2, 0.4], demand 70 → xᵢ = λ/(2aᵢ), Σxᵢ = 70 → λ = 8,
+    x* = [40, 20, 10].
+    """
+    tau = 1
+    demand = np.array([70.0])
+    quads = [0.1, 0.2, 0.4]
+    n_agents = 3
+    d_i = demand / n_agents
+
+    results: dict[int, np.ndarray] = {}
+
+    actors = [
+        create_deed_admm_thermal_participant(
+            _make_finish_cb(results, i),
+            p_min=0.0,
+            p_max=100.0,
+            marginal_cost=0.0,
+            cost_quad=a,
+            d_i=d_i,
+            gamma=0.05,
+            max_iter=1000,
+            n_agents=n_agents,
+        )
+        for i, a in enumerate(quads)
+    ]
+
+    start_msg = DEEDADMMMessage(
+        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
+    )
+    await start_distributed_optimization(actors, start_msg)
+
+    assert len(results) == 3
+    np.testing.assert_allclose(results[0], [40.0], atol=2.0)
+    np.testing.assert_allclose(results[1], [20.0], atol=2.0)
+    np.testing.assert_allclose(results[2], [10.0], atol=2.0)

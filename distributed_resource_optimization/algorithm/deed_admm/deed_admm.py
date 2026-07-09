@@ -25,6 +25,16 @@ For the electricity-only PyPSA benchmark the multi-energy hub model
 simplifies to Aᵢ = Iᵀ (no energy conversion), B = 0, zᵢ = 0.  The
 weight matrix is uniform: wᵢⱼ = 1/n for all j (including self).
 
+Deviations from the paper (by design):
+* The paper's ramp-rate constraints (16)-(17) are not modelled — none of
+  the benchmark networks specify ramp limits.
+* Iterations run for a fixed ``max_iter`` instead of the paper's
+  "while not converged"; the final schedule is read from the box-projected
+  p̂ₓ so it stays feasible even when cut off early.
+* Storage SOC dynamics are enforced by a greedy projection inside the
+  x-update (see :class:`DEEDADMMStorageAlgorithm`) rather than by the
+  paper's linear-inequality Mᵢ mechanism.
+
 Communication pattern: peer-to-peer (no central coordinator), identical
 to the averaging-consensus pattern.  Each agent broadcasts its (λ, ξ)
 after every primal update and waits for ALL neighbours before advancing.
@@ -68,23 +78,6 @@ class DEEDADMMMessage(OptimizationMessage):
 
 
 # ---------------------------------------------------------------------------
-# Finished sentinel
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DEEDADMMFinishedMessage:
-    """Emitted internally when a participant finishes.
-
-    :param P: Final schedule array (shape τ).
-    :param k: Iteration at which max_iter was reached.
-    """
-
-    P: np.ndarray
-    k: int
-
-
-# ---------------------------------------------------------------------------
 # Core algorithm
 # ---------------------------------------------------------------------------
 
@@ -97,9 +90,10 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     * B  = 0    (no storage coupling; use a dedicated storage subclass for that)
     * zᵢ = 0
 
-    The variable xᵢ (supply) and yᵢ (hub input) are updated simultaneously.
-    In the electricity-only setting they should converge to the same value:
-    the generator's optimal schedule.
+    The variable xᵢ (supply) converges to the generator's optimal schedule.
+    The hub-input variable yᵢ is pinned to dᵢ from the first iteration by
+    the per-agent constraint Aᵢyᵢ = dᵢ (Aᵢ = I here); only the global sums
+    Σxᵢ = Σyᵢ = Σdᵢ are matched by the ξ tracker, not xᵢ = yᵢ per agent.
 
     :param finish_callback: ``(algorithm, carrier) -> None`` called when done.
     :param cost_quad: Per-step quadratic cost coefficient aᵢ (shape τ or
@@ -174,6 +168,24 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _project_x(self, x_raw: np.ndarray) -> np.ndarray:
+        """Hook applied to the raw x-update before it is stored.
+
+        The base class applies no projection (the box bounds are handled by
+        the p̂ variable); subclasses insert schedule-feasibility projections
+        here (e.g. SOC dynamics for storage).
+        """
+        return x_raw
+
+    def _extract_schedule(self) -> np.ndarray:
+        """Final schedule reported at termination.
+
+        p̂ₓ is the box-projected supply variable; at convergence x = p̂ₓ.
+        Using p̂ₓ (not raw x) keeps the schedule feasible even when the
+        algorithm hasn't fully converged.
+        """
+        return self._p_hat_x.copy()
+
     def _reset_state(self) -> None:
         """Initialise all iteration variables to zero."""
         tau = self._tau
@@ -228,13 +240,17 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         )
 
         # --- 3. Primal updates ---
-        # x update: x ← Hₓ bₓ
-        x_new = self._H_x * b_x
+        # x update: x ← Hₓ bₓ, then the subclass feasibility hook.
+        x_new = self._project_x(self._H_x * b_x)
 
         # y update (Aᵢ=I, Hᵧ=scalar, Hᵢ=scalar):
         #   inner = d − Hᵧ bᵧ
         #   y ← Hᵧ(bᵧ + Hᵢ inner)  =  Hᵧ bᵧ + Hᵧ Hᵢ inner
-        # With Hᵧ = 1/(2γ) and Hᵢ = 2γ:  Hᵧ Hᵢ = 1
+        # With Hᵧ = 1/(2γ) and Hᵢ = 2γ:  Hᵧ Hᵢ = 1, so y = dᵢ exactly at
+        # every iteration (projection onto Aᵢy = dᵢ).  The first-iteration
+        # jump y: 0 → dᵢ is how demand enters the ξ tracker.  Consequently
+        # p̂_y and v_y below cannot influence the result; they are kept only
+        # to mirror the paper's Algorithm 1 structure.
         Hy_b_y = self._H_y_scalar * b_y
         inner = self._d_i - Hy_b_y
         y_new = Hy_b_y + self._H_i_scalar * (self._H_y_scalar * inner)
@@ -279,10 +295,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         if message_data.k >= self.max_iter:
             if not self._started:
                 return
-            # p̂_x is the box-projected supply variable; at convergence x = p̂_x.
-            # Using p̂_x (not raw x) keeps the schedule feasible even when the
-            # algorithm hasn't fully converged.
-            self.P = self._p_hat_x.copy()
+            self.P = self._extract_schedule()
             self.finish_callback(self, carrier)
             self._first_message = True
             self._started = False
@@ -357,9 +370,15 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
                                               − xₜ·η_c  (charge, xₜ < 0)
     * Terminal energy target: SOC_τ ≈ e_final·e_max  (bisection enforced)
 
-    The λ/ξ consensus protocol (``on_exchange_message``) is inherited
-    unchanged from the parent class.  Only ``_step`` is overridden to
-    insert the SOC projection after the raw x-update.
+    The λ/ξ consensus protocol and the ``_step`` update are inherited
+    unchanged from the parent class; only the :meth:`_project_x` hook is
+    overridden to insert the SOC projection after the raw x-update.
+
+    Note this deviates from the paper, which folds the SOC dynamics
+    (eqs. 9-11) into the exact ADMM as linear inequalities via the Mᵢ
+    matrix.  The greedy projection used here is a heuristic — the paper's
+    convergence guarantees do not formally carry over — but it keeps the
+    per-iteration cost trivial and works well empirically.
 
     The storage unit gets ``d_i = 0`` (zero demand allocation): it
     contributes net injection, not demand consumption.  The global energy
@@ -517,62 +536,22 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         return best_x
 
     # ------------------------------------------------------------------
-    # Override _step
+    # Hook overrides
     # ------------------------------------------------------------------
 
-    def _step(self, neighbour_messages: list[DEEDADMMMessage]) -> None:
-        """DEED-ADMM update with SOC-aware x projection for storage."""
-        g = self.gamma
-        n = self.n_agents
+    def _project_x(self, x_raw: np.ndarray) -> np.ndarray:
+        """Insert the SOC projection after the raw x-update."""
+        return self._project_soc(x_raw)
 
-        # 1. Consensus averages (same as parent).
-        lam_sum = self._lam.copy()
-        xi_sum = self._xi.copy()
-        for msg in neighbour_messages:
-            lam_sum += msg.lam
-            xi_sum += msg.xi
-        lam_tilde = lam_sum / n
-        xi_tilde = xi_sum / n
+    def _extract_schedule(self) -> np.ndarray:
+        """Report the SOC-feasible x (not p̂ₓ) and record the SOC trajectory.
 
-        # 2. b-vector for x (storage has zero cost, so no cost_lin term).
-        b_x = (
-            g * self._x
-            - lam_tilde
-            + (g * self._p_hat_x - self._v_x)
-            - (g / 2.0) * xi_tilde
-        )
-
-        # 3. Raw x update, then SOC projection.
-        x_raw = self._H_x * b_x
-        x_new = self._project_soc(x_raw)
-
-        # 4. y update: d_i = 0 for storage → y collapses to 0.
-        b_y = (
-            g * self._y
-            + lam_tilde
-            + (g * self._p_hat_y - self._v_y)
-            + (g / 2.0) * xi_tilde
-        )
-        Hy_b_y = self._H_y_scalar * b_y
-        inner = self._d_i - Hy_b_y  # d_i = 0
-        y_new = Hy_b_y + self._H_i_scalar * (self._H_y_scalar * inner)
-
-        # 5. p̂ projection.
-        p_hat_x_new = np.clip(x_new + self._v_x / g, self._x_min, self._x_max)
-        p_hat_y_new = np.clip(y_new + self._v_y / g, self._x_min, self._x_max)
-
-        # 6. Auxiliary / dual updates.
-        xi_new = xi_tilde + (x_new - self._x) - (y_new - self._y)
-        lam_new = lam_tilde + (g / 2.0) * xi_new
-        v_x_new = self._v_x + g * (x_new - p_hat_x_new)
-        v_y_new = self._v_y + g * (y_new - p_hat_y_new)
-
-        # Store.
-        self._x = x_new
-        self._y = y_new
-        self._p_hat_x = p_hat_x_new
-        self._p_hat_y = p_hat_y_new
-        self._xi = xi_new
-        self._lam = lam_new
-        self._v_x = v_x_new
-        self._v_y = v_y_new
+        p̂ₓ is only power-box projected; before full convergence it may
+        violate the SOC dynamics.  ``self._x`` is SOC-feasible by
+        construction (every ``_step`` passes through ``_project_soc``).
+        Re-running the forward pass on it is idempotent and yields the
+        energy path, stored in :attr:`E`.
+        """
+        x, e, _ = self._project_soc_forward(self._x, 0.0)
+        self.E = e
+        return x
