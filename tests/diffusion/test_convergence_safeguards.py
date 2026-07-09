@@ -156,6 +156,41 @@ async def test_exact_diffusion_tol_terminates_before_max_iter():
         assert 0 < algo.iterations < 1000
 
 
+@pytest.mark.asyncio
+async def test_exact_diffusion_max_iter_failsafe_reports_not_converged():
+    """With an unreachable tol the failsafe fires and flags the run."""
+    n, horizon, max_iter = 3, 1, 25
+    finished: dict[int, object] = {}
+
+    def make_finish(idx):
+        def finish(algo, carrier):
+            finished[idx] = algo
+
+        return finish
+
+    demand = np.full(horizon, 30.0)
+    participants = [
+        create_exact_diffusion_participant(
+            make_finish(i),
+            diffusion_actor=LinearCostEconomicDispatchDiffusionActor(
+                cost=5.0, p_max=30.0, epsilon=0.1, n_guess=n
+            ),
+            max_iter=max_iter,
+            epsilon=0.02,
+            tol=0.0,  # a moving λ can never satisfy this
+            horizon=horizon,
+        )
+        for i in range(n)
+    ]
+    start = create_exact_diffusion_start(initial_lam=10.0, data=demand, horizon=horizon)
+    await start_distributed_optimization(participants, start)
+
+    assert len(finished) == n, "Not all finish callbacks fired"
+    for algo in finished.values():
+        assert algo.converged is False
+        assert algo.iterations == max_iter
+
+
 # ---------------------------------------------------------------------------
 # stability-scaled gradient step on a GW-scale system
 # ---------------------------------------------------------------------------

@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
-    DiffusionMessage,
     LinearCostEconomicDispatchDiffusionActor,
     NoDiffusionActor,
     ReservoirStorageDiffusionActor,
@@ -14,7 +13,6 @@ from distributed_resource_optimization import (
     create_diffusion_start,
     start_distributed_optimization,
 )
-
 
 # ---------------------------------------------------------------------------
 # Integration tests (full async runs via SimpleCarrier)
@@ -454,3 +452,122 @@ class TestReservoirStorageDiffusionActor:
         grad = actor.gradient_term(lam, p_target)
         # P=0; gradient = 0 - 10/2 = -5
         assert np.allclose(grad, [-5.0])
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the regularity/consistency guards
+#
+# DiffusionAlgorithm shares its message-handling skeleton with
+# ExactDiffusionAlgorithm (see the class docstrings); these mirror the exact-
+# diffusion guard tests so a regression in either copy is caught.
+# ---------------------------------------------------------------------------
+
+
+class _MuteCarrier:
+    """Fake carrier that reports two neighbours and swallows sends."""
+
+    def others(self, _):
+        return ["a", "b"]
+
+    def send_to_other(self, content, receiver, meta=None):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_diffusion_rejects_mismatched_neighbour_degree():
+    """regular_graph_weights() assumes every neighbour shares this node's
+    degree; a neighbour reporting a different degree must raise rather than
+    silently produce a non-stochastic weight matrix."""
+    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+        DiffusionAlgorithm,
+        DiffusionMessage,
+    )
+
+    algo = DiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10, horizon=1)
+    start = create_diffusion_start(initial_lam=1.0, horizon=1)
+    carrier = _MuteCarrier()
+    await algo.on_exchange_message(carrier, start, {})  # initialise (2 neighbours)
+
+    await algo.on_exchange_message(
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
+    )
+    with pytest.raises(ValueError, match="degree-regular"):
+        await algo.on_exchange_message(
+            carrier,
+            DiffusionMessage(
+                phi=np.array([1.0]), k=0, data=None, degree=3, weight_rule="mean_metropolis"
+            ),
+            {},
+        )
+
+
+@pytest.mark.asyncio
+async def test_diffusion_rejects_mismatched_weight_rule():
+    """All participants must agree on the same weight_rule; a neighbour
+    reporting a different one must raise rather than silently mix weights
+    computed from two different rules."""
+    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+        DiffusionAlgorithm,
+        DiffusionMessage,
+    )
+
+    algo = DiffusionAlgorithm(
+        finish_callback=lambda a, c: None, max_iter=10, horizon=1, weight_rule="mean_metropolis"
+    )
+    start = create_diffusion_start(initial_lam=1.0, horizon=1)
+    carrier = _MuteCarrier()
+    await algo.on_exchange_message(carrier, start, {})
+
+    await algo.on_exchange_message(
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
+    )
+    with pytest.raises(ValueError, match="same weight_rule"):
+        await algo.on_exchange_message(
+            carrier,
+            DiffusionMessage(
+                phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="averaging"
+            ),
+            {},
+        )
+
+
+@pytest.mark.asyncio
+async def test_diffusion_ignores_stale_message_after_termination():
+    """A late/duplicate pre-termination message arriving after finish_callback
+    has already fired must not silently restart the algorithm."""
+    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+        DiffusionAlgorithm,
+        DiffusionMessage,
+    )
+
+    finished = []
+    algo = DiffusionAlgorithm(
+        finish_callback=lambda a, c: finished.append(a._lam.copy()), max_iter=1, horizon=1
+    )
+    carrier = _MuteCarrier()
+    start = create_diffusion_start(initial_lam=1.0, horizon=1)
+    await algo.on_exchange_message(carrier, start, {})  # k=0 initialisation
+
+    # Both neighbours report k=1 (>= max_iter): terminates and fires the callback.
+    await algo.on_exchange_message(
+        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+    )
+    await algo.on_exchange_message(
+        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+    )
+    assert len(finished) == 1
+
+    # A stale, late-arriving k=0 message from before termination must be
+    # ignored, not misread as a fresh kick-off that restarts the algorithm.
+    await algo.on_exchange_message(
+        carrier, DiffusionMessage(phi=np.array([99.0]), k=0, data=None, degree=2), {}
+    )
+    assert len(finished) == 1, "Stale pre-termination message must not restart the algorithm"

@@ -6,6 +6,12 @@ Two :class:`~.diffusion.DiffusionActor` implementations:
   quadratic cost response.
 * :class:`ReservoirStorageDiffusionActor` — battery/reservoir storage whose
   charge/discharge schedule responds to a time-varying price signal λ(t).
+
+Both actors clip their power response to the feasible box *inside*
+``gradient_term`` itself, so respecting the limits is part of the converged
+fixed point.  This is why the paper's outer saturation-flag loop (Ces et al.
+2025, Sec. 4 — re-running the optimization with limit-violating agents pinned
+to their ratings) is deliberately not ported.
 """
 
 from __future__ import annotations
@@ -27,7 +33,9 @@ from .diffusion import DiffusionActor
 class LinearCostEconomicDispatchDiffusionActor(DiffusionActor):
     """Economic dispatch via a linearised inverted quadratic cost function.
 
-    :param cost: Marginal cost coefficient *c* in the cost function ``cP + εP²``.
+    :param cost: Marginal cost coefficient *c* in the cost function
+                 ``cP + (ε/2)P²`` (marginal cost ``c + εP``, hence the
+                 response ``P(λ) = (λ - c)/ε`` below).
     :param p_max: Maximum power output.
     :param epsilon: Sensitivity of power response to price (default 0.1).
     :param p_min: Minimum power output (default 0).
@@ -117,6 +125,14 @@ class ReservoirStorageDiffusionActor(DiffusionActor):
     E: np.ndarray = field(default_factory=lambda: np.array([0.0]))
 
     def gradient_term(self, lam: np.ndarray, p_target: Any) -> np.ndarray:
+        """Compute the gradient for the adapt step.
+
+        :param lam: Current price vector λ.
+        :param p_target: Total target power (scalar or array); normalised by
+                         :attr:`n_guess` to get the per-participant share.
+        :returns: ``P(λ) - p_target / n_guess`` where ``P(λ)`` is the
+                  SOC-feasible price-driven schedule.
+        """
         lam = np.asarray(lam, dtype=float)
 
         # Project the price-driven desired schedule onto power+SOC-feasible
