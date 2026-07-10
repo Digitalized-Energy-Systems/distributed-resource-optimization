@@ -230,9 +230,7 @@ class TestDecideStep:
             schedule=np.array([2.0, 2.0]), weights=np.ones(2)
         )
         participant.counter = 1
-        sysconfig = SystemConfig(
-            {1: ScheduleSelection(schedule=np.array(current_row), counter=1)}
-        )
+        sysconfig = SystemConfig({1: ScheduleSelection(schedule=np.array(current_row), counter=1)})
         candidate = SolutionCandidate(
             participant_id=1,
             schedules=np.array([current_row]),

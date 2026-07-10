@@ -57,6 +57,7 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
         rho: float,
         n: int,
     ) -> list[np.ndarray]:
+        """Project ``x + u`` onto ``Σ zᵢ = target`` (softened when ``alpha > 0``)."""
         m = len(z[0])
         S = np.zeros(m)
         for xi, ui in zip(x, u):
@@ -73,12 +74,15 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
         rho: float,
         n: int,
     ) -> list[np.ndarray]:
+        """Scaled dual ascent: ``uᵢ ← uᵢ + xᵢ − zᵢ`` per participant."""
         return [ui + xi - zi for ui, xi, zi in zip(u, x, z)]
 
     def init_z(self, n: int, m: int) -> list[np.ndarray]:
+        """Start every participant's z at ones (arbitrary feasible-ish point)."""
         return [np.ones(m) for _ in range(n)]
 
     def init_u(self, n: int, m: int) -> list[np.ndarray]:
+        """Start every participant's scaled dual at zero."""
         return [np.zeros(m) for _ in range(n)]
 
     def actor_correction(
@@ -88,9 +92,11 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
         u: list[np.ndarray],
         i: int,
     ) -> np.ndarray:
+        """Correction ``v = −zᵢ + uᵢ`` so the local QP centres on ``zᵢ − uᵢ``."""
         return -z[i] + u[i]
 
     def primal_residual(self, x: list[np.ndarray], z: list[np.ndarray]) -> float:
+        """Largest per-participant ``‖xᵢ − zᵢ‖`` (consensus violation)."""
         return float(max(np.linalg.norm(xi - zi) for xi, zi in zip(x, z)))
 
 

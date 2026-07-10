@@ -21,6 +21,7 @@ from distributed_resource_optimization import (
 def _make_finish_cb(results: dict, aid: int):
     def cb(algorithm: DEEDADMMAlgorithm, carrier) -> None:
         results[aid] = algorithm.P.copy()
+
     return cb
 
 
@@ -239,7 +240,7 @@ async def test_storage_soc_bounds_respected():
             p_min=0.0,
             p_max=50.0,
             marginal_cost=1.0,
-            d_i=demand,   # generator takes full demand slice
+            d_i=demand,  # generator takes full demand slice
             gamma=0.05,
             max_iter=600,
             n_agents=n_agents,
@@ -251,8 +252,8 @@ async def test_storage_soc_bounds_respected():
             p_discharge_max=p_max,
             eta_charge=0.95,
             eta_discharge=0.95,
-            e_initial=1.0,   # start fully charged
-            e_final=0.5,     # target half-full at end
+            e_initial=1.0,  # start fully charged
+            e_final=0.5,  # target half-full at end
             tau=tau,
             gamma=0.05,
             max_iter=600,
@@ -260,9 +261,7 @@ async def test_storage_soc_bounds_respected():
         ),
     ]
 
-    start_msg = DEEDADMMMessage(
-        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
-    )
+    start_msg = DEEDADMMMessage(lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True)
     await start_distributed_optimization(agents, start_msg)
 
     assert len(results) == 2
@@ -297,7 +296,7 @@ async def test_storage_generator_balance():
             p_min=0.0,
             p_max=50.0,
             marginal_cost=5.0,
-            d_i=demand / 1,   # generator takes full demand allocation
+            d_i=demand / 1,  # generator takes full demand allocation
             gamma=0.05,
             max_iter=600,
             n_agents=n_agents,
@@ -315,9 +314,7 @@ async def test_storage_generator_balance():
         ),
     ]
 
-    start_msg = DEEDADMMMessage(
-        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
-    )
+    start_msg = DEEDADMMMessage(lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True)
     await start_distributed_optimization(agents, start_msg)
 
     assert len(results) == 2
@@ -370,9 +367,7 @@ async def test_storage_reaches_terminal_soc_target():
         ),
     ]
 
-    start_msg = DEEDADMMMessage(
-        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
-    )
+    start_msg = DEEDADMMMessage(lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True)
     await start_distributed_optimization(agents, start_msg)
 
     P_stor = results[1]
@@ -381,9 +376,7 @@ async def test_storage_reaches_terminal_soc_target():
     for p in P_stor:
         e -= p / eta if p >= 0 else p * eta
     e_target = 0.5 * e_max
-    assert abs(e - e_target) < 0.5, (
-        f"Terminal energy {e:.2f} MWh missed target {e_target:.2f} MWh"
-    )
+    assert abs(e - e_target) < 0.5, f"Terminal energy {e:.2f} MWh missed target {e_target:.2f} MWh"
     # The algorithm's own SOC trajectory must agree and end on target.
     E = storage_alg_holder["alg"].E
     assert E.shape == (tau + 1,)
@@ -419,9 +412,7 @@ async def test_quadratic_cost_three_agents():
         for i, a in enumerate(quads)
     ]
 
-    start_msg = DEEDADMMMessage(
-        lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True
-    )
+    start_msg = DEEDADMMMessage(lam=np.zeros(tau), xi=np.zeros(tau), k=0, data=None, initial=True)
     await start_distributed_optimization(actors, start_msg)
 
     assert len(results) == 3

@@ -5,8 +5,9 @@ distributed-resource-optimization
 
    **Distributed optimization algorithms for flexible resource coordination**
 
-   Carrier-agnostic implementations of ADMM, COHDA, and averaging consensus —
-   run in a single asyncio process or across a network via mango-agents.
+   Carrier-agnostic implementations of ADMM, COHDA, averaging consensus,
+   Diffusion/Exact Diffusion, FDGDM, and DEED-ADMM — run in a single asyncio
+   process or across a network via mango-agents.
 
    .. grid:: 3
       :class-container: sd-justify-content-center
@@ -31,7 +32,7 @@ distributed-resource-optimization
 
       .. grid-item::
 
-         .. button-link:: https://github.com/Digitalized-Energy-Systems/mango-optimization
+         .. button-link:: https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization
             :color: secondary
             :outline:
 
@@ -88,6 +89,36 @@ Algorithms
       for economic dispatch and price-signal coordination.
 
       :doc:`algorithms/consensus`
+
+   .. grid-item-card::
+      :shadow: sm
+
+      **Diffusion & Exact Diffusion**
+      ^^^
+      Peer-to-peer adapt-then-combine price coordination over a scheduling horizon;
+      the exact variant removes the constant-step-size bias (Ces et al. 2025).
+
+      :doc:`algorithms/diffusion`
+
+   .. grid-item-card::
+      :shadow: sm
+
+      **FDGDM**
+      ^^^
+      Fast distributed gradient descent for economic dispatch via curvature-bounded
+      gradient exchange — conserves total power every iteration (Bai et al. 2022).
+
+      :doc:`algorithms/fdgdm`
+
+   .. grid-item-card::
+      :shadow: sm
+
+      **DEED-ADMM**
+      ^^^
+      Coordinator-free ADMM with a dynamic-consensus tracker for economic dispatch,
+      including a storage-aware variant (Zhu et al. 2025).
+
+      :doc:`algorithms/deed_admm`
 
 ----
 
@@ -203,6 +234,9 @@ Where to go next
    algorithms/admm
    algorithms/cohda
    algorithms/consensus
+   algorithms/diffusion
+   algorithms/fdgdm
+   algorithms/deed_admm
 
 .. toctree::
    :hidden:

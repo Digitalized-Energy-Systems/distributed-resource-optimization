@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "distributed-resource-optimization"
 version = "0.1.0"
-description = "Distributed resource optimization algorithms — COHDA, ADMM, and averaging consensus"
+description = "Distributed resource optimization algorithms — COHDA, ADMM, averaging consensus, diffusion/exact diffusion, FDGDM, and DEED-ADMM"
 authors = [{name = "Rico Schrage"}]
 readme = "README.md"
 requires-python = ">=3.10"

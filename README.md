@@ -26,6 +26,7 @@ Several algorithm families are available:
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Averaging Consensus** | Distributed averaging with optional gradient terms | Fully distributed |
 | **Diffusion** | Adapt-then-combine averaging over a scheduling horizon | Fully distributed |
+| **Exact Diffusion** | Adapt-correct-combine diffusion without constant-step-size bias (Ces et al. 2025) | Fully distributed |
 | **FDGDM** | Fast distributed gradient descent for economic dispatch (Bai et al. 2022) | Fully distributed |
 | **DEED-ADMM** | Economic dispatch via ADMM with dynamic consensus (Zhu et al. 2025) | Fully distributed |
 

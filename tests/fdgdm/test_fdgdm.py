@@ -56,9 +56,7 @@ async def test_fdgdm_equal_cost_equal_dispatch():
     actors = [
         create_fdgdm_participant(
             finish,
-            fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
-                cost=5.0, p_max=30.0, epsilon=0.1
-            ),
+            fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(cost=5.0, p_max=30.0, epsilon=0.1),
             max_iter=150,
             horizon=horizon,
         )
@@ -69,9 +67,7 @@ async def test_fdgdm_equal_cost_equal_dispatch():
 
     assert len(results) == n
     for r in results[1:]:
-        assert np.allclose(results[0], r, atol=0.5), (
-            f"Power schedules differ: {results[0]} vs {r}"
-        )
+        assert np.allclose(results[0], r, atol=0.5), f"Power schedules differ: {results[0]} vs {r}"
 
 
 @pytest.mark.asyncio
@@ -94,7 +90,9 @@ async def test_fdgdm_merit_order():
         create_fdgdm_participant(
             make_finish(0),
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
-                cost=2.0, p_max=20.0, epsilon=0.1  # cheap
+                cost=2.0,
+                p_max=20.0,
+                epsilon=0.1,  # cheap
             ),
             max_iter=200,
             horizon=horizon,
@@ -102,7 +100,9 @@ async def test_fdgdm_merit_order():
         create_fdgdm_participant(
             make_finish(1),
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
-                cost=8.0, p_max=20.0, epsilon=0.1  # expensive
+                cost=8.0,
+                p_max=20.0,
+                epsilon=0.1,  # expensive
             ),
             max_iter=200,
             horizon=horizon,
@@ -181,8 +181,11 @@ class TestLinearCostEconomicDispatchFDGDMActor:
 class TestReservoirStorageFDGDMActor:
     def test_gradient_discharge(self):
         actor = ReservoirStorageFDGDMActor(
-            p_charge_max=5.0, p_discharge_max=10.0,
-            charge_cost=1.0, discharge_cost=3.0, epsilon=0.1,
+            p_charge_max=5.0,
+            p_discharge_max=10.0,
+            charge_cost=1.0,
+            discharge_cost=3.0,
+            epsilon=0.1,
         )
         P = np.array([4.0])
         grad = actor.gradient(P, None)
@@ -191,8 +194,11 @@ class TestReservoirStorageFDGDMActor:
 
     def test_gradient_charge(self):
         actor = ReservoirStorageFDGDMActor(
-            p_charge_max=5.0, p_discharge_max=10.0,
-            charge_cost=2.0, discharge_cost=0.0, epsilon=0.1,
+            p_charge_max=5.0,
+            p_discharge_max=10.0,
+            charge_cost=2.0,
+            discharge_cost=0.0,
+            epsilon=0.1,
         )
         P = np.array([-3.0])
         grad = actor.gradient(P, None)
@@ -201,8 +207,11 @@ class TestReservoirStorageFDGDMActor:
 
     def test_gradient_at_zero(self):
         actor = ReservoirStorageFDGDMActor(
-            p_charge_max=5.0, p_discharge_max=10.0,
-            charge_cost=1.0, discharge_cost=2.0, epsilon=0.1,
+            p_charge_max=5.0,
+            p_discharge_max=10.0,
+            charge_cost=1.0,
+            discharge_cost=2.0,
+            epsilon=0.1,
         )
         P = np.array([0.0])
         grad = actor.gradient(P, None)
@@ -211,8 +220,11 @@ class TestReservoirStorageFDGDMActor:
 
     def test_gradient_vector(self):
         actor = ReservoirStorageFDGDMActor(
-            p_charge_max=5.0, p_discharge_max=10.0,
-            charge_cost=1.0, discharge_cost=2.0, epsilon=0.0,
+            p_charge_max=5.0,
+            p_discharge_max=10.0,
+            charge_cost=1.0,
+            discharge_cost=2.0,
+            epsilon=0.0,
         )
         P = np.array([3.0, -2.0])
         grad = actor.gradient(P, None)
@@ -276,24 +288,31 @@ async def test_fdgdm_power_conservation_heterogeneous_capacity():
     def make_finish(idx: int):
         def finish(algo, carrier):
             results[idx] = algo._P.copy()
+
         return finish
 
     actors = [
         create_fdgdm_participant(
             make_finish(0),
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
-                cost=2.0, p_max=p_max_large, epsilon=0.1,
+                cost=2.0,
+                p_max=p_max_large,
+                epsilon=0.1,
                 initial_schedule=np.array([init_large]),
             ),
-            max_iter=300, horizon=horizon,
+            max_iter=300,
+            horizon=horizon,
         ),
         create_fdgdm_participant(
             make_finish(1),
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
-                cost=8.0, p_max=p_max_small, epsilon=0.1,
+                cost=8.0,
+                p_max=p_max_small,
+                epsilon=0.1,
                 initial_schedule=np.array([init_small]),
             ),
-            max_iter=300, horizon=horizon,
+            max_iter=300,
+            horizon=horizon,
         ),
     ]
     start = create_fdgdm_start(data=np.zeros(horizon))
@@ -336,6 +355,7 @@ async def test_fdgdm_power_conservation():
     def make_finish(idx: int):
         def finish(algo, carrier):
             results[idx] = algo._P.copy()
+
         return finish
 
     # Small cost differences → equilibrium is P=[11, 10, 9], all within [0, 100].
@@ -393,18 +413,21 @@ async def test_fdgdm_with_storage_converges():
         discharge_cost=1.0,
         epsilon=0.1,
     )
-    thermal_actor = LinearCostEconomicDispatchFDGDMActor(
-        cost=5.0, p_max=20.0, epsilon=0.1
-    )
+    thermal_actor = LinearCostEconomicDispatchFDGDMActor(cost=5.0, p_max=20.0, epsilon=0.1)
 
     def make_finish(idx):
         def finish(algo, carrier):
             results[idx] = algo._P.copy()
+
         return finish
 
     actors = [
-        create_fdgdm_participant(make_finish(0), fdgdm_actor=thermal_actor, max_iter=300, horizon=horizon),
-        create_fdgdm_participant(make_finish(1), fdgdm_actor=storage_actor, max_iter=300, horizon=horizon),
+        create_fdgdm_participant(
+            make_finish(0), fdgdm_actor=thermal_actor, max_iter=300, horizon=horizon
+        ),
+        create_fdgdm_participant(
+            make_finish(1), fdgdm_actor=storage_actor, max_iter=300, horizon=horizon
+        ),
     ]
     start = create_fdgdm_start(data=initial_p)
     await start_distributed_optimization(actors, start)
@@ -436,8 +459,11 @@ class TestGradientCurvatureConsistency:
 
     def test_storage_gradient_matches_finite_difference_discharge(self):
         actor = ReservoirStorageFDGDMActor(
-            p_charge_max=5.0, p_discharge_max=10.0,
-            charge_cost=1.0, discharge_cost=2.0, epsilon=0.2,
+            p_charge_max=5.0,
+            p_discharge_max=10.0,
+            charge_cost=1.0,
+            discharge_cost=2.0,
+            epsilon=0.2,
         )
         P = np.array([3.0])
         h = 1e-5
@@ -484,9 +510,8 @@ async def test_stale_message_after_termination_does_not_restart():
     Regression test: FDGDM lacked the `_started` guard the other
     peer-to-peer algorithms already had.
     """
-    from tests.carrier import StubCarrier
-
     from distributed_resource_optimization import FDGDMMessage
+    from tests.carrier import StubCarrier
 
     finished: list[int] = []
     algo = create_fdgdm_participant(

@@ -242,6 +242,7 @@ class COHDAAlgorithmData(DistributedAlgorithm):
         message_data: WorkingMemory,
         meta: Any,
     ) -> None:
+        """Run one perceive → decide → act cycle for the received memory."""
         await process_exchange_message(self, [message_data], carrier)
 
 
@@ -502,6 +503,13 @@ async def process_exchange_message(
     """Run the perceive → decide → act cycle and forward updates to neighbours.
 
     Skipped entirely if nothing changed during perception.
+
+    .. note::
+       The :class:`WorkingMemory` is forwarded **by reference** — an
+       in-process carrier like ``SimpleCarrier`` delivers the live object, so
+       receivers may observe later in-place mutations (harmless under
+       single-threaded asyncio, since counters only grow, but different from
+       a serialising network transport, which delivers immutable snapshots).
     """
     old_sysconf = algorithm_data.memory.system_config
     old_candidate = algorithm_data.memory.solution_candidate

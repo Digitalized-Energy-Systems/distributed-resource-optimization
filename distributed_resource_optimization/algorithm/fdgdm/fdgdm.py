@@ -210,7 +210,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             # Gradient and du-product to broadcast at k=0.  Deliberate
             # deviation from Bai et al. Eq. 5: d = |N_i| + 1, not |N_i| —
             # the paper's exact d oscillates for n=2 (see module docstring).
-            self._last_grad = np.asarray(self.actor.gradient(self._P, message_data.data), dtype=float)
+            self._last_grad = np.asarray(
+                self.actor.gradient(self._P, message_data.data), dtype=float
+            )
             self._last_du = (
                 float(n_neighbours + 1) * self.actor.curvature_bound() if n_neighbours > 0 else 1.0
             )
@@ -251,7 +253,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._P = self.actor.project(self._P + delta_P)
 
             # Prepare next broadcast.
-            self._last_grad = np.asarray(self.actor.gradient(self._P, message_data.data), dtype=float)
+            self._last_grad = np.asarray(
+                self.actor.gradient(self._P, message_data.data), dtype=float
+            )
             self._k += 1
 
             for addr in neighbours:

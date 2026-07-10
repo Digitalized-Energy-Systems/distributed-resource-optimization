@@ -227,6 +227,7 @@ class DistributedOptimizationRole(Role):
         self._include_self = include_self
 
     def setup(self) -> None:
+        """Create the carrier and subscribe the optimization/reply handlers."""
         self._carrier = MangoCarrier(self, self._include_self)
         self.context.subscribe_message(
             self,
@@ -249,6 +250,7 @@ class DistributedOptimizationRole(Role):
         )
 
     def _handle_optimization(self, content: Any, meta: dict) -> None:
+        """Unwrap carrier requests and forward the payload to the algorithm."""
         from ..algorithm.core import on_exchange_message
 
         # Unwrap request if needed (from send_awaitable on other side)
@@ -264,6 +266,7 @@ class DistributedOptimizationRole(Role):
         )
 
     def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
+        """Resolve the pending request future matching this reply."""
         if self._carrier is not None:
             self._carrier._resolve_reply(content)
 
@@ -299,6 +302,7 @@ class CoordinatorRole(Role):
         self._done_future: asyncio.Future | None = None
 
     def setup(self) -> None:
+        """Create the carrier and subscribe the start/reply handlers."""
         self._carrier = MangoCarrier(self, self._include_self)
         self.context.subscribe_message(
             self,
@@ -312,6 +316,14 @@ class CoordinatorRole(Role):
         )
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
+        """Kick off a coordinated run and broadcast the per-participant results.
+
+        The result list returned by the coordinator is distributed positionally
+        to ``others()`` — both sides rely on mango's topology ordering being
+        stable between the run and the broadcast.  A second start message
+        replaces :attr:`_done_future`; waiters of the previous run are only
+        served if that run already finished.
+        """
         from ..algorithm.core import start_optimization
 
         loop = asyncio.get_event_loop()
@@ -337,6 +349,7 @@ class CoordinatorRole(Role):
         asyncio.create_task(_run())
 
     def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
+        """Resolve the pending request future matching this reply."""
         if self._carrier is not None:
             self._carrier._resolve_reply(content)
 

@@ -87,11 +87,6 @@ from .algorithm.admm.core import (
     ADMMMessage,
     ADMMStart,
 )
-from .algorithm.admm.flex_actor import (
-    ADMMFlexActor,
-    create_admm_flex_actor_box_bounded,
-    create_admm_flex_actor_one_to_many,
-)
 from .algorithm.admm.economic_dispatch import (
     LinearCostEconomicDispatchADMMFlexActor,
     ProximalStorageADMMActor,
@@ -99,6 +94,11 @@ from .algorithm.admm.economic_dispatch import (
     create_admm_economic_dispatch_actor,
     create_admm_proximal_storage_actor,
     create_admm_storage_actor,
+)
+from .algorithm.admm.flex_actor import (
+    ADMMFlexActor,
+    create_admm_flex_actor_box_bounded,
+    create_admm_flex_actor_one_to_many,
 )
 from .algorithm.admm.sharing_admm import (
     ADMMGeneratorSpec,
@@ -133,18 +133,14 @@ from .algorithm.core import (
     start_optimization,
 )
 
-# FDGDM
-from .algorithm.fdgdm.fdgdm import (
-    FDGDMActor,
-    FDGDMAlgorithm,
-    FDGDMMessage,
-    NoFDGDMActor,
-    create_fdgdm_participant,
-    create_fdgdm_start,
-)
-from .algorithm.fdgdm.economic_dispatch import (
-    LinearCostEconomicDispatchFDGDMActor,
-    ReservoirStorageFDGDMActor,
+# DEED-ADMM
+from .algorithm.deed_admm import (
+    DEEDADMMAlgorithm,
+    DEEDADMMMessage,
+    DEEDADMMStorageAlgorithm,
+    create_deed_admm_renewable_participant,
+    create_deed_admm_storage_participant,
+    create_deed_admm_thermal_participant,
 )
 
 # Diffusion
@@ -165,15 +161,19 @@ from .algorithm.diffusion.exact_diffusion import (
     create_exact_diffusion_participant,
     create_exact_diffusion_start,
 )
+from .algorithm.fdgdm.economic_dispatch import (
+    LinearCostEconomicDispatchFDGDMActor,
+    ReservoirStorageFDGDMActor,
+)
 
-# DEED-ADMM
-from .algorithm.deed_admm import (
-    DEEDADMMAlgorithm,
-    DEEDADMMMessage,
-    DEEDADMMStorageAlgorithm,
-    create_deed_admm_renewable_participant,
-    create_deed_admm_storage_participant,
-    create_deed_admm_thermal_participant,
+# FDGDM
+from .algorithm.fdgdm.fdgdm import (
+    FDGDMActor,
+    FDGDMAlgorithm,
+    FDGDMMessage,
+    NoFDGDMActor,
+    create_fdgdm_participant,
+    create_fdgdm_start,
 )
 
 # COHDA

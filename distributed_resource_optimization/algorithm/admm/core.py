@@ -50,8 +50,16 @@ class ADMMMessage:
 
     :param v: Scaled consensus/sharing vector (the local QP reference point).
     :param rho: ADMM penalty parameter.
-    :param z: Global consensus vector (used as a uniform price signal by
-              economic-dispatch actors).
+    :param z: Snapshot of the coordinator's global variable.  Its shape is
+              variant-specific: for **sharing** ADMM it is a single vector of
+              length *m* (used as a uniform price signal by the
+              economic-dispatch actors); for the **consensus/exchange**
+              variant it is the per-participant list packed into an ``(n, m)``
+              matrix.  Actors that read ``z`` as a price
+              (:class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`,
+              :class:`~.economic_dispatch.StorageADMMFlexActor`) therefore only
+              work with the sharing coordinator; exchange-ADMM actors must use
+              ``v``/``rho`` only.
     """
 
     v: np.ndarray

@@ -60,6 +60,7 @@ class ADMMFlexActor(DistributedAlgorithm):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
+        """Solve the local QP for the coordinator's correction and reply."""
         if not isinstance(message_data, ADMMMessage):
             return
         self.x = _local_update(self, message_data.v, message_data.rho)

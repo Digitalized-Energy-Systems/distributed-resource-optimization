@@ -26,6 +26,7 @@ simplifies to Aᵢ = Iᵀ (no energy conversion), B = 0, zᵢ = 0.  The
 weight matrix is uniform: wᵢⱼ = 1/n for all j (including self).
 
 Deviations from the paper (by design):
+
 * The paper's ramp-rate constraints (16)-(17) are not modelled — none of
   the benchmark networks specify ramp limits.
 * Iterations run for a fixed ``max_iter`` instead of the paper's
@@ -107,6 +108,9 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     :param max_iter: Maximum number of DEED-ADMM iterations.
     :param n_agents: Total number of participating agents n (used to compute
         the self-weight wᵢᵢ = 1/n in the uniform doubly-stochastic matrix).
+        Must equal the actual neighbour count + 1, i.e. the communication
+        graph must be complete — on a sparser topology the uniform 1/n
+        averaging would silently mis-weight the consensus.
     """
 
     def __init__(
@@ -143,8 +147,8 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         #   Hᵢ  = (Aᵢ Hᵧ Aᵢᵀ)⁻¹     →  Aᵢ=I  ⇒  Hᵢ = 1/Hᵧ = 2γ I
         g = self.gamma
         self._H_x = 1.0 / (2.0 * self._cost_quad + 2.0 * g)  # shape (τ,)
-        self._H_y_scalar = 1.0 / (2.0 * g)                    # scalar
-        self._H_i_scalar = 2.0 * g                            # scalar (= 1/H_y)
+        self._H_y_scalar = 1.0 / (2.0 * g)  # scalar
+        self._H_i_scalar = 2.0 * g  # scalar (= 1/H_y)
 
         # Runtime state (initialised in _reset_state)
         self._x: np.ndarray = np.zeros(tau)
@@ -230,14 +234,9 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
             - lam_tilde
             + (g * self._p_hat_x - self._v_x)
             - (g / 2.0) * xi_tilde
-            - self._cost_lin   # linear cost gradient (constant part of ∇cᵢ)
+            - self._cost_lin  # linear cost gradient (constant part of ∇cᵢ)
         )
-        b_y = (
-            g * self._y
-            + lam_tilde
-            + (g * self._p_hat_y - self._v_y)
-            + (g / 2.0) * xi_tilde
-        )
+        b_y = g * self._y + lam_tilde + (g * self._p_hat_y - self._v_y) + (g / 2.0) * xi_tilde
 
         # --- 3. Primal updates ---
         # x update: x ← Hₓ bₓ, then the subclass feasibility hook.

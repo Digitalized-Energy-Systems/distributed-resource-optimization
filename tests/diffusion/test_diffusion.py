@@ -33,8 +33,7 @@ async def test_diffusion_all_callbacks_fire():
         return finish
 
     actors = [
-        create_diffusion_participant(make_finish(i), max_iter=50, horizon=horizon)
-        for i in range(n)
+        create_diffusion_participant(make_finish(i), max_iter=50, horizon=horizon) for i in range(n)
     ]
     start = create_diffusion_start(initial_lam=5.0, horizon=horizon)
     await start_distributed_optimization(actors, start)
@@ -237,9 +236,7 @@ async def test_diffusion_with_storage_respects_box_constraints():
     await start_distributed_optimization(actors, start)
 
     assert 0 in results and 1 in results, "Not all finish callbacks fired"
-    assert np.all(results[1] >= -p_charge_max - 1e-9), (
-        f"Storage charges beyond limit: {results[1]}"
-    )
+    assert np.all(results[1] >= -p_charge_max - 1e-9), f"Storage charges beyond limit: {results[1]}"
     assert np.all(results[1] <= p_discharge_max + 1e-9), (
         f"Storage discharges beyond limit: {results[1]}"
     )
@@ -270,9 +267,7 @@ async def test_diffusion_horizon_larger_than_one():
         )
         for i in range(n)
     ]
-    start = create_diffusion_start(
-        initial_lam=10.0, data=np.full(horizon, 20.0), horizon=horizon
-    )
+    start = create_diffusion_start(initial_lam=10.0, data=np.full(horizon, 20.0), horizon=horizon)
     await start_distributed_optimization(actors, start)
 
     assert len(results) == n

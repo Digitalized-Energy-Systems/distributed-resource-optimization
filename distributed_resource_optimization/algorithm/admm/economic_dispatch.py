@@ -65,6 +65,7 @@ class LinearCostEconomicDispatchADMMFlexActor(ADMMFlexActor):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
+        """Answer the coordinator with the price-clipped merit-order response."""
         if not isinstance(message_data, ADMMMessage):
             return
         pi = _price_from_message(message_data, self.n_participants)
@@ -145,6 +146,7 @@ class StorageADMMFlexActor(ADMMFlexActor):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
+        """Answer with the SOC-feasible schedule implied by the price signal."""
         if not isinstance(message_data, ADMMMessage):
             return
         pi = _price_from_message(message_data, self.n_participants)
@@ -223,6 +225,7 @@ class ProximalStorageADMMActor(ADMMFlexActor):
         message_data: ADMMMessage,
         meta: Any,
     ) -> None:
+        """Answer with the exact proximal solution of the storage subproblem."""
         if not isinstance(message_data, ADMMMessage):
             return
         self.x = self._solve_prox(np.asarray(message_data.v, dtype=float), message_data.rho)

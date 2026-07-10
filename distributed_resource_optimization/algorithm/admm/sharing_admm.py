@@ -42,6 +42,7 @@ class ADMMTargetDistanceObjective(ADMMGlobalObjective):
         z: np.ndarray,
         n: int,
     ) -> float:
+        """Squared distance between *z* and the participant average."""
         return float(np.sum((z - np.asarray(x).mean(axis=0)) ** 2))
 
 
@@ -159,9 +160,7 @@ def _clearing_price(
 
     costs = [float(np.asarray(spec.cost, dtype=float).ravel()[t]) for spec in specs]
     ub_sum = sum(float(np.asarray(spec.ub, dtype=float).ravel()[t]) for spec in specs)
-    max_eps = max(
-        (spec.epsilon if spec.epsilon is not None else epsilon) for spec in specs
-    )
+    max_eps = max((spec.epsilon if spec.epsilon is not None else epsilon) for spec in specs)
 
     lo = min(costs) - 1.0
     hi = max(costs) + max_eps * ub_sum + 1.0
@@ -265,13 +264,16 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
         rho: float,
         n: int,
     ) -> np.ndarray:
+        """Scaled dual ascent on the average: ``u ← u + x̄ − z`` (Boyd §7.3)."""
         x_avg = sum(x) / len(x)
         return u + x_avg - z
 
     def init_z(self, n: int, m: int) -> np.ndarray:
+        """Start the global average variable at ones."""
         return np.ones(m)
 
     def init_u(self, n: int, m: int) -> np.ndarray:
+        """Start the scaled dual at zero."""
         return np.zeros(m)
 
     def actor_correction(
@@ -281,10 +283,12 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
         u: np.ndarray,
         i: int,
     ) -> np.ndarray:
+        """Sharing correction ``v = −xᵢ + x̄ − z + u`` (Boyd §7.3 x-update)."""
         x_avg = sum(x) / len(x)
         return -x[i] + x_avg - z + u
 
     def primal_residual(self, x: list[np.ndarray], z: np.ndarray) -> float:
+        """Max-norm violation of the averaged sharing constraint ``x̄ = z``."""
         x_avg = sum(x) / len(x)
         return float(np.max(np.abs(x_avg - z)))
 

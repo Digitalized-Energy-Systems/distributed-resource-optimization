@@ -73,6 +73,7 @@ class LocalSearchDecider(LocalDecider):
         )
 
     def initial_schedule(self, memory: WorkingMemory) -> np.ndarray:
+        """Return the configured starting schedule (ignores *memory*)."""
         return self._initial_schedule
 
 
