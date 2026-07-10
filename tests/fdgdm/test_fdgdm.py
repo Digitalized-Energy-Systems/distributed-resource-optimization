@@ -14,7 +14,6 @@ from distributed_resource_optimization import (
     start_distributed_optimization,
 )
 
-
 # ---------------------------------------------------------------------------
 # Integration tests (full async runs)
 # ---------------------------------------------------------------------------

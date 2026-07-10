@@ -20,8 +20,8 @@ At every iteration a participant:
 
    where :math:`w_{ij}^{\\mathrm{abs}} = \\min\\!\\left(
    \\tfrac{1}{d_i u_i},\\, \\tfrac{1}{d_j u_j}\\right)` and :math:`d_i`
-   is the out-degree of node *i*, :math:`u_i` is the upper bound of the
-   second derivative of :math:`F_i`.
+   is the neighbour count of node *i* **plus one**, :math:`u_i` is the upper
+   bound of the second derivative of :math:`F_i`.
 
 3. Broadcasts the updated gradient ``∇F_i(P_i[k+1])`` and its own ``d·u``
    product to all neighbours.
@@ -29,6 +29,24 @@ At every iteration a participant:
 Because the weight matrix W has zero row-sums the total power
 :math:`\\sum_i P_i[k]` is conserved across iterations.  The **initial point
 must therefore already satisfy the power balance constraint**.
+
+Deliberate deviations from the paper
+------------------------------------
+
+* **d_i = |N_i| + 1, not the out-degree |N_i| of Eq. 5.**  With the paper's
+  exact d_i the iteration matrix has eigenvalue −1 for two participants with
+  equal curvature (period-2 oscillation that never converges); the +1 shrinks
+  every off-diagonal weight, which keeps ``2U⁻¹ − W`` strictly diagonally
+  dominant, so the Proposition-2 acceleration condition still holds.  Do not
+  "fix" this back to ``n_neighbours`` without re-checking the n=2 case.
+* **The Eq. 24 stopping criterion (‖P[k+1] − P[k]‖ < ε) is not implemented.**
+  Every run executes a fixed ``max_iter`` iterations instead; converged runs
+  simply stop changing until the counter runs out.
+* **Termination assumes lockstep rounds** (every agent completes iteration k
+  before any agent completes k+1).  This holds on the complete graphs with
+  constant-delay lossless transport this codebase uses; with heterogeneous
+  delays an agent could terminate one iteration early on receiving a
+  neighbour's ``k ≥ max_iter`` message.
 
 The optional :class:`FDGDMActor` plug-in supplies ``∇F``, ``u``, and the
 feasibility projection; the default :class:`NoFDGDMActor` uses no cost.
@@ -182,7 +200,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             initial_p = np.asarray(message_data.data, dtype=float)
             self._P = self.actor.project(initial_p)
 
-            # Gradient and du-product to broadcast at k=0.
+            # Gradient and du-product to broadcast at k=0.  Deliberate
+            # deviation from Bai et al. Eq. 5: d = |N_i| + 1, not |N_i| —
+            # the paper's exact d oscillates for n=2 (see module docstring).
             self._last_grad = np.asarray(self.actor.gradient(self._P, message_data.data), dtype=float)
             self._last_du = (
                 float(n_neighbours + 1) * self.actor.curvature_bound() if n_neighbours > 0 else 1.0
