@@ -1,4 +1,4 @@
-from .core import Carrier, EventWithValue
+from .core import Carrier
 from .simple import (
     ActorContainer,
     SimpleCarrier,
@@ -9,7 +9,6 @@ from .simple import (
 
 __all__ = [
     "Carrier",
-    "EventWithValue",
     "ActorContainer",
     "SimpleCarrier",
     "cid",

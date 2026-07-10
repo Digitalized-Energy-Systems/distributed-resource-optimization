@@ -27,11 +27,28 @@ from distributed_resource_optimization import (
 from distributed_resource_optimization.algorithm.admm.sharing_admm import (
     create_sharing_admm_start,
 )
+from distributed_resource_optimization.algorithm.core import Coordinator
 from distributed_resource_optimization.carrier.mango import (
     CoordinatorRole,
     DistributedOptimizationRole,
     StartCoordinatedDistributedOptimization,
 )
+
+
+async def _wait_started_and_done(role: CoordinatorRole, timeout: float = 10.0):
+    """Await a CoordinatorRole run, tolerating the start handler's own latency.
+
+    The message handler that creates ``_done_future`` runs as a separate task
+    once the start message is delivered, so poll for it to appear — bounded by
+    *timeout* so a hung run fails loudly instead of spinning forever.
+    """
+
+    async def _inner():
+        while role._done_future is None:
+            await asyncio.sleep(0.01)
+        return await role.wait_done()
+
+    return await asyncio.wait_for(_inner(), timeout)
 
 
 @pytest.mark.asyncio
@@ -95,15 +112,32 @@ async def test_admm_sharing_end_to_end_over_mango_carrier():
         await coord_agent.roles[0].context.send_message(
             StartCoordinatedDistributedOptimization(input=start), coord_agent.addr
         )
-        # The message handler that creates `_done_future` runs as a separate
-        # task once the message is delivered, so wait for it to appear before
-        # awaiting completion.
-        for _ in range(100):
-            if coord_role._done_future is not None:
-                break
-            await asyncio.sleep(0.01)
-        await coord_role.wait_done()
+        await _wait_started_and_done(coord_role)
 
     assert actors[0].x == pytest.approx([0, 0, 0], abs=1e-2)
     assert actors[1].x == pytest.approx([0, 0, 0], abs=1e-2)
     assert actors[2].x == pytest.approx([-5.617, 0, 5.617], abs=1e-2)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_failure_propagates_to_wait_done():
+    """A coordinator that raises must fail wait_done() instead of hanging it.
+
+    Regression test: the run task used to swallow the exception, leaving
+    ``_done_future`` unresolved forever.
+    """
+
+    class ExplodingCoordinator(Coordinator):
+        async def start_optimization(self, carrier, message_data, meta):
+            raise ValueError("boom: intentionally failing coordinator")
+
+    role = CoordinatorRole(ExplodingCoordinator())
+    container = create_tcp_container(addr=("127.0.0.1", 58435))
+    agent = container.register(agent_composed_of(role))
+
+    async with activate(container):
+        await agent.roles[0].context.send_message(
+            StartCoordinatedDistributedOptimization(input=None), agent.addr
+        )
+        with pytest.raises(ValueError, match="intentionally failing"):
+            await _wait_started_and_done(role, timeout=5.0)

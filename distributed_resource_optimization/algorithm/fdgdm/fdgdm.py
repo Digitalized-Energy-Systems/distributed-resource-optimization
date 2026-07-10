@@ -167,6 +167,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
 
         self._message_queue: dict[int, list[FDGDMMessage]] = {}
         self._first_message: bool = True
+        self._started: bool = False  # True once any round has begun
         self._k: int = 0
         self._P: np.ndarray = np.zeros(horizon)
         self._last_grad: np.ndarray = np.zeros(horizon)
@@ -191,9 +192,15 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._message_queue.clear()
             return
 
+        # After termination, ignore stale messages from the previous round.
+        # Only an explicit initial=True message may start a new round.
+        if self._first_message and self._started and not message_data.initial:
+            return
+
         # --- Initialisation path ---
         if self._first_message or message_data.initial:
             self._first_message = False
+            self._started = True
             self._k = 0
 
             # Bootstrap power schedule from data (initial power allocation).

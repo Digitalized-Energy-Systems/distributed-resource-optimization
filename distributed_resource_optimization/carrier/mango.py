@@ -232,7 +232,14 @@ class DistributedOptimizationRole(Role):
             self,
             self._handle_optimization,
             lambda c, m: (
-                not isinstance(c, (_CarrierReply, StartCoordinatedDistributedOptimization))
+                not isinstance(
+                    c,
+                    (
+                        _CarrierReply,
+                        StartCoordinatedDistributedOptimization,
+                        OptimizationFinishedMessage,
+                    ),
+                )
             ),
         )
         self.context.subscribe_message(
@@ -308,16 +315,24 @@ class CoordinatorRole(Role):
         from ..algorithm.core import start_optimization
 
         loop = asyncio.get_event_loop()
-        self._done_future = loop.create_future()
+        done_future = loop.create_future()
+        self._done_future = done_future
 
         async def _run() -> None:
-            results = await start_optimization(self.coordinator, self._carrier, content.input, meta)
-            for i, addr in enumerate(self._carrier.others("coordinator")):
-                await self.context.send_message(
-                    OptimizationFinishedMessage(result=results[i]), addr
+            try:
+                results = await start_optimization(
+                    self.coordinator, self._carrier, content.input, meta
                 )
-            if not self._done_future.done():
-                self._done_future.set_result(results)
+                for i, addr in enumerate(self._carrier.others("coordinator")):
+                    await self.context.send_message(
+                        OptimizationFinishedMessage(result=results[i]), addr
+                    )
+            except Exception as exc:  # propagate to wait_done() instead of hanging it
+                if not done_future.done():
+                    done_future.set_exception(exc)
+                return
+            if not done_future.done():
+                done_future.set_result(results)
 
         asyncio.create_task(_run())
 

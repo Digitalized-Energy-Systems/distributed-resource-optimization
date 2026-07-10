@@ -573,8 +573,3 @@ def create_cohda_participant_with_decider(
         decider=decider,
         performance_function=performance_function,
     )
-
-
-def result(actor: COHDAAlgorithmData) -> np.ndarray:
-    """Return the aggregate schedule (column-wise sum of all participants)."""
-    return actor.memory.solution_candidate.schedules.sum(axis=0)

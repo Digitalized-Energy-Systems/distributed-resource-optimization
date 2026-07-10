@@ -85,11 +85,22 @@ class SimpleCarrier(Carrier):
         else:
             await on_exchange_message(target.actor, target, content, meta)
 
-    def _task_done(self, task: asyncio.Task) -> None:
-        """Callback invoked when a dispatch task finishes."""
-        self.container.active_tasks -= 1
-        if self.container.active_tasks == 0:
-            self.container.done_event.set()
+    def _track_dispatch(self, coro: Any) -> asyncio.Task:
+        """Run *coro* as a task tracked by the container's active-task counter."""
+        self.container.active_tasks += 1
+        # Reset done_event if it was previously set
+        if self.container.done_event.is_set():
+            self.container.done_event.clear()
+
+        async def _run() -> None:
+            try:
+                await coro
+            finally:
+                self.container.active_tasks -= 1
+                if self.container.active_tasks == 0:
+                    self.container.done_event.set()
+
+        return asyncio.create_task(_run())
 
     # ------------------------------------------------------------------
     # Carrier interface
@@ -113,21 +124,7 @@ class SimpleCarrier(Carrier):
         full_meta: dict = {"sender": self.aid, "message_id": uuid4()}
         full_meta.update(extra)
 
-        self.container.active_tasks += 1
-        # Reset done_event if it was previously set
-        if self.container.done_event.is_set():
-            self.container.done_event.clear()
-
-        async def _run() -> None:
-            try:
-                await self._dispatch_to(other, content, full_meta)
-            finally:
-                self.container.active_tasks -= 1
-                if self.container.active_tasks == 0:
-                    self.container.done_event.set()
-
-        task = asyncio.create_task(_run())
-        return task
+        return self._track_dispatch(self._dispatch_to(other, content, full_meta))
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         """Reply to the sender recorded in *meta*.
@@ -158,19 +155,18 @@ class SimpleCarrier(Carrier):
         full_meta: dict = {"sender": self.aid, "message_id": msg_id}
         full_meta.update(extra)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
 
         async def _handler(carrier: SimpleCarrier, reply_content: Any, _meta: dict) -> None:
+            # One-shot: unregister before resolving so replies cannot leak handlers.
+            self._uuid_to_handler.pop(msg_id, None)
             if not future.done():
                 future.set_result(reply_content)
 
         self._uuid_to_handler[msg_id] = _handler
 
-        async def _run() -> None:
-            await self._dispatch_to(other, content, full_meta)
-
-        asyncio.create_task(_run())
+        self._track_dispatch(self._dispatch_to(other, content, full_meta))
         return future
 
     def others(self, participant_id: str) -> list[int]:

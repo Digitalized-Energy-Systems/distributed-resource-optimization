@@ -169,6 +169,46 @@ async def test_send_awaitable_resolves_on_reply():
     assert result == "ping_reply"
 
 
+@pytest.mark.asyncio
+async def test_send_awaitable_unregisters_handler_after_reply():
+    """The one-shot reply handler must not leak after the future resolves."""
+    container = ActorContainer()
+
+    class _ReplyAlgo(DistributedAlgorithm):
+        async def on_exchange_message(self, carrier, content, meta):
+            await carrier.reply_to_other(content + "_reply", meta)
+
+    c1 = SimpleCarrier(container, _ReplyAlgo())
+    c2 = SimpleCarrier(container, _ReplyAlgo())
+
+    for _ in range(3):
+        future = c1.send_awaitable("ping", cid(c2))
+        await asyncio.wait_for(asyncio.ensure_future(future), timeout=2.0)
+
+    assert c1._uuid_to_handler == {}
+
+
+@pytest.mark.asyncio
+async def test_send_awaitable_counts_toward_done_event():
+    """send_awaitable dispatches are tracked like send_to_other dispatches, so
+    the done event only fires once the request has actually been handled."""
+    container = ActorContainer()
+    received = []
+
+    class _SlowReplyAlgo(DistributedAlgorithm):
+        async def on_exchange_message(self, carrier, content, meta):
+            await asyncio.sleep(0.05)
+            received.append(content)
+            await carrier.reply_to_other(content + "_reply", meta)
+
+    c1 = SimpleCarrier(container, _SlowReplyAlgo())
+    c2 = SimpleCarrier(container, _SlowReplyAlgo())
+
+    c1.send_awaitable("ping", cid(c2))
+    await asyncio.wait_for(container.done_event.wait(), timeout=2.0)
+    assert received == ["ping"]
+
+
 # ---------------------------------------------------------------------------
 # schedule_using
 # ---------------------------------------------------------------------------

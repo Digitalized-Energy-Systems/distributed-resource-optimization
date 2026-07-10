@@ -66,11 +66,6 @@ class ADMMFlexActor(DistributedAlgorithm):
         carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
 
 
-def result(actor: ADMMFlexActor) -> np.ndarray:
-    """Return the most recent local solution of *actor*."""
-    return actor.x
-
-
 def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray:
     m = len(v)
 

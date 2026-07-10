@@ -1,4 +1,4 @@
-"""TestCarrier — a no-network carrier for unit testing algorithm logic.
+"""StubCarrier — a no-network carrier for unit testing algorithm logic.
 
 Messages sent via :meth:`send_to_other` are stored in
 :attr:`test_neighbor_messages` so tests can inspect them without any
@@ -13,7 +13,7 @@ from typing import Any
 from distributed_resource_optimization.carrier.core import Carrier
 
 
-class TestCarrier(Carrier):
+class StubCarrier(Carrier):
     """Synchronous stub carrier for unit tests.
 
     :param test_neighbors: Set of (integer) neighbour IDs that

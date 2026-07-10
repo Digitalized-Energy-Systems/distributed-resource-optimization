@@ -19,7 +19,7 @@ from distributed_resource_optimization import (
     merge_sysconfigs,
     perceive,
 )
-from tests.carrier import TestCarrier
+from tests.carrier import StubCarrier
 
 # ---------------------------------------------------------------------------
 # Performance function
@@ -277,7 +277,7 @@ class TestSelectionMultiplePerceiveDecide:
 
 class TestOnExchangeCohda:
     async def test_two_participant_exchange(self):
-        test_carrier = TestCarrier(test_neighbors={1})
+        test_carrier = StubCarrier(test_neighbors={1})
         part1 = create_cohda_participant(1, [[1, 1, 0.0], [1, 1, 1], [4, 2, 1], [0, 1, 0]])
         part2 = create_cohda_participant(2, [[0.0, 1, 2], [1, 2.0, 3], [1, 1, 1], [4, 2, 3]])
         init_wm = create_cohda_start_message([1, 2.0, 1])
@@ -395,7 +395,7 @@ class TestOnExchangeCohdaHinrichs:
         latest message.  The loop stops when a participant produces no new
         output (i.e. the algorithm has converged for that round).
         """
-        test_carrier = TestCarrier(test_neighbors={1})
+        test_carrier = StubCarrier(test_neighbors={1})
         parts = [
             create_cohda_participant(i + 1, schedule_set)
             for i, schedule_set in enumerate(S_HINRICHS)

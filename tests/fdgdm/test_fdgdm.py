@@ -469,3 +469,52 @@ class TestLinearCostActorPMaxCache:
         )
         result = actor.project(np.array([8.0, 8.0]))
         assert np.allclose(result, [5.0, 8.0])
+
+
+# ---------------------------------------------------------------------------
+# Stale-message guard after termination
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stale_message_after_termination_does_not_restart():
+    """Once a run terminated, a stale non-initial message from the finished
+    round must be ignored — it must not bootstrap a zombie round.
+
+    Regression test: FDGDM lacked the `_started` guard the other
+    peer-to-peer algorithms already had.
+    """
+    from tests.carrier import StubCarrier
+
+    from distributed_resource_optimization import FDGDMMessage
+
+    finished: list[int] = []
+    algo = create_fdgdm_participant(
+        lambda a, c: finished.append(1), fdgdm_actor=NoFDGDMActor(), max_iter=5
+    )
+    carrier = StubCarrier(test_neighbors={2})
+
+    # Kick off, then terminate via a k >= max_iter message.
+    await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
+    await algo.on_exchange_message(
+        carrier,
+        FDGDMMessage(gradient=np.zeros(1), d_u_product=1.0, k=5, data=np.array([1.0])),
+        {},
+    )
+    assert finished == [1]
+    sent_before = sum(len(msgs) for msgs in carrier.test_neighbor_messages.values())
+
+    # Stale mid-run message arriving late: must be dropped silently.
+    await algo.on_exchange_message(
+        carrier,
+        FDGDMMessage(gradient=np.zeros(1), d_u_product=1.0, k=2, data=np.array([1.0])),
+        {},
+    )
+    sent_after = sum(len(msgs) for msgs in carrier.test_neighbor_messages.values())
+    assert sent_after == sent_before  # no re-broadcast
+    assert finished == [1]  # no second finish
+
+    # An explicit initial=True message may still start a fresh run.
+    await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
+    sent_restarted = sum(len(msgs) for msgs in carrier.test_neighbor_messages.values())
+    assert sent_restarted > sent_after

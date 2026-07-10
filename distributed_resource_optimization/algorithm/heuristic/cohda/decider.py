@@ -23,6 +23,7 @@ from .core import (
     SolutionCandidate,
     SystemConfig,
     WorkingMemory,
+    _evaluated,
     create_from_updated_sysconf,
 )
 
@@ -87,9 +88,17 @@ def _local_performance_with_global_share(
     current_value: float,
     delta_to_target: float,
 ) -> float:
-    """Combined local + convergence-force performance."""
-    return decider.local_performance(schedule) + decider.convergence_force_factor * (
-        (new_value - current_value) + delta_to_target
+    """Combined local + convergence-force performance.
+
+    The convergence force penalises the residual that would *remain* in this
+    dimension after moving from *current_value* to *new_value*: changing the
+    own contribution by ``new_value - current_value`` shrinks the current
+    global residual ``delta_to_target`` by exactly that amount, so the term
+    is maximal (zero) when the move closes the residual completely.
+    """
+    remaining_residual = delta_to_target - (new_value - current_value)
+    return decider.local_performance(schedule) - decider.convergence_force_factor * abs(
+        remaining_residual
     )
 
 
@@ -99,31 +108,44 @@ def _find_new_value(
     current_best_schedule: np.ndarray,
     delta_to_target: float,
 ) -> float:
-    """Find an improved value for dimension *current_index* via random search."""
+    """Find an improved value for dimension *current_index* via random search.
+
+    Samples are drawn from the corridor once, evaluated (and consumed) one at
+    a time, and the *best-performing* value is returned — keeping the current
+    value when no sample beats it.  After every three evaluations the
+    remaining samples are pruned toward the best-looking region.
+    """
     lo, hi = decider.corridors[current_index]
     sampler = decider.distribution(lo, hi)
     possible = [sampler() for _ in range(decider.sample_size_per_value)]
     current_value = float(current_best_schedule[current_index])
-    perf_tuples: list[tuple[float, float]] = []  # (value, performance)
-    new_value: float | None = None
+
+    def _performance(value: float) -> float:
+        candidate_schedule = current_best_schedule.copy()
+        candidate_schedule[current_index] = value
+        return _local_performance_with_global_share(
+            decider, candidate_schedule, value, current_value, delta_to_target
+        )
+
+    best_value = current_value
+    best_perf = _performance(current_value)
+    window: list[tuple[float, float]] = []  # (value, performance)
     iteration = 1
 
     while possible and iteration <= decider.max_iterations:
         idx = random.randrange(len(possible))
-        new_value = possible[idx]
-        copy_bs = current_best_schedule.copy()
-        copy_bs[current_index] = new_value
-        perf = _local_performance_with_global_share(
-            decider, copy_bs, new_value, current_value, delta_to_target
-        )
-        perf_tuples.append((new_value, perf))
+        value = possible.pop(idx)
+        perf = _performance(value)
+        if perf > best_perf:
+            best_value, best_perf = value, perf
+        window.append((value, perf))
 
-        if len(perf_tuples) == 3:
+        if len(window) == 3:
             # Sort by value ascending; prune based on monotonicity
-            perf_tuples.sort(key=lambda t: t[0])
-            v1, p1 = perf_tuples[0]
-            v2, p2 = perf_tuples[1]
-            v3, p3 = perf_tuples[2]
+            window.sort(key=lambda t: t[0])
+            v1, p1 = window[0]
+            v2, p2 = window[1]
+            v3, p3 = window[2]
 
             if p1 > p2 > p3:
                 possible = [v for v in possible if v < v2]
@@ -132,10 +154,11 @@ def _find_new_value(
             elif (p2 > p1 > p3) or (p3 > p1 > p2):
                 lo2, hi2 = min(v2, v3), max(v2, v3)
                 possible = [v for v in possible if lo2 < v < hi2]
+            window.clear()
 
         iteration += 1
 
-    return new_value if new_value is not None else current_value
+    return best_value
 
 
 def _find_in_local_search_room(
@@ -162,25 +185,41 @@ def decide(
 
     Searches for a better schedule in the local search corridor.  The
     *open_schedule* (residual distance from the current candidate sum to the
-    weighted target) guides the convergence-force term.
+    target) guides the convergence-force term.  The searched schedule is
+    adopted — and published to the system config — only when the resulting
+    candidate outperforms the incumbent, mirroring the monotone-improvement
+    rule of the enumerating default decider.
 
     :returns: Updated ``(system_config, candidate)`` pair.
     """
-    current_best_schedule = candidate.schedules[cohda_data.participant_id - 1].copy()
+    participant_id = cohda_data.participant_id
+    perf_func = cohda_data.performance_function
     target = cohda_data.memory.target_params
-    open_schedule = target.schedule * target.weights - candidate.schedules.sum(axis=0)
+
+    current_best_schedule = candidate.schedules[participant_id - 1].copy()
+    open_schedule = target.schedule - candidate.schedules.sum(axis=0)
+
+    incumbent = candidate
+    if incumbent.perf is None:
+        incumbent = _evaluated(incumbent, perf_func, target)
 
     new_best_schedule = _find_in_local_search_room(decider, current_best_schedule, open_schedule)
-    new_candidate = create_from_updated_sysconf(
-        cohda_data.participant_id, sysconfig, new_best_schedule
-    )
+    new_candidate = create_from_updated_sysconf(participant_id, sysconfig, new_best_schedule)
+    new_candidate = _evaluated(new_candidate, perf_func, target)
 
-    existing = sysconfig.schedule_choices.get(cohda_data.participant_id)
-    if existing is None or not np.array_equal(current_best_schedule, existing.schedule):
-        sysconfig.schedule_choices[cohda_data.participant_id] = ScheduleSelection(
-            schedule=current_best_schedule,
+    if new_candidate.perf > incumbent.perf:  # type: ignore[operator]
+        chosen_candidate = new_candidate
+        chosen_schedule = new_best_schedule
+    else:
+        chosen_candidate = incumbent
+        chosen_schedule = current_best_schedule
+
+    existing = sysconfig.schedule_choices.get(participant_id)
+    if existing is None or not np.array_equal(chosen_schedule, existing.schedule):
+        sysconfig.schedule_choices[participant_id] = ScheduleSelection(
+            schedule=chosen_schedule,
             counter=cohda_data.counter + 1,
         )
         cohda_data.counter += 1
 
-    return sysconfig, new_candidate
+    return sysconfig, chosen_candidate

@@ -299,10 +299,3 @@ def create_sharing_target_distance_admm_coordinator() -> ADMMGenericCoordinator:
     return ADMMGenericCoordinator(
         global_actor=ADMMSharingGlobalActor(ADMMTargetDistanceObjective())
     )
-
-
-def create_sharing_admm_coordinator(
-    objective: ADMMGlobalObjective,
-) -> ADMMGenericCoordinator:
-    """Create an :class:`~.core.ADMMGenericCoordinator` with a custom *objective*."""
-    return ADMMGenericCoordinator(global_actor=ADMMSharingGlobalActor(objective))

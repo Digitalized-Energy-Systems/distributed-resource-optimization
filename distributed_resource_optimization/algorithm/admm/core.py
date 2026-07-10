@@ -305,23 +305,3 @@ class ADMMGenericCoordinator(Coordinator):
                 )
 
         return x, z, u
-
-
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
-
-
-def create_admm_start(data: Any, length: int | None = None) -> ADMMStart:
-    """Create an :class:`ADMMStart` message.
-
-    When *length* is omitted it is inferred from ``data.solution_length``.
-    For :class:`.sharing_admm.ADMMSharingData`, use
-    :func:`.sharing_admm.create_sharing_admm_start` instead.
-    """
-    if length is not None:
-        return ADMMStart(data=data, solution_length=length)
-    # Try to infer from data
-    if hasattr(data, "solution_length"):
-        return ADMMStart(data=data, solution_length=data.solution_length)
-    raise ValueError("Cannot infer solution_length; pass it explicitly as the second argument.")

@@ -1,22 +1,10 @@
-"""Abstract carrier interface and EventWithValue helper."""
+"""Abstract carrier interface."""
 
 from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
-
-
-class EventWithValue:
-    """Pairs an asyncio.Event with the value it will carry once set."""
-
-    def __init__(self) -> None:
-        self.event: asyncio.Event = asyncio.Event()
-        self.value: Any = None
-
-    async def wait(self) -> Any:
-        await self.event.wait()
-        return self.value
 
 
 class Carrier(ABC):
@@ -77,8 +65,6 @@ class Carrier(ABC):
     def get_address(self) -> Any:
         """Return the address of this carrier's participant."""
 
-    async def wait_for(self, awaitable: asyncio.Future | EventWithValue) -> Any:
-        """Await *awaitable*, unwrapping an :class:`EventWithValue` if needed."""
-        if isinstance(awaitable, EventWithValue):
-            return await awaitable.wait()
+    async def wait_for(self, awaitable: asyncio.Future) -> Any:
+        """Await *awaitable*."""
         return await awaitable
