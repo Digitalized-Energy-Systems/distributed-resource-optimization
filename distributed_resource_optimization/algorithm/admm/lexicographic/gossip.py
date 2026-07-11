@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -205,6 +206,11 @@ class GossipParticipant(DistributedAlgorithm):
         outside the round's frame are ignored.
     :param on_commit: Optional ``(r, converged, iterations)`` callback
         fired at round end.
+    :param warm_start: Seed each round's ADMM state (r/x/z/u/rho) from the
+        previous committed round instead of zeros. With a per-round budget of
+        ``round_timeout_s / iter_timeout_s`` iterations a cold start cannot
+        converge for realistic N, so every commit is an early partial iterate;
+        carry-over lets successive rounds continue one another.
     """
 
     def __init__(
@@ -213,12 +219,19 @@ class GossipParticipant(DistributedAlgorithm):
         capacity_by_sector: dict[str, float],
         *,
         on_commit: Callable[[np.ndarray, bool, int], None] | None = None,
+        warm_start: bool = False,
     ) -> None:
         self.cp_id = cp_id
         self._capacity_by_sector = dict(capacity_by_sector)
         self._on_commit = on_commit
+        self.warm_start = bool(warm_start)
+        self._warm_state: dict[str, Any] | None = None
         self._ctx: _RoundCtx | None = None  # None until first Init/Start
         self._run_task: asyncio.Task | None = None
+        # Monotone token: a _begin_round suspended in its cancel-await aborts
+        # when a newer Init superseded it (else the older round's ctx would
+        # overwrite the newer one and leave two live cascades).
+        self._begin_seq: int = 0
 
     def is_round_active(self) -> bool:
         return self._run_task is not None and not self._run_task.done()
@@ -328,12 +341,19 @@ class GossipParticipant(DistributedAlgorithm):
     async def _begin_round(self, carrier: "Carrier", init: GossipCascadeInit) -> None:
         """Cancel any in-flight round, build a fresh context, launch
         the cascade coroutine."""
-        if self._run_task is not None and not self._run_task.done():
-            self._run_task.cancel()
+        self._begin_seq += 1
+        seq = self._begin_seq
+        while self._run_task is not None and not self._run_task.done():
+            task = self._run_task
+            task.cancel()
             try:
-                await self._run_task
+                await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            if self._begin_seq != seq:
+                return  # superseded by a newer Init while we awaited the cancel
+        if self._begin_seq != seq:
+            return
         self._ctx = self._build_ctx(init)
         # Driver task via the carrier; under simulation it is scheduler-tracked
         # and marked idle while it awaits peer replies (see Carrier.spawn).
@@ -361,7 +381,7 @@ class GossipParticipant(DistributedAlgorithm):
             for tier, arr in d.demand_by_tier.items():
                 if tier in tier_idx_map:
                     D[s, tier_idx_map[tier], :] = np.asarray(arr, dtype=float)
-        return _RoundCtx(
+        ctx = _RoundCtx(
             round_id=int(init.round_id),
             initiator_id=str(init.initiator_cp_id),
             participants=list(init.participants),
@@ -392,6 +412,54 @@ class GossipParticipant(DistributedAlgorithm):
             theta=np.zeros((n_sec, H), dtype=float),
             rho_f=float(init.rho),
         )
+        if self.warm_start:
+            self._apply_warm_state(ctx)
+        return ctx
+
+    def _apply_warm_state(self, ctx: _RoundCtx) -> None:
+        """Seed *ctx* from the previous committed round's ADMM state.
+
+        Rows are remapped by sector name (the round frame can change between
+        rounds); ``theta`` stays zero — it is the within-round cascade
+        accumulator, not ADMM state. Skipped on horizon mismatch or non-finite
+        saved state. When the participant set changed, only ``r`` is carried
+        (it is scale-free against the current capacity frame): the saved z/u
+        approximate a consensus over the OLD group at the OLD problem scale,
+        and a stale dual can pin r at its clip bound for several ~10-iteration
+        rounds — an over-commit transient landing exactly at failure time.
+        """
+        ws = self._warm_state
+        if ws is None or int(ws["horizon"]) != ctx.horizon:
+            return
+        if not all(np.all(np.isfinite(ws[k])) for k in ("r", "z", "u")):
+            self._warm_state = None
+            return
+        ctx.r = np.clip(np.asarray(ws["r"], dtype=float).copy(), 0.0, 1.0)
+        # x_self consistent with the warm r under the CURRENT capacity frame.
+        ctx.x_self = ctx.r[np.newaxis, :] * ctx.cap_vec[:, np.newaxis]
+        if sorted(ctx.participants) != ws.get("participants"):
+            return  # consensus frame changed: keep r, drop stale duals/rho
+        old_idx = {s: i for i, s in enumerate(ws["sectors"])}
+        for s, i_new in ctx.sec_idx.items():
+            i_old = old_idx.get(s)
+            if i_old is None:
+                continue
+            ctx.z[i_new, :] = ws["z"][i_old, :]
+            ctx.u[i_new, :] = ws["u"][i_old, :]
+        rho_f = float(ws.get("rho_f", ctx.rho_f))
+        if rho_f > 0.0 and math.isfinite(rho_f):
+            ctx.rho_f = rho_f
+
+    def _save_warm_state(self, ctx: _RoundCtx) -> None:
+        self._warm_state = {
+            "sectors": list(ctx.sectors),
+            "participants": sorted(ctx.participants),
+            "horizon": int(ctx.horizon),
+            "r": ctx.r.copy(),
+            "z": ctx.z.copy(),
+            "u": ctx.u.copy(),
+            "rho_f": float(ctx.rho_f),
+        }
 
     async def _run_cascade(self, carrier: "Carrier") -> None:
         """Outer lex-cascade + inner sharing-ADMM run locally, mirroring
@@ -552,6 +620,8 @@ class GossipParticipant(DistributedAlgorithm):
             for addr in carrier.others(self.cp_id):
                 carrier.send_to_other(done_msg, addr)
 
+            if self.warm_start:
+                self._save_warm_state(ctx)
             if self._on_commit is not None:
                 self._on_commit(ctx.r.copy(), converged_total, total_iters)
         except asyncio.CancelledError:
@@ -589,12 +659,14 @@ def create_gossip_cascade_participant(
     capacity_by_sector: dict[str, float],
     *,
     on_commit: Callable[[np.ndarray, bool, int], None] | None = None,
+    warm_start: bool = False,
 ) -> GossipParticipant:
     """Create a :class:`GossipParticipant` for the cross-sector cascade."""
     return GossipParticipant(
         cp_id=cp_id,
         capacity_by_sector=capacity_by_sector,
         on_commit=on_commit,
+        warm_start=warm_start,
     )
 
 
