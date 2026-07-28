@@ -42,27 +42,12 @@ import numpy as np
 
 from ...core import DistributedAlgorithm, OptimizationMessage
 from ..types import SectorDemand
-from .kernel import _z_sigma_cell_update
+from .kernel import _characteristic_scale, _local_regularization, _z_sigma_cell_update
 
 if TYPE_CHECKING:
     from ....carrier.core import Carrier
 
 logger = logging.getLogger(__name__)
-
-
-async def _wait_first(*awaitables: Any) -> None:
-    """Wait until the first of *awaitables* resolves, then cancel the rest.
-
-    Used to race a peer-ready event against a clock-domain timeout so the
-    timeout obeys the carrier's clock (simulation or wall-clock).
-    """
-    tasks = [asyncio.ensure_future(a) for a in awaitables]
-    try:
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +77,8 @@ class GossipCascadeStart(OptimizationMessage):
     rho_mu: float = 10.0
     rho_tau: float = 2.0
     minimize_usage: bool = False
+    normalize: bool = False
+    r_regularization_relative: bool = False
     iter_timeout_s: float = 0.3
     round_timeout_s: float = 8.0
 
@@ -120,6 +107,8 @@ class GossipCascadeInit(OptimizationMessage):
     inner_iters_max: int
     inner_abs_tol: float
     minimize_usage: bool = False
+    normalize: bool = False
+    r_regularization_relative: bool = False
 
 
 @dataclass
@@ -175,6 +164,9 @@ class _RoundCtx:
     all_tiers: list[int]
     D: np.ndarray
     base_supply: np.ndarray
+    # Divisor already applied to cap_vec/D/base_supply; every MW quantity in
+    # this ctx lives in the normalised frame. 1.0 when normalize is off.
+    scale: float = 1.0
     # Mutable kernel state (advances per iter / per tier).
     tier_index: int = 0
     iter_k: int = 0
@@ -286,6 +278,8 @@ class GossipParticipant(DistributedAlgorithm):
             inner_iters_max=start.inner_iters_max,
             inner_abs_tol=start.inner_abs_tol,
             minimize_usage=start.minimize_usage,
+            normalize=start.normalize,
+            r_regularization_relative=start.r_regularization_relative,
         )
         for addr in carrier.others(self.cp_id):
             carrier.send_to_other(init, addr)
@@ -356,7 +350,7 @@ class GossipParticipant(DistributedAlgorithm):
             return
         self._ctx = self._build_ctx(init)
         # Driver task via the carrier; under simulation it is scheduler-tracked
-        # and marked idle while it awaits peer replies (see Carrier.spawn).
+        # and its peer-reply/timeout waits park via carrier.race/wait_for.
         self._run_task = carrier.spawn(self._run_cascade(carrier))
 
     def _build_ctx(self, init: GossipCascadeInit) -> _RoundCtx:
@@ -364,8 +358,12 @@ class GossipParticipant(DistributedAlgorithm):
         sec_idx = {s: i for i, s in enumerate(sectors)}
         H = int(init.horizon)
         n_sec = len(sectors)
+        # Derived from init.demands, which every peer receives verbatim, so all
+        # participants normalise by the identical divisor without exchanging
+        # capacities — the replicated-kernel invariant survives.
+        scale = _characteristic_scale(init.demands) if init.normalize else 1.0
         cap_vec = np.array(
-            [float(self._capacity_by_sector.get(s, 0.0)) for s in sectors],
+            [float(self._capacity_by_sector.get(s, 0.0)) / scale for s in sectors],
             dtype=float,
         )
         all_tiers = sorted({t for d in init.demands for t in d.demand_by_tier})
@@ -377,10 +375,10 @@ class GossipParticipant(DistributedAlgorithm):
             if d.sector not in sec_idx:
                 continue
             s = sec_idx[d.sector]
-            base_supply[s, :] = np.asarray(d.base_supply, dtype=float)
+            base_supply[s, :] = np.asarray(d.base_supply, dtype=float) / scale
             for tier, arr in d.demand_by_tier.items():
                 if tier in tier_idx_map:
-                    D[s, tier_idx_map[tier], :] = np.asarray(arr, dtype=float)
+                    D[s, tier_idx_map[tier], :] = np.asarray(arr, dtype=float) / scale
         ctx = _RoundCtx(
             round_id=int(init.round_id),
             initiator_id=str(init.initiator_cp_id),
@@ -392,7 +390,11 @@ class GossipParticipant(DistributedAlgorithm):
             cap_vec=cap_vec,
             cap_norm_sq=float(cap_vec @ cap_vec),
             rho_init=float(init.rho),
-            alpha=float(init.r_regularization),
+            alpha=_local_regularization(
+                float(init.r_regularization),
+                bool(init.r_regularization_relative),
+                float(cap_vec @ cap_vec),
+            ),
             minimize_usage=bool(init.minimize_usage),
             adaptive_rho=bool(init.adaptive_rho),
             rho_mu=float(init.rho_mu),
@@ -404,6 +406,7 @@ class GossipParticipant(DistributedAlgorithm):
             all_tiers=all_tiers,
             D=D,
             base_supply=base_supply,
+            scale=scale,
             x_self=np.zeros((n_sec, H), dtype=float),
             r=np.zeros(H, dtype=float),
             x_bar=np.zeros((n_sec, H), dtype=float),
@@ -439,13 +442,17 @@ class GossipParticipant(DistributedAlgorithm):
         ctx.x_self = ctx.r[np.newaxis, :] * ctx.cap_vec[:, np.newaxis]
         if sorted(ctx.participants) != ws.get("participants"):
             return  # consensus frame changed: keep r, drop stale duals/rho
+        # z/u are MW in the SAVING round's normalised frame; if this round's
+        # demands changed the characteristic scale, carrying them over raw
+        # would inject a wrongly-scaled dual.
+        regauge = float(ws.get("scale", ctx.scale)) / ctx.scale
         old_idx = {s: i for i, s in enumerate(ws["sectors"])}
         for s, i_new in ctx.sec_idx.items():
             i_old = old_idx.get(s)
             if i_old is None:
                 continue
-            ctx.z[i_new, :] = ws["z"][i_old, :]
-            ctx.u[i_new, :] = ws["u"][i_old, :]
+            ctx.z[i_new, :] = ws["z"][i_old, :] * regauge
+            ctx.u[i_new, :] = ws["u"][i_old, :] * regauge
         rho_f = float(ws.get("rho_f", ctx.rho_f))
         if rho_f > 0.0 and math.isfinite(rho_f):
             ctx.rho_f = rho_f
@@ -459,6 +466,7 @@ class GossipParticipant(DistributedAlgorithm):
             "z": ctx.z.copy(),
             "u": ctx.u.copy(),
             "rho_f": float(ctx.rho_f),
+            "scale": float(ctx.scale),
         }
 
     async def _run_cascade(self, carrier: "Carrier") -> None:
@@ -523,7 +531,7 @@ class GossipParticipant(DistributedAlgorithm):
                     # runs on the carrier's clock, so under a simulation it is
                     # a discrete-step wakeup rather than real wall-clock time.
                     if N > 1:
-                        await _wait_first(
+                        await carrier.race(
                             ctx.iter_ready.wait(),
                             carrier.sleep(ctx.iter_timeout_s),
                         )
@@ -684,6 +692,8 @@ def create_gossip_cascade_start(
     rho_mu: float = 10.0,
     rho_tau: float = 2.0,
     minimize_usage: bool = False,
+    normalize: bool = False,
+    r_regularization_relative: bool = False,
     iter_timeout_s: float = 0.3,
     round_timeout_s: float = 8.0,
 ) -> GossipCascadeStart:
@@ -692,6 +702,10 @@ def create_gossip_cascade_start(
     :param round_id: Monotonic round id from the initiator's host role.
     :param participants: cp_ids in this round (incl. the initiator).
     :param demands: Per-sector demand profiles + base supply.
+    :param normalize: Solve in a non-dimensional frame; see
+        :func:`~.coordinator.solve_cp_distributed_lexicographic_cascade`.
+    :param r_regularization_relative: Read ``r_regularization`` as a multiple
+        of the CP's own :math:`\\|c_i\\|^2`; see the same function.
     :param iter_timeout_s: Wait for peer Iters before using held-over values.
     :param round_timeout_s: Hard round cap; on expiry commit the current
         iterate (feasible-suboptimal).
@@ -709,6 +723,8 @@ def create_gossip_cascade_start(
         rho_mu=float(rho_mu),
         rho_tau=float(rho_tau),
         minimize_usage=bool(minimize_usage),
+        normalize=bool(normalize),
+        r_regularization_relative=bool(r_regularization_relative),
         iter_timeout_s=float(iter_timeout_s),
         round_timeout_s=float(round_timeout_s),
     )

@@ -61,6 +61,13 @@ from uuid import uuid4
 from mango import AgentAddress, Role
 from mango import sender_addr as mango_sender_addr
 
+try:
+    from mango.util.scheduling import sleeping_wait
+except ImportError:
+    # Older mango: its scheduler blanket-marks any parked task as sleeping,
+    # so no explicit declaration is needed (or possible).
+    from contextlib import nullcontext as sleeping_wait
+
 from ..algorithm.core import Coordinator, DistributedAlgorithm
 from .core import Carrier
 
@@ -206,21 +213,28 @@ class MangoCarrier(Carrier):
         """Sleep on the agent's clock: under ``run_with_simulation`` this
         registers a discrete-step wakeup at ``now + seconds`` instead of
         burning real wall-clock time."""
-        return self._parent.context.scheduler.clock.sleep(seconds)
+        return self._sim_sleep(seconds)
+
+    async def _sim_sleep(self, seconds: float) -> None:
+        with sleeping_wait():
+            await self._parent.context.scheduler.clock.sleep(seconds)
 
     def spawn(self, coroutine) -> asyncio.Task:
         """Run the driver as a tracked agent-scheduler task.
 
-        The mango scheduler marks a task parked on a reply/peer future as
-        sleeping, so a discrete simulation step advances the driver as it
-        delivers the clock-gated messages the driver's sends provoke,
-        rather than deadlocking its termination detection. Under a real
-        container this is just a normal scheduled task on the event loop.
+        Under discrete stepping the simulation clock tracks the driver;
+        its reply/timeout waits go through :meth:`wait_for`, which declares
+        them idle so termination detection does not deadlock on the driver.
+        Under a real container this is just a normal scheduled task on the
+        event loop.
         """
         return self._parent.context.schedule_instant_task(coroutine)
 
-    async def wait_for(self, awaitable: asyncio.Future) -> Any:
-        return await awaitable
+    async def wait_for(self, awaitable) -> Any:
+        # The park point: the wait resolves only via an inbound message or
+        # the simulation clock, so declare the driver idle for its duration.
+        with sleeping_wait():
+            return await super().wait_for(awaitable)
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +359,8 @@ class CoordinatorRole(Role):
                 self._done_future.set_result(results)
 
         # Run the request/reply driver via the carrier (a tracked scheduler
-        # task under simulation; see Carrier.spawn). The scheduler marks it
-        # idle while it awaits replies, so discrete stepping advances it.
+        # task under simulation; see Carrier.spawn). Its reply waits go
+        # through carrier.wait_for, so discrete stepping advances it.
         self._carrier.spawn(_run())
 
     def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
@@ -354,7 +368,11 @@ class CoordinatorRole(Role):
             self._carrier._resolve_reply(content)
 
     async def wait_done(self) -> Any:
-        """Await the completion of the optimization run."""
+        """Await the completion of the optimization run.
+
+        Routed through the carrier's park point so it is safe to call from
+        inside a scheduled task under discrete stepping.
+        """
         if self._done_future is None:
             raise RuntimeError("Optimization has not been started yet.")
-        return await self._done_future
+        return await self._carrier.wait_for(self._done_future)

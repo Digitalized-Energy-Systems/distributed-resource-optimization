@@ -123,7 +123,7 @@ from ..core import (
     ADMMMessage,
 )
 from ..types import CPAdmmResult, CPSpec, SectorDemand
-from .kernel import _z_sigma_cell_update
+from .kernel import _characteristic_scale, _local_regularization, _z_sigma_cell_update
 
 if TYPE_CHECKING:
     from ....carrier.core import Carrier
@@ -147,6 +147,8 @@ def solve_cp_distributed_lexicographic_cascade(
     rho_mu: float = 10.0,
     rho_tau: float = 2.0,
     minimize_usage: bool = False,
+    normalize: bool = False,
+    r_regularization_relative: bool = False,
     record_history: bool = False,
 ) -> CPAdmmResult:
     """Solve the lexicographic cascade via sum-sharing ADMM.
@@ -213,6 +215,23 @@ def solve_cp_distributed_lexicographic_cascade(
         :math:`\\rho` adjustment (Boyd's ``mu``; default 10).
     :param rho_tau: Multiplicative :math:`\\rho` step (Boyd's
         ``tau^{incr} = tau^{decr}``; default 2).
+    :param normalize: Divide the round's MW data by
+        :func:`~.kernel._characteristic_scale` before solving and scale the
+        served :math:`\\sigma` back afterwards. ``rho``, ``inner_abs_tol`` and
+        both residuals are absolute constants in MW, so without this the
+        returned ``r`` depends on the grid's magnitude even though the problem
+        is homogeneous in it. On an LV feeder every residual is below a
+        ``1e-3`` tolerance from the first iteration and the cascade returns its
+        ``r = 0`` initialisation with ``converged=True``; measured across six
+        decades of scaling, ``normalize=True`` holds ``r`` fixed to ten digits
+        while the default varies from 0% to 217% of the sector deficit.
+        Default ``False`` for backwards compatibility.
+    :param r_regularization_relative: Read ``r_regularization`` as a
+        dimensionless multiple of each CP's own :math:`\\|c_i\\|^2` rather than
+        as an absolute MW\\ :sup:`2` weight; see
+        :func:`~.kernel._local_regularization`. Only bites when
+        ``minimize_usage`` is set, since otherwise :math:`\\alpha` cancels at
+        the fixed point. Default ``False``.
     :param record_history: When ``True`` the returned result carries
         per-round inner-iteration counts and the final
         :math:`\\theta` matrix on :attr:`CPAdmmResult.history`.
@@ -257,11 +276,17 @@ def solve_cp_distributed_lexicographic_cascade(
     n_tier = len(all_tiers)
     tier_idx = {t: i for i, t in enumerate(all_tiers)}
 
+    scale = _characteristic_scale(demands) if normalize else 1.0
+
     cap = np.zeros((N, n_sec), dtype=float)
     for i, c in enumerate(cps):
         for s, c_val in c.capacity_by_sector.items():
-            cap[i, sec_idx[s]] = float(c_val)
+            cap[i, sec_idx[s]] = float(c_val) / scale
     cap_norm_sq = (cap**2).sum(axis=1)
+    alpha_by_cp = [
+        _local_regularization(float(r_regularization), r_regularization_relative, float(q))
+        for q in cap_norm_sq
+    ]
 
     D = np.zeros((n_sec, n_tier, H), dtype=float)
     base_supply = np.zeros((n_sec, H), dtype=float)
@@ -272,7 +297,7 @@ def solve_cp_distributed_lexicographic_cascade(
             raise ValueError(
                 f"base_supply for sector {d.sector!r} must have shape ({H},), got {bs.shape}"
             )
-        base_supply[s, :] = bs
+        base_supply[s, :] = bs / scale
         for tier, arr in d.demand_by_tier.items():
             if tier not in tier_idx:
                 continue
@@ -282,7 +307,7 @@ def solve_cp_distributed_lexicographic_cascade(
                     f"demand_by_tier[{tier}] for sector {d.sector!r} must have "
                     f"shape ({H},), got {a.shape}"
                 )
-            D[s, tier_idx[tier], :] = a
+            D[s, tier_idx[tier], :] = a / scale
 
     # ---- persistent shared state across tier transitions ----
     r_curr = np.zeros((N, H), dtype=float)
@@ -292,7 +317,6 @@ def solve_cp_distributed_lexicographic_cascade(
     u = np.zeros((n_sec, H), dtype=float)  # SHARED dual (single vector, not per-CP)
     theta = np.zeros((n_sec, H), dtype=float)
 
-    alpha = float(r_regularization)
     rho_f = float(rho)
     # Bounds for the adaptive penalty: residual balancing can keep
     # cranking rho while the dual residual sits at zero (the binding /
@@ -335,6 +359,7 @@ def solve_cp_distributed_lexicographic_cascade(
             for i in range(N):
                 if cap_norm_sq[i] < 1e-12:
                     continue
+                alpha = alpha_by_cp[i]
                 for k in range(H):
                     target_ik = x[i, :, k] - x_bar[:, k] + z[:, k] - u[:, k]
                     num = rho_f * float(cap[i] @ target_ik)
@@ -403,10 +428,12 @@ def solve_cp_distributed_lexicographic_cascade(
     converged = bool(all(per_round_converged))
     total_iters = int(sum(per_round_iters))
 
+    # r is dimensionless and comes back untouched; every other output is MW and
+    # has to leave the normalised frame the solve ran in.
     factor_by_cp: dict[str, np.ndarray] = {c.cp_id: r_curr[i].copy() for i, c in enumerate(cps)}
     served_by_sector_tier = {
         d.sector: {
-            t: sigma_per_tier[t][sec_idx[d.sector], :].copy() for t in all_tiers if t in tier_idx
+            t: sigma_per_tier[t][sec_idx[d.sector], :] * scale for t in all_tiers if t in tier_idx
         }
         for d in demands
     }
@@ -415,20 +442,21 @@ def solve_cp_distributed_lexicographic_cascade(
     if record_history:
         history = {
             "per_round_iters": list(per_round_iters),
-            "per_round_primal_residuals": history_primal,
-            "per_round_dual_residuals": history_dual,
+            "per_round_primal_residuals": [v * scale for v in history_primal],
+            "per_round_dual_residuals": [v * scale for v in history_dual],
             "per_round_r_changes": history_r_changes,
-            "theta_final": theta.copy(),
-            "sigma_per_tier": {t: v.copy() for t, v in sigma_per_tier.items()},
+            "theta_final": theta * scale,
+            "sigma_per_tier": {t: v * scale for t, v in sigma_per_tier.items()},
             "rho_final": rho_f,
+            "characteristic_scale": scale,
         }
 
     return CPAdmmResult(
         factor_by_cp=factor_by_cp,
         served_by_sector_tier=served_by_sector_tier,
         iterations=total_iters,
-        primal_residual=primal_res,
-        dual_residual=dual_res,
+        primal_residual=primal_res * scale,
+        dual_residual=dual_res * scale,
         converged=converged,
         history=history,
     )
@@ -943,7 +971,7 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
             r_regularization=float(message_data.r_regularization),
             minimize_usage=bool(message_data.minimize_usage),
         )
-        await asyncio.gather(
+        await carrier.gather(
             *[carrier.send_awaitable(init_msg, addr) for addr in participant_addrs]
         )
 
@@ -1054,7 +1082,7 @@ class DistributedLexicographicCascadeCoordinator(Coordinator):
         history: dict[str, Any],
     ) -> CPAdmmResult:
         """Send Done to every follower, gather final r, build the result."""
-        done_replies = await asyncio.gather(
+        done_replies = await carrier.gather(
             *[
                 carrier.send_awaitable(DistributedLexicographicCascadeDone(), addr)
                 for addr in participant_addrs

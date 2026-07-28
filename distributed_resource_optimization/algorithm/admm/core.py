@@ -275,8 +275,9 @@ class ADMMGenericCoordinator(Coordinator):
                 fut = carrier.send_awaitable(ADMMMessage(v=correction, rho=rho), addr)
                 futures.append(fut)
 
-            # Await all replies simultaneously
-            replies = await asyncio.gather(*futures)
+            # Await all replies simultaneously (carrier park point: the
+            # replies arrive as messages, possibly in a later sim step)
+            replies = await carrier.gather(*futures)
             aux = [getattr(reply, "aux", None) for reply in replies]
             for i, reply in enumerate(replies):
                 x[i] = np.asarray(reply.x, dtype=float)

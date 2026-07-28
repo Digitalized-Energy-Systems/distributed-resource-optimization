@@ -65,6 +65,10 @@ async def _run_gossip(
     iter_timeout_s: float = 5.0,
     round_timeout_s: float = 30.0,
     inner_iters_max: int = 500,
+    inner_abs_tol: float = 1.0e-5,
+    normalize: bool = False,
+    r_regularization_relative: bool = False,
+    minimize_usage: bool = False,
 ) -> dict[str, np.ndarray]:
     """Set up N gossip participants on a SimpleCarrier mesh, kick the
     initiator (cps[0]), wait until every participant has called its
@@ -103,8 +107,11 @@ async def _run_gossip(
         horizon=1,
         rho=1.0,
         inner_iters_max=inner_iters_max,
-        inner_abs_tol=1.0e-5,
+        inner_abs_tol=inner_abs_tol,
         r_regularization=0.1,
+        normalize=normalize,
+        r_regularization_relative=r_regularization_relative,
+        minimize_usage=minimize_usage,
         iter_timeout_s=iter_timeout_s,
         round_timeout_s=round_timeout_s,
     )
@@ -159,6 +166,47 @@ async def test_three_cps_matches_reference():
         assert gossip[cp.cp_id][0] == pytest.approx(
             reference.factor_by_cp[cp.cp_id][0], abs=1e-2
         ), f"CP {cp.cp_id} disagrees with reference"
+
+
+@pytest.mark.asyncio
+async def test_scale_free_settings_keep_gossip_matching_the_reference():
+    """The replicated-kernel invariant must survive the scale-free path.
+
+    The normalisation divisor comes from ``demands`` and the ridge from each
+    CP's *own* ``||c_i||^2``, both of which every peer can compute without
+    learning a neighbour's capacity — so gossip and the in-process kernel stay
+    on the same iterates.
+    """
+    cps = [
+        _p2h_spec("p2h-a", electricity=0.0050, heat=-0.0036),
+        _p2h_spec("p2h-b", electricity=0.0042, heat=-0.0030),
+        CPSpec(cp_id="chp-c", capacity_by_sector={"gas": 0.0060, "heat": -0.0025}),
+    ]
+    demands = [
+        _heat_demand(demand_mw=0.008),
+        _electricity_slack(base_mw=0.5),
+        SectorDemand(
+            sector="gas", demand_by_tier={1: np.zeros(1)}, base_supply=np.array([0.2])
+        ),
+    ]
+    scale_free = {
+        "normalize": True,
+        "r_regularization_relative": True,
+        "minimize_usage": True,
+    }
+    reference = solve_cp_distributed_lexicographic_cascade(
+        cps, demands, inner_iters_max=500, inner_abs_tol=1.0e-5, **scale_free
+    )
+    gossip = await _run_gossip(cps, demands, inner_abs_tol=1.0e-5, **scale_free)
+    for cp in cps:
+        assert gossip[cp.cp_id][0] == pytest.approx(
+            reference.factor_by_cp[cp.cp_id][0], abs=1e-2
+        ), f"CP {cp.cp_id} disagrees with reference"
+    # and the fleet actually covers the deficit, unlike the unfixed path
+    delivered = -sum(
+        float(gossip[c.cp_id][0]) * c.capacity_by_sector.get("heat", 0.0) for c in cps
+    )
+    assert delivered == pytest.approx(0.008, rel=0.1)
 
 
 @pytest.mark.asyncio

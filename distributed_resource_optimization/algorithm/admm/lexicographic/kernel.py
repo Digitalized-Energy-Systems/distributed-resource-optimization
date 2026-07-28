@@ -1,13 +1,64 @@
-"""Shared closed-form primitive for the lexicographic-cascade variants.
+"""Shared closed-form primitives for the lexicographic-cascade variants.
 
 The closed-form ``(z, sigma)`` cell update is the one piece of math
 common to both the coordinator-driven realisation
 (:mod:`.coordinator`) and the coordinator-free gossip realisation
 (:mod:`.gossip`).  It lives here so neither variant has to import the
-other.
+other, along with the two scale-normalisation helpers both apply to
+their inputs so the pair stays iterate-for-iterate identical.
 """
 
 from __future__ import annotations
+
+from typing import Any, Iterable
+
+import numpy as np
+
+
+def _characteristic_scale(demands: Iterable[Any]) -> float:
+    """Characteristic MW magnitude of one cascade round.
+
+    Every quantity the kernel compares against an absolute constant --
+    ``inner_abs_tol``, ``rho``, both residuals -- carries MW, while ``r`` is
+    dimensionless and the coupling constraint
+    :math:`\\sigma + \\sum_i r_i c_i \\le B - \\theta` is homogeneous.  The
+    optimal ``r`` is therefore invariant under a uniform rescaling of the data,
+    but the *solver* is not: on an LV feeder every residual sits below a
+    ``1e-3`` tolerance from the first iteration, so the loop stops before ``r``
+    has moved.  Dividing the round's data by this scale puts those constants on
+    O(1) numbers and restores the invariance.
+
+    Derived from ``demands`` alone -- which the coordinator and every gossip
+    peer hold identically -- so both realisations normalise by the same number
+    without exchanging capacities.
+    """
+    peak = 0.0
+    for d in demands:
+        bs = np.abs(np.asarray(d.base_supply, dtype=float))
+        if bs.size:
+            peak = max(peak, float(bs.max()))
+        total: np.ndarray | None = None
+        for arr in d.demand_by_tier.values():
+            a = np.abs(np.asarray(arr, dtype=float))
+            total = a if total is None else total + a
+        if total is not None and total.size:
+            peak = max(peak, float(total.max()))
+    return peak if peak > 0.0 else 1.0
+
+
+def _local_regularization(alpha: float, relative: bool, cap_norm_sq: float) -> float:
+    """Effective ridge weight :math:`\\alpha` for one CP's ``r``-projection.
+
+    The projection denominator is :math:`\\rho\\|c_i\\|^2 + \\alpha`, so
+    :math:`\\alpha` carries MW\\ :sup:`2`.  Held absolute it swamps
+    :math:`\\rho\\|c_i\\|^2` whenever the CP is small -- 7300x for a 3.6 kW LV
+    converter -- which shrinks the step to a fraction of its proper length.
+    ``relative`` reads ``alpha`` as a dimensionless multiple of the CP's *own*
+    :math:`\\|c_i\\|^2`, which is scale-free and needs no knowledge of any
+    peer's capacity, so the gossip peers and the in-process kernel compute
+    identical values.
+    """
+    return alpha * cap_norm_sq if relative else alpha
 
 
 def _z_sigma_cell_update(

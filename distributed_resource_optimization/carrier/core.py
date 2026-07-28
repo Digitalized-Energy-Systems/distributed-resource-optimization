@@ -29,6 +29,15 @@ class Carrier(ABC):
       — lightweight in-process carrier backed by asyncio tasks.
     * :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`
       — integrates with the *mango-agents* framework for networked deployments.
+
+    Park-point contract: any wait that resolves only via an inbound message
+    or the carrier clock — a :meth:`send_awaitable` future, :meth:`sleep`, or
+    a combination of those — must be awaited through :meth:`wait_for`,
+    :meth:`gather`, or :meth:`race`, never directly.  A simulation-backed
+    carrier declares those parks idle to its scheduler; awaiting them
+    directly deadlocks discrete stepping.  Sends and locally-completing
+    awaitables must *not* be routed through the park point — they are work
+    that has to finish within a simulation step.
     """
 
     @abstractmethod
@@ -98,14 +107,38 @@ class Carrier(ABC):
 
         The base implementation runs it as a plain event-loop task. A
         simulation-backed carrier overrides this to schedule it on the
-        agent scheduler so the simulation clock tracks it (the scheduler
-        marks a driver parked on a reply/peer future as idle, so discrete
-        stepping advances it instead of deadlocking on it).
+        agent scheduler so the simulation clock tracks it.  The driver's
+        reply/timeout waits must go through :meth:`wait_for` /
+        :meth:`gather` / :meth:`race` (see the class docstring).
         """
         return asyncio.ensure_future(coroutine)
 
     async def wait_for(self, awaitable: asyncio.Future | EventWithValue) -> Any:
-        """Await *awaitable*, unwrapping an :class:`EventWithValue` if needed."""
+        """Await *awaitable*, unwrapping an :class:`EventWithValue` if needed.
+
+        The carrier's park point: a simulation-backed carrier marks the
+        calling driver idle for the duration of the wait.
+        """
         if isinstance(awaitable, EventWithValue):
             return await awaitable.wait()
         return await awaitable
+
+    async def gather(self, *awaitables: Any) -> list[Any]:
+        """Await all *awaitables* through this carrier's park point."""
+        return await self.wait_for(asyncio.gather(*awaitables))
+
+    async def race(self, *awaitables: Any) -> None:
+        """Wait until the first of *awaitables* resolves, then cancel the rest.
+
+        Used to race a peer-ready event against a clock-domain timeout so the
+        timeout obeys the carrier's clock (simulation or wall-clock).
+        """
+        tasks = [asyncio.ensure_future(a) for a in awaitables]
+        try:
+            await self.wait_for(
+                asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()

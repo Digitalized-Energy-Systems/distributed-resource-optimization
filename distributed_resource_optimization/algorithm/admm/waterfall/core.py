@@ -445,7 +445,7 @@ class WaterfallADMMCoordinator(Coordinator):
         spec_futures = [
             carrier.send_awaitable(WaterfallADMMSpecRequest(), addr) for addr in participant_addrs
         ]
-        spec_replies = await asyncio.gather(*spec_futures)
+        spec_replies = await carrier.gather(*spec_futures)
         specs = [reply.spec for reply in spec_replies]
 
         result = solve_cp_priority_admm(
