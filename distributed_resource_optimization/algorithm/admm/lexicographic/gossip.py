@@ -81,6 +81,10 @@ class GossipCascadeStart(OptimizationMessage):
     r_regularization_relative: bool = False
     iter_timeout_s: float = 0.3
     round_timeout_s: float = 8.0
+    # Split round_timeout_s across the tier ladder instead of letting the
+    # first tier spend it all. False reproduces the single-deadline behaviour
+    # bit-for-bit.
+    tier_fair_deadline: bool = False
 
 
 @dataclass
@@ -109,6 +113,7 @@ class GossipCascadeInit(OptimizationMessage):
     minimize_usage: bool = False
     normalize: bool = False
     r_regularization_relative: bool = False
+    tier_fair_deadline: bool = False
 
 
 @dataclass
@@ -159,6 +164,7 @@ class _RoundCtx:
     rho_tau: float
     iter_timeout_s: float
     round_timeout_s: float
+    tier_fair_deadline: bool
     inner_iters_max: int
     inner_abs_tol: float
     all_tiers: list[int]
@@ -275,6 +281,7 @@ class GossipParticipant(DistributedAlgorithm):
             demands=list(start.demands),
             iter_timeout_s=start.iter_timeout_s,
             round_timeout_s=start.round_timeout_s,
+            tier_fair_deadline=start.tier_fair_deadline,
             inner_iters_max=start.inner_iters_max,
             inner_abs_tol=start.inner_abs_tol,
             minimize_usage=start.minimize_usage,
@@ -401,6 +408,7 @@ class GossipParticipant(DistributedAlgorithm):
             rho_tau=float(init.rho_tau),
             iter_timeout_s=float(init.iter_timeout_s),
             round_timeout_s=float(init.round_timeout_s),
+            tier_fair_deadline=bool(init.tier_fair_deadline),
             inner_iters_max=int(init.inner_iters_max),
             inner_abs_tol=float(init.inner_abs_tol),
             all_tiers=all_tiers,
@@ -492,9 +500,24 @@ class GossipParticipant(DistributedAlgorithm):
                 slack_max = ctx.base_supply - ctx.theta
                 sigma = np.zeros_like(D_tau)
                 converged_round = False
+                # One shared round deadline starves the tail of the ladder: the
+                # budget is carrier-clock time, and under a simulation clock each
+                # iteration costs a message round-trip, so the whole cascade gets
+                # round_timeout_s / iter_timeout_s iterations TOTAL. Measured on a
+                # 47-CP LV feeder at 2.0/0.2: tier 0 consumed 10-11 of them and
+                # tiers 1..3 then broke at iteration 0 — the cascade answered only
+                # the top tier and committed. A cumulative per-tier deadline gives
+                # every tier a slice while keeping the same overall bound, and
+                # unused time carries forward because the deadline is absolute.
+                if ctx.tier_fair_deadline:
+                    tier_deadline = round_start + ctx.round_timeout_s * (
+                        (tier_pos + 1) / tier_loop_count
+                    )
+                else:
+                    tier_deadline = round_start + ctx.round_timeout_s
 
                 for iter_k in range(ctx.inner_iters_max):
-                    if carrier.now() - round_start > ctx.round_timeout_s:
+                    if carrier.now() > tier_deadline:
                         converged_total = False
                         logger.warning(
                             "[%s] gossip cascade round %d timed out at tier %d iter %d",
@@ -696,6 +719,7 @@ def create_gossip_cascade_start(
     r_regularization_relative: bool = False,
     iter_timeout_s: float = 0.3,
     round_timeout_s: float = 8.0,
+    tier_fair_deadline: bool = False,
 ) -> GossipCascadeStart:
     """Build the in-process kickoff message for the initiator's participant.
 
@@ -727,4 +751,5 @@ def create_gossip_cascade_start(
         r_regularization_relative=bool(r_regularization_relative),
         iter_timeout_s=float(iter_timeout_s),
         round_timeout_s=float(round_timeout_s),
+        tier_fair_deadline=bool(tier_fair_deadline),
     )
