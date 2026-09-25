@@ -22,7 +22,7 @@ Several algorithm families are available:
 | Algorithm | Problem type | Coordination |
 |-----------|-------------|--------------|
 | **ADMM Sharing** | Continuous resource allocation, sum-to-target | Coordinator required |
-| **ADMM Consensus** | Agents converge to a shared target vector | Coordinator required |
+| **ADMM Consensus** | Continuous allocation whose sum must equal a target (exchange ADMM) | Coordinator required |
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Averaging Consensus** | Distributed averaging with optional gradient terms | Fully distributed |
 | **Diffusion** | Adapt-then-combine averaging over a scheduling horizon | Fully distributed |

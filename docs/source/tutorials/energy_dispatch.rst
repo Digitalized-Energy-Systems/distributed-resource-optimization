@@ -28,7 +28,8 @@ takes:
 - ``in_capacity`` — maximum input power in kW
 - ``eta`` — efficiency vector mapping input to outputs (negative = the resource *consumes*
   that output type)
-- ``P`` (optional) — priority penalty vector that biases the local solution
+- ``P`` (optional) — priority vector that biases the local solution (positive entries
+  reward an output, negative entries penalise it)
 
 .. code-block:: python
 
@@ -143,7 +144,7 @@ Complete Script
 Tuning Convergence
 ------------------
 
-If the result is not accurate enough or convergence is slow, build an
+The factory accepts ``rho`` and ``max_iters``.  To also change the tolerances, build an
 :class:`~distributed_resource_optimization.ADMMGenericCoordinator` directly:
 
 .. code-block:: python
@@ -151,16 +152,18 @@ If the result is not accurate enough or convergence is slow, build an
    from distributed_resource_optimization import (
        ADMMGenericCoordinator,
        ADMMSharingGlobalActor,
-       ADMMTargetDistanceObjective,
    )
 
    coordinator = ADMMGenericCoordinator(
-       global_actor=ADMMSharingGlobalActor(ADMMTargetDistanceObjective()),
+       global_actor=ADMMSharingGlobalActor(),
        rho=5.0,       # larger rho enforces constraints more aggressively
        max_iters=500,
        abs_tol=1e-5,
        rel_tol=1e-4,
    )
+
+After the run, ``coordinator.converged`` and ``coordinator.iterations`` tell you whether
+the residual tolerances were met.
 
 .. tip::
 

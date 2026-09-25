@@ -104,6 +104,8 @@ class TestCoordinatorTermination:
         # Early stop actually happened.
         assert 0 < carrier.calls[0] < 500
         assert carrier.calls[0] == carrier.calls[1]
+        assert coordinator.converged
+        assert coordinator.iterations == carrier.calls[0]
 
     async def test_max_iters_failsafe_bounds_rounds(self, caplog):
         """Responders that never satisfy the consensus constraint must stop at
@@ -125,6 +127,8 @@ class TestCoordinatorTermination:
             )
 
         assert carrier.calls == [7, 7]
+        assert not coordinator.converged
+        assert coordinator.iterations == 7
         assert any("max iterations" in rec.message for rec in caplog.records)
 
 

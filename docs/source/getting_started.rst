@@ -18,7 +18,7 @@ Choosing an Algorithm
      - Continuous resource allocation, sum-to-target
      - Central coordinator
    * - :doc:`ADMM Consensus <algorithms/admm>`
-     - Agents converge to a shared target vector
+     - Continuous allocation whose sum must equal a target (exchange ADMM)
      - Central coordinator
    * - :doc:`COHDA <algorithms/cohda>`
      - Combinatorial schedule selection, L1 target

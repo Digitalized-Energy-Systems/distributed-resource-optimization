@@ -6,8 +6,8 @@ resource coordination in energy systems and similar domains.
 Algorithms
 ----------
 * **COHDA** — Combinatorial Optimization Heuristic for Distributed Agents.
-* **ADMM** — Alternating Direction Method of Multipliers (consensus and
-  sharing variants).
+* **ADMM** — Alternating Direction Method of Multipliers (consensus/exchange
+  and sharing variants).
 * **Averaging Consensus** — distributed price/signal averaging with optional
   gradient correction (incl. economic dispatch).
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
@@ -83,17 +83,8 @@ from .algorithm.admm.core import (
     ADMMAnswer,
     ADMMGenericCoordinator,
     ADMMGlobalActor,
-    ADMMGlobalObjective,
     ADMMMessage,
     ADMMStart,
-)
-from .algorithm.admm.economic_dispatch import (
-    LinearCostEconomicDispatchADMMFlexActor,
-    ProximalStorageADMMActor,
-    StorageADMMFlexActor,
-    create_admm_economic_dispatch_actor,
-    create_admm_proximal_storage_actor,
-    create_admm_storage_actor,
 )
 from .algorithm.admm.flex_actor import (
     ADMMFlexActor,
@@ -101,13 +92,15 @@ from .algorithm.admm.flex_actor import (
     create_admm_flex_actor_one_to_many,
 )
 from .algorithm.admm.sharing_admm import (
-    ADMMGeneratorSpec,
     ADMMSharingData,
     ADMMSharingGlobalActor,
-    ADMMTargetDistanceObjective,
     create_admm_sharing_data,
     create_sharing_admm_start,
     create_sharing_target_distance_admm_coordinator,
+)
+from .algorithm.admm.storage import (
+    ProximalStorageADMMActor,
+    create_admm_proximal_storage_actor,
 )
 
 # Consensus
@@ -261,24 +254,17 @@ __all__ = [
     "ADMMMessage",
     "ADMMAnswer",
     "ADMMGlobalActor",
-    "ADMMGlobalObjective",
     "ADMMGenericCoordinator",
     "ADMMFlexActor",
     "create_admm_flex_actor_one_to_many",
     "create_admm_flex_actor_box_bounded",
-    "LinearCostEconomicDispatchADMMFlexActor",
-    "create_admm_economic_dispatch_actor",
     "ProximalStorageADMMActor",
     "create_admm_proximal_storage_actor",
-    "StorageADMMFlexActor",
-    "create_admm_storage_actor",
     "ADMMConsensusGlobalActor",
     "create_consensus_target_reach_admm_coordinator",
     "create_admm_start_consensus",
-    "ADMMGeneratorSpec",
     "ADMMSharingData",
     "ADMMSharingGlobalActor",
-    "ADMMTargetDistanceObjective",
     "create_admm_sharing_data",
     "create_sharing_admm_start",
     "create_sharing_target_distance_admm_coordinator",

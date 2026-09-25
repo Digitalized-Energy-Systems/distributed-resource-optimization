@@ -37,7 +37,7 @@ ADMM
 .. automodule:: distributed_resource_optimization.algorithm.admm.sharing_admm
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.admm.economic_dispatch
+.. automodule:: distributed_resource_optimization.algorithm.admm.storage
    :members:
 
 Consensus
