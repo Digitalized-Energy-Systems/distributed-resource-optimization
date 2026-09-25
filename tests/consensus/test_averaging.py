@@ -153,3 +153,44 @@ async def test_stale_messages_do_not_rewind_iteration():
     await algo.on_exchange_message(carrier, neighbour_msg(0), None)
     assert algo._k == 2
     assert [msg.k for _, msg in carrier.sent] == ks_sent_before
+
+
+def test_leader_requires_positive_gain():
+    """A leader without a pinning gain would never correct ΔP: refuse it."""
+    with pytest.raises(ValueError, match="leader_gain"):
+        create_averaging_consensus_participant(lambda *_: None, is_leader=True)
+    with pytest.raises(ValueError, match="leader_gain"):
+        create_averaging_consensus_participant(lambda *_: None, is_leader=True, leader_gain=-0.1)
+    # Followers ignore the gain, so the default is fine for them.
+    create_averaging_consensus_participant(lambda *_: None, is_leader=False)
+
+
+@pytest.mark.asyncio
+async def test_data_only_sent_in_round_zero():
+    """The constant demand payload travels once; the leader keeps using it.
+
+    After round 0 every broadcast carries ``data=None``, and the leader's ΔP
+    pinning must still see the cached demand (here: λ rises because the
+    single neighbour reports zero power against a demand of 10).
+    """
+    algo = create_averaging_consensus_participant(
+        lambda *_: None, initial_lam=1.0, is_leader=True, leader_gain=0.1
+    )
+    carrier = _RecordingCarrier(["n1"])
+    demand = np.array([10.0])
+
+    await algo.on_exchange_message(
+        carrier, create_averaging_consensus_start(1.0, data=demand), None
+    )
+    for k in range(3):
+        await algo.on_exchange_message(
+            carrier,
+            AveragingConsensusMessage(lam=np.array([1.0]), k=k, data=None, p=np.array([0.0])),
+            None,
+        )
+
+    assert algo._k == 3
+    sent = [msg for _, msg in carrier.sent]
+    assert sent[0].k == 0 and np.array_equal(sent[0].data, demand)
+    assert all(msg.data is None for msg in sent[1:])
+    assert algo._lam[0] > 1.0

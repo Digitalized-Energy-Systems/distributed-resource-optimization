@@ -70,6 +70,8 @@ class AveragingConsensusMessage(OptimizationMessage):
     :param lam: Current λ estimate of the sender.
     :param k: Current iteration counter.
     :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`.
+                 Only carried by the kick-off and round-0 messages; recipients
+                 cache it, so later rounds send ``None``.
     :param p: Sender's projected local power for this round (used by the
               leader to recover the real system-wide power imbalance).
     :param initial: If ``True`` this is the kick-off message; recipients
@@ -112,7 +114,9 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     :param max_iter: Maximum number of consensus iterations.
     :param is_leader: Whether this participant is the leader (eq. 22).
     :param leader_gain: Leader's power-imbalance pinning gain (ε in eq. 22).
-                        Ignored for followers.
+                        Must be positive for the leader; ignored for followers.
+    :raises ValueError: If ``is_leader`` is set without a positive ``leader_gain``
+                        (the leader would never correct the power imbalance).
     """
 
     def __init__(
@@ -125,6 +129,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         is_leader: bool = False,
         leader_gain: float = 0.0,
     ) -> None:
+        if is_leader and leader_gain <= 0:
+            raise ValueError(
+                f"The leader needs a positive leader_gain to correct the power "
+                f"imbalance (eq. 22), got leader_gain={leader_gain}."
+            )
         self.finish_callback = finish_callback
         self.actor: ConsensusActor = (
             consensus_actor if consensus_actor is not None else NoConsensusActor()
@@ -142,6 +151,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._k: int = 0
         self._lam: np.ndarray = np.array([initial_lam])
         self._P: np.ndarray = np.array([0.0])  # own last-projected power
+        self._data: Any = None  # run payload, cached from the round-0 message
 
     async def on_exchange_message(
         self,
@@ -173,12 +183,17 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._started = True
             self._k = 0
             self._message_queue.clear()
+            # ``data`` is constant for the whole run, so it only travels with
+            # the kick-off and round-0 messages. Under packet loss a follower
+            # that misses every round-0 message never receives it; that is
+            # harmless as only the leader (which gets the kick-off) needs it.
+            self._data = message_data.data
             self._lam = np.ones(len(message_data.lam)) * self.initial_lam
-            self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
+            self._P = np.asarray(self.actor.project_power(self._lam, self._data))
             for addr in neighbours:
                 carrier.send_to_other(
                     AveragingConsensusMessage(
-                        lam=self._lam.copy(), k=0, data=message_data.data, p=self._P.copy()
+                        lam=self._lam.copy(), k=0, data=self._data, p=self._P.copy()
                     ),
                     addr,
                 )
@@ -202,7 +217,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         if len(queue) == len(neighbours) or self._k < message_data.k:
             avg_lam = sum(m.lam for m in queue) / len(queue)
             if self.is_leader:
-                pd = np.asarray(message_data.data, dtype=float)
+                pd = np.asarray(self._data, dtype=float)
                 sigma_p = self._P + sum(np.asarray(m.p) for m in queue)
                 delta_p = pd - sigma_p
                 self._lam = (
@@ -210,7 +225,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                 )
             else:
                 self._lam = self._lam + self.alpha * (avg_lam - self._lam)
-            self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
+            self._P = np.asarray(self.actor.project_power(self._lam, self._data))
             self._k = message_data.k + 1
 
             # Purge this and any older iteration's queue: after jumping past
@@ -223,7 +238,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                     AveragingConsensusMessage(
                         lam=self._lam.copy(),
                         k=self._k,
-                        data=message_data.data,
+                        data=None,
                         p=self._P.copy(),
                     ),
                     addr,
