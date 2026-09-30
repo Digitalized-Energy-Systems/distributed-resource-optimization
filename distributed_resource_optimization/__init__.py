@@ -83,7 +83,6 @@ from .algorithm.admm.core import (
     ADMMAnswer,
     ADMMGenericCoordinator,
     ADMMGlobalActor,
-    ADMMGlobalObjective,
     ADMMMessage,
     ADMMStart,
 )
@@ -104,7 +103,6 @@ from .algorithm.admm.sharing_admm import (
     ADMMGeneratorSpec,
     ADMMSharingData,
     ADMMSharingGlobalActor,
-    ADMMTargetDistanceObjective,
     create_admm_sharing_data,
     create_sharing_admm_start,
     create_sharing_target_distance_admm_coordinator,
@@ -115,7 +113,6 @@ from .algorithm.consensus.averaging import (
     AveragingConsensusAlgorithm,
     AveragingConsensusMessage,
     ConsensusActor,
-    NoConsensusActor,
     create_averaging_consensus_participant,
     create_averaging_consensus_start,
 )
@@ -129,8 +126,6 @@ from .algorithm.core import (
     Coordinator,
     DistributedAlgorithm,
     OptimizationMessage,
-    on_exchange_message,
-    start_optimization,
 )
 
 # DEED-ADMM
@@ -148,7 +143,6 @@ from .algorithm.diffusion.diffusion import (
     DiffusionActor,
     DiffusionAlgorithm,
     DiffusionMessage,
-    NoDiffusionActor,
     create_diffusion_participant,
     create_diffusion_start,
 )
@@ -171,7 +165,6 @@ from .algorithm.fdgdm.fdgdm import (
     FDGDMActor,
     FDGDMAlgorithm,
     FDGDMMessage,
-    NoFDGDMActor,
     create_fdgdm_participant,
     create_fdgdm_start,
 )
@@ -196,6 +189,7 @@ from .algorithm.heuristic.cohda.core import (
     merge_candidates,
     merge_sysconfigs,
     perceive,
+    publish_own_schedule,
 )
 from .algorithm.heuristic.cohda.decider import LocalSearchDecider
 from .carrier.core import Carrier
@@ -234,8 +228,6 @@ __all__ = [
     "DistributedAlgorithm",
     "Coordinator",
     "OptimizationMessage",
-    "on_exchange_message",
-    "start_optimization",
     # COHDA
     "ScheduleSelection",
     "SystemConfig",
@@ -250,6 +242,7 @@ __all__ = [
     "merge_sysconfigs",
     "merge_candidates",
     "perceive",
+    "publish_own_schedule",
     "decide",
     "act",
     "create_from_updated_sysconf",
@@ -261,7 +254,6 @@ __all__ = [
     "ADMMMessage",
     "ADMMAnswer",
     "ADMMGlobalActor",
-    "ADMMGlobalObjective",
     "ADMMGenericCoordinator",
     "ADMMFlexActor",
     "create_admm_flex_actor_one_to_many",
@@ -278,13 +270,11 @@ __all__ = [
     "ADMMGeneratorSpec",
     "ADMMSharingData",
     "ADMMSharingGlobalActor",
-    "ADMMTargetDistanceObjective",
     "create_admm_sharing_data",
     "create_sharing_admm_start",
     "create_sharing_target_distance_admm_coordinator",
     # Consensus
     "ConsensusActor",
-    "NoConsensusActor",
     "AveragingConsensusMessage",
     "AveragingConsensusAlgorithm",
     "create_averaging_consensus_participant",
@@ -293,7 +283,6 @@ __all__ = [
     "ReservoirStorageConsensusActor",
     # FDGDM
     "FDGDMActor",
-    "NoFDGDMActor",
     "FDGDMMessage",
     "FDGDMAlgorithm",
     "create_fdgdm_participant",
@@ -309,7 +298,6 @@ __all__ = [
     "create_deed_admm_storage_participant",
     # Diffusion
     "DiffusionActor",
-    "NoDiffusionActor",
     "DiffusionMessage",
     "DiffusionAlgorithm",
     "create_diffusion_participant",

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from distributed_resource_optimization.algorithm._weight_rules import (
     combination_weights,
-    perron_vector,
     regular_graph_weights,
 )
 
@@ -58,24 +56,3 @@ def test_relative_degree_weights_favor_higher_degree_neighbors():
 def test_unknown_rule_raises():
     with pytest.raises(ValueError, match="Unknown weight rule"):
         combination_weights(2, {"a": 2}, "nonexistent")  # type: ignore[arg-type]
-
-
-def test_perron_vector_uniform_on_regular_doubly_stochastic_matrix():
-    n = 4
-    W = np.full((n, n), 1.0 / n)
-    p = perron_vector(W)
-    assert np.allclose(p, np.ones(n))
-
-
-def test_perron_vector_normalised_to_sum_n():
-    # A left-stochastic (column-sum-1) but non-uniform matrix.
-    W = np.array(
-        [
-            [0.5, 0.2, 0.3],
-            [0.3, 0.6, 0.3],
-            [0.2, 0.2, 0.4],
-        ]
-    )
-    p = perron_vector(W)
-    assert p.sum() == pytest.approx(3.0)
-    assert np.all(p > 0)

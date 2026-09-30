@@ -131,20 +131,6 @@ class ADMMGlobalActor(ABC):
         """Compute the primal residual used for convergence checking."""
 
 
-class ADMMGlobalObjective(ABC):
-    """Optional global objective (currently informational only)."""
-
-    @abstractmethod
-    def objective(
-        self,
-        x: list[np.ndarray],
-        u: Any,
-        z: Any,
-        n: int,
-    ) -> float:
-        """Evaluate the global objective."""
-
-
 # ---------------------------------------------------------------------------
 # Helper: max-norm over list-of-arrays or single array
 # ---------------------------------------------------------------------------
@@ -223,25 +209,46 @@ class ADMMGenericCoordinator(Coordinator):
         message_data: ADMMStart,
         meta: Any,
     ) -> list[np.ndarray]:
-        x, _z, _u = await self._run(carrier, message_data.data, message_data.solution_length)
-        return x
+        return await self._run(carrier, message_data.data, message_data.solution_length)
+
+    async def _x_update_round(
+        self,
+        carrier: "Carrier",
+        participant_addrs: list[Any],
+        x: list[np.ndarray],
+        z: Any,
+        u: Any,
+    ) -> None:
+        """Send each participant its correction in parallel; store replies in *x*."""
+        futures: list[asyncio.Future] = []
+        for i, addr in enumerate(participant_addrs):
+            correction = self.global_actor.actor_correction(x, z, u, i)
+            futures.append(
+                carrier.send_awaitable(
+                    ADMMMessage(v=correction, rho=self.rho, z=np.asarray(z, dtype=float)),
+                    addr,
+                )
+            )
+        replies = await asyncio.gather(*futures)
+        for i, reply in enumerate(replies):
+            x[i] = np.asarray(reply.x, dtype=float)
 
     async def _run(
         self,
         carrier: "Carrier",
         input_data: Any,
         m: int,
-    ) -> tuple[list[np.ndarray], Any, Any]:
+    ) -> list[np.ndarray]:
         """Core ADMM loop.
 
         :param carrier: Coordinator's carrier.
         :param input_data: Algorithm-specific data (target, priorities, …).
         :param m: Problem dimension (number of decision variables).
-        :returns: ``(x_list, z, u)`` at convergence or max-iter.
+        :returns: The participants' ``x`` at convergence or max-iter.
         """
         actor = self.global_actor
         rho = self.rho
-        participant_addrs = carrier.others("coordinator")
+        participant_addrs = carrier.others()
         n = len(participant_addrs)
 
         x: list[np.ndarray] = [np.zeros(m) for _ in range(n)]
@@ -265,27 +272,16 @@ class ADMMGenericCoordinator(Coordinator):
                 )
             from .sharing_admm import _z_from_clearing_prices
 
+            # z is fixed by the closed-form clearing prices: a single x-update
+            # round distributes the dispatch, no z/u iteration is needed.
             z = _z_from_clearing_prices(input_data, rho, n)
-            max_k = 1
-        else:
-            z = actor.init_z(n, m)
-            max_k = self.max_iters
+            await self._x_update_round(carrier, participant_addrs, x, z, u)
+            return x
 
-        for k in range(1, max_k + 1):
-            # 1. Send ADMMMessage to all participants in parallel, collect futures
-            futures: list[asyncio.Future] = []
-            for i, addr in enumerate(participant_addrs):
-                correction = actor.actor_correction(x, z, u, i)
-                fut = carrier.send_awaitable(
-                    ADMMMessage(v=correction, rho=rho, z=np.asarray(z, dtype=float)),
-                    addr,
-                )
-                futures.append(fut)
-
-            # Await all replies simultaneously
-            replies = await asyncio.gather(*futures)
-            for i, reply in enumerate(replies):
-                x[i] = np.asarray(reply.x, dtype=float)
+        z = actor.init_z(n, m)
+        for k in range(1, self.max_iters + 1):
+            # 1. x-update round (all participants in parallel)
+            await self._x_update_round(carrier, participant_addrs, x, z, u)
 
             # 2. z-update
             z_old = _deepcopy_z(z)
@@ -312,4 +308,4 @@ class ADMMGenericCoordinator(Coordinator):
                     s_norm,
                 )
 
-        return x, z, u
+        return x

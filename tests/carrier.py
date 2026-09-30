@@ -28,12 +28,7 @@ class StubCarrier(Carrier):
     # Carrier interface
     # ------------------------------------------------------------------
 
-    def send_to_other(
-        self,
-        content: Any,
-        receiver: int,
-        meta: dict | None = None,
-    ) -> asyncio.Task:
+    def send_to_other(self, content: Any, receiver: int) -> asyncio.Task:
         """Store *content* in :attr:`test_neighbor_messages`."""
         buf = self.test_neighbor_messages.setdefault(receiver, [])
         buf.append(content)
@@ -45,26 +40,14 @@ class StubCarrier(Carrier):
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         sender = meta.get("sender", 1)
-        return self.send_to_other(content, sender, meta)
+        return self.send_to_other(content, sender)
 
-    def send_awaitable(
-        self,
-        content: Any,
-        receiver: int,
-        meta: dict | None = None,
-    ) -> asyncio.Future:
-        self.send_to_other(content, receiver, meta)
+    def send_awaitable(self, content: Any, receiver: int) -> asyncio.Future:
+        self.send_to_other(content, receiver)
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
         fut.set_result(None)
         return fut
 
-    def others(self, participant_id: str) -> list[int]:
+    def others(self) -> list[int]:
         return list(self.test_neighbors)
-
-    def get_address(self) -> int:
-        return 0
-
-    def schedule_using(self, fn: Any, delay_s: float) -> None:
-        """Execute *fn* immediately (no real scheduling in tests)."""
-        fn()

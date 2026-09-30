@@ -214,7 +214,6 @@ class TestDecideStep:
             SystemConfig,
             TargetParams,
         )
-        from distributed_resource_optimization.algorithm.heuristic.cohda.decider import decide
 
         decider = LocalSearchDecider(
             initial_schedule=np.array(current_row),
@@ -237,7 +236,7 @@ class TestDecideStep:
             perf=None,
             present=frozenset({1}),
         )
-        return decide, participant, decider, sysconfig, candidate
+        return participant, decider, sysconfig, candidate
 
     def test_improved_schedule_is_published_to_sysconfig(self):
         """When the search finds a better schedule, that schedule (not the old
@@ -247,10 +246,10 @@ class TestDecideStep:
         Regression test: decide() used to publish the *old* schedule and
         adopt the new candidate unconditionally.
         """
-        decide, participant, decider, sysconfig, candidate = self._setup(
+        participant, decider, sysconfig, candidate = self._setup(
             distribution_value=2.0, current_row=[0.0, 0.0]
         )
-        new_sysconfig, new_candidate = decide(participant, decider, sysconfig, candidate)
+        new_sysconfig, new_candidate = decider.decide(participant, sysconfig, candidate)
 
         # [2, 2] hits the target exactly: perf 0 beats the incumbent's -4.
         assert new_candidate.perf == pytest.approx(0.0)
@@ -261,10 +260,10 @@ class TestDecideStep:
     def test_worse_search_keeps_incumbent_and_sysconfig(self):
         """When no sample improves on the incumbent, the incumbent candidate
         and the published schedule stay untouched (no counter churn)."""
-        decide, participant, decider, sysconfig, candidate = self._setup(
+        participant, decider, sysconfig, candidate = self._setup(
             distribution_value=3.0, current_row=[2.0, 2.0]
         )
-        new_sysconfig, new_candidate = decide(participant, decider, sysconfig, candidate)
+        new_sysconfig, new_candidate = decider.decide(participant, sysconfig, candidate)
 
         assert new_candidate.perf == pytest.approx(0.0)  # incumbent already optimal
         published = new_sysconfig.schedule_choices[1]

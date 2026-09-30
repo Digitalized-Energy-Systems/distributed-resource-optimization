@@ -23,10 +23,10 @@ class _RecordingCarrier:
         self._neighbours = neighbours
         self.sent: list[tuple[str, AveragingConsensusMessage]] = []
 
-    def others(self, participant_id: str) -> list[str]:
+    def others(self) -> list[str]:
         return self._neighbours
 
-    def send_to_other(self, content, receiver, meta=None) -> None:
+    def send_to_other(self, content, receiver) -> None:
         self.sent.append((receiver, content))
 
 

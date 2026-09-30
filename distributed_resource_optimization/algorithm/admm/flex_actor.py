@@ -85,9 +85,8 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
     constraints = [
         x_var >= actor.lb,
         x_var <= actor.u,
+        actor.C @ x_var <= actor.d,
     ]
-    if actor.C.size > 0:
-        constraints.append(actor.C @ x_var <= actor.d)
 
     prob = cp.Problem(objective, constraints)
     prob.solve(solver=cp.OSQP, verbose=False)
@@ -127,12 +126,7 @@ def _create_C_and_d(tech_capacity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         r2 = r1 + 1
         tj = tech_capacity[j]
         tm = tech_capacity[m - 1]
-        if tj == 0 or tm == 0:
-            C[r1, j] = 0.0
-            C[r1, m - 1] = 0.0
-            C[r2, j] = 0.0
-            C[r2, m - 1] = 0.0
-        else:
+        if tj != 0 and tm != 0:  # zero-capacity pairs keep their all-zero rows
             C[r1, j] = 1.0 / tj
             C[r1, m - 1] = -1.0 / tm
             C[r2, j] = -1.0 / tj

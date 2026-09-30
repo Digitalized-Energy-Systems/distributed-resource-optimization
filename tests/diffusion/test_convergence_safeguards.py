@@ -74,7 +74,6 @@ async def test_diffusion_tol_terminates_before_max_iter():
             max_iter=1000,
             epsilon=0.02,
             tol=1e-4,
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -109,7 +108,6 @@ async def test_diffusion_max_iter_failsafe_reports_not_converged():
             max_iter=max_iter,
             epsilon=0.02,
             tol=0.0,  # a moving λ can never satisfy this
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -143,7 +141,6 @@ async def test_exact_diffusion_tol_terminates_before_max_iter():
             max_iter=1000,
             epsilon=0.02,
             tol=1e-4,
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -178,7 +175,6 @@ async def test_exact_diffusion_max_iter_failsafe_reports_not_converged():
             max_iter=max_iter,
             epsilon=0.02,
             tol=0.0,  # a moving λ can never satisfy this
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -214,7 +210,6 @@ async def _run_gw_case(create_participant, create_start, epsilon, **participant_
             max_iter=1000,
             epsilon=epsilon,
             tol=1e-4,
-            horizon=horizon,
             **participant_kwargs,
         )
         for i, kwargs in enumerate(actors_kwargs)

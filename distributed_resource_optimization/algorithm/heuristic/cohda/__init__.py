@@ -17,6 +17,7 @@ from .core import (
     merge_candidates,
     merge_sysconfigs,
     perceive,
+    publish_own_schedule,
 )
 from .decider import LocalSearchDecider
 
@@ -34,6 +35,7 @@ __all__ = [
     "merge_sysconfigs",
     "merge_candidates",
     "perceive",
+    "publish_own_schedule",
     "decide",
     "act",
     "create_from_updated_sysconf",

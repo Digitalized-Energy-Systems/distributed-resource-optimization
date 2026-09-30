@@ -31,7 +31,7 @@ The per-agent feedback gain :math:`\\varepsilon_i = \\varepsilon / p_i` (eq. 31)
 uses the Perron eigenvector entry :math:`p_i` of the weight matrix. Since the
 weight matrix is fully determined by the (static, centrally-known) topology
 at scenario-setup time, :math:`p_i` is expected to be computed once centrally
-(see :func:`~.._weight_rules.perron_vector`) and passed in as *perron_scale*
+(the eigenvalue-1 eigenvector, normalised to sum to *N*) and passed in as *perron_scale*
 -- mirroring how ``n_guess`` is already precomputed centrally for the
 economic-dispatch actors. On a degree-regular graph :math:`p_i \\equiv 1`, so
 *perron_scale* defaults to ``1.0`` (no scaling).
@@ -49,7 +49,7 @@ import numpy as np
 
 from .._weight_rules import WeightRule, regular_graph_weights
 from ..core import DistributedAlgorithm
-from .diffusion import DiffusionActor, DiffusionMessage, NoDiffusionActor
+from .diffusion import DiffusionActor, DiffusionMessage, create_diffusion_start
 
 if TYPE_CHECKING:
     from ...carrier.core import Carrier
@@ -66,7 +66,8 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
     :param finish_callback: Called with ``(algorithm, carrier)`` when
                             :attr:`max_iter` is reached.
     :param diffusion_actor: Optional :class:`DiffusionActor` supplying the
-                            gradient.  ``None`` → :class:`NoDiffusionActor`.
+                            gradient.  ``None`` → the zero-gradient base
+                            :class:`DiffusionActor`.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
     :param epsilon: Base gradient step size (ε in eq. 31).
     :param perron_scale: This agent's Perron-eigenvector entry :math:`p_i`
@@ -84,7 +85,6 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
                      turning points of oscillatory transients (the corrected
                      second-order recursion has complex eigenmodes), where λ
                      momentarily stops moving for a single round.
-    :param horizon: Number of time steps in the schedule.
     :param weight_rule: Combination-weight rule for the combine step; any of
                         ``"averaging"``, ``"relative_degree"``,
                         ``"mean_metropolis"``, ``"hastings"`` (left-stochastic
@@ -102,19 +102,17 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         max_iter: int = 300,
         tol: float = 1e-4,
         patience: int = 3,
-        horizon: int = 24,
         weight_rule: WeightRule = "mean_metropolis",
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
-            diffusion_actor if diffusion_actor is not None else NoDiffusionActor()
+            diffusion_actor if diffusion_actor is not None else DiffusionActor()
         )
         self.initial_lam = initial_lam
         self.epsilon = epsilon / perron_scale
         self.max_iter = max_iter
         self.tol = tol
         self.patience = patience
-        self.horizon = horizon
         self.weight_rule = weight_rule
 
         #: How the last run ended: ``True`` if the tol criterion fired,
@@ -127,9 +125,10 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
-        self._lam: np.ndarray = np.full(horizon, initial_lam)
+        # λ / φ state is sized from the kick-off message on (re-)initialisation.
+        self._lam: np.ndarray = np.array([initial_lam])
         self._phi_prev: np.ndarray | None = None
-        self._phi_bar: np.ndarray = np.full(horizon, initial_lam)
+        self._phi_bar: np.ndarray = np.array([initial_lam])
         self._converged_flag: bool = False  # own flag from the last combine
         self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
@@ -151,7 +150,7 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         meta: Any,
     ) -> None:
         """Process one incoming exact-diffusion message."""
-        neighbours = carrier.others("")
+        neighbours = carrier.others()
 
         # --- Termination path (max_iter failsafe) ---
         if message_data.k >= self.max_iter:
@@ -279,63 +278,8 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
 # Factories
 # ---------------------------------------------------------------------------
 
+#: Create an :class:`ExactDiffusionAlgorithm` participant (same signature).
+create_exact_diffusion_participant = ExactDiffusionAlgorithm
 
-def create_exact_diffusion_participant(
-    finish_callback: Callable,
-    diffusion_actor: DiffusionActor | None = None,
-    initial_lam: float = 10.0,
-    epsilon: float = 0.1,
-    perron_scale: float = 1.0,
-    max_iter: int = 300,
-    tol: float = 1e-4,
-    patience: int = 3,
-    horizon: int = 24,
-    weight_rule: WeightRule = "mean_metropolis",
-) -> ExactDiffusionAlgorithm:
-    """Create an :class:`ExactDiffusionAlgorithm` participant.
-
-    :param finish_callback: ``(algorithm, carrier) -> None`` — called when done.
-    :param diffusion_actor: Optional gradient actor.  ``None`` → no gradient.
-    :param initial_lam: Initial λ scalar.
-    :param epsilon: Base gradient step size.
-    :param perron_scale: This agent's Perron-eigenvector entry (eq. 31).
-    :param max_iter: Maximum iterations (failsafe; ``tol`` normally stops first).
-    :param tol: Per-round λ-change convergence tolerance.
-    :param patience: Consecutive sub-``tol`` rounds required to flag convergence.
-    :param horizon: Number of schedule time steps.
-    :param weight_rule: Combination-weight rule for the combine step.
-    """
-    return ExactDiffusionAlgorithm(
-        finish_callback=finish_callback,
-        diffusion_actor=diffusion_actor,
-        initial_lam=initial_lam,
-        epsilon=epsilon,
-        perron_scale=perron_scale,
-        max_iter=max_iter,
-        tol=tol,
-        patience=patience,
-        horizon=horizon,
-        weight_rule=weight_rule,
-    )
-
-
-def create_exact_diffusion_start(
-    initial_lam: float,
-    data: Any = None,
-    horizon: int = 1,
-) -> DiffusionMessage:
-    """Create the initial kick-off message for an exact-diffusion run.
-
-    :param initial_lam: Starting scalar; broadcast to all λ dimensions.
-    :param data: Auxiliary payload forwarded to each participant's
-                 :meth:`DiffusionActor.gradient_term`.
-    :param horizon: Number of time steps; sets the length of the φ vector that
-                    recipients use to infer their own horizon.
-    :returns: A :class:`DiffusionMessage` with ``initial=True``.
-    """
-    return DiffusionMessage(
-        phi=np.full(horizon, initial_lam),
-        k=0,
-        data=data,
-        initial=True,
-    )
+#: Exact Diffusion reuses the classical-Diffusion kick-off message unchanged.
+create_exact_diffusion_start = create_diffusion_start

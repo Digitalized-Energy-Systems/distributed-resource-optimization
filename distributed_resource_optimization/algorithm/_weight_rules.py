@@ -33,8 +33,6 @@ from __future__ import annotations
 
 from typing import Literal, Mapping
 
-import numpy as np
-
 WeightRule = Literal["mean_metropolis", "averaging", "relative_degree", "hastings"]
 
 
@@ -102,22 +100,3 @@ def regular_graph_weights(
     self_weight, weights = combination_weights(own_degree, dummy_neighbor_degrees, rule)
     neighbor_weight = next(iter(weights.values()))
     return self_weight, neighbor_weight
-
-
-def perron_vector(weight_matrix: np.ndarray) -> np.ndarray:
-    """Return the Perron eigenvector ``p`` (eigenvalue 1) of a left-stochastic matrix.
-
-    Used for Exact Diffusion's per-agent feedback gain (Ces et al. eq. 31:
-    ``epsilon_i = epsilon / p_i``). Normalised so ``sum(p) == len(p)`` -- on a
-    regular graph (where the combination matrix reduces to a uniform doubly
-    stochastic matrix) this yields ``p_i == 1`` for all agents, i.e. no
-    per-agent scaling.
-
-    :param weight_matrix: Square left-stochastic combination matrix (columns sum to 1).
-    :returns: Real, positive Perron eigenvector, normalised to sum to ``N``.
-    """
-    eigvals, eigvecs = np.linalg.eig(weight_matrix)
-    idx = int(np.argmin(np.abs(eigvals - 1.0)))
-    p = np.real(eigvecs[:, idx])
-    p = np.abs(p)
-    return p * (len(p) / p.sum())

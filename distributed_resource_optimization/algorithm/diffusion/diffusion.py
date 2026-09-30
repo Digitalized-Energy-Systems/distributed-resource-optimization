@@ -26,8 +26,8 @@ codebase's complete-graph topologies and for the paper's own ring network);
 the paper notes this doubly-stochastic requirement is what allows classical
 Diffusion to converge at all.
 
-The optional :class:`DiffusionActor` plug-in supplies ``∇J``; the default
-:class:`NoDiffusionActor` returns zero.
+The optional :class:`DiffusionActor` plug-in supplies ``∇J``; the base class
+itself returns zero.
 """
 
 from __future__ import annotations
@@ -53,7 +53,8 @@ class DiffusionActor:
     """Optional plug-in that supplies the gradient term for the adapt step.
 
     Subclass this to bias the diffusion iterates toward a local optimum
-    (e.g. economic dispatch or battery storage scheduling).
+    (e.g. economic dispatch or battery storage scheduling).  Used as-is it is
+    the neutral actor: the gradient is identically zero.
     """
 
     def gradient_term(self, lam: np.ndarray, data: Any) -> np.ndarray | float:
@@ -64,10 +65,6 @@ class DiffusionActor:
         :returns: Additive gradient (default: 0).
         """
         return 0
-
-
-class NoDiffusionActor(DiffusionActor):
-    """Neutral diffusion actor — gradient is identically zero."""
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +119,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
     :param finish_callback: Called with ``(algorithm, carrier)`` when
                             :attr:`max_iter` is reached.
     :param diffusion_actor: Optional :class:`DiffusionActor` supplying the
-                            gradient.  ``None`` → :class:`NoDiffusionActor`.
+                            gradient.  ``None`` → the zero-gradient base
+                            :class:`DiffusionActor`.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
     :param epsilon: Gradient step size (ε).
     :param max_iter: Maximum number of diffusion iterations (failsafe; the
@@ -136,7 +134,6 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                      participant flags itself converged.  Guards against the
                      turning points of oscillatory transients, where λ
                      momentarily stops moving for a single round.
-    :param horizon: Number of time steps in the schedule.
     :param weight_rule: Combination-weight rule for the combine step.  The
                         paper requires a doubly-stochastic matrix for
                         classical Diffusion to converge.  ``"mean_metropolis"``
@@ -156,19 +153,17 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         max_iter: int = 300,
         tol: float = 1e-4,
         patience: int = 3,
-        horizon: int = 24,
         weight_rule: WeightRule = "mean_metropolis",
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
-            diffusion_actor if diffusion_actor is not None else NoDiffusionActor()
+            diffusion_actor if diffusion_actor is not None else DiffusionActor()
         )
         self.initial_lam = initial_lam
         self.epsilon = epsilon
         self.max_iter = max_iter
         self.tol = tol
         self.patience = patience
-        self.horizon = horizon
         self.weight_rule = weight_rule
 
         #: How the last run ended: ``True`` if the tol criterion fired,
@@ -181,8 +176,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
-        self._lam: np.ndarray = np.full(horizon, initial_lam)
-        self._phi: np.ndarray = np.full(horizon, initial_lam)
+        # λ / φ state is sized from the kick-off message on (re-)initialisation.
+        self._lam: np.ndarray = np.array([initial_lam])
+        self._phi: np.ndarray = np.array([initial_lam])
         self._converged_flag: bool = False  # own flag from the last combine
         self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
@@ -193,7 +189,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         meta: Any,
     ) -> None:
         """Process one incoming diffusion message."""
-        neighbours = carrier.others("")
+        neighbours = carrier.others()
 
         # --- Termination path (max_iter failsafe) ---
         if message_data.k >= self.max_iter:
@@ -319,40 +315,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 
 
-def create_diffusion_participant(
-    finish_callback: Callable,
-    diffusion_actor: DiffusionActor | None = None,
-    initial_lam: float = 10.0,
-    epsilon: float = 0.1,
-    max_iter: int = 300,
-    tol: float = 1e-4,
-    patience: int = 3,
-    horizon: int = 24,
-    weight_rule: WeightRule = "mean_metropolis",
-) -> DiffusionAlgorithm:
-    """Create a :class:`DiffusionAlgorithm` participant.
-
-    :param finish_callback: ``(algorithm, carrier) -> None`` — called when done.
-    :param diffusion_actor: Optional gradient actor.  ``None`` → no gradient.
-    :param initial_lam: Initial λ scalar.
-    :param epsilon: Gradient step size.
-    :param max_iter: Maximum iterations (failsafe; ``tol`` normally stops first).
-    :param tol: Per-round λ-change convergence tolerance.
-    :param patience: Consecutive sub-``tol`` rounds required to flag convergence.
-    :param horizon: Number of schedule time steps.
-    :param weight_rule: Combination-weight rule for the combine step.
-    """
-    return DiffusionAlgorithm(
-        finish_callback=finish_callback,
-        diffusion_actor=diffusion_actor,
-        initial_lam=initial_lam,
-        epsilon=epsilon,
-        max_iter=max_iter,
-        tol=tol,
-        patience=patience,
-        horizon=horizon,
-        weight_rule=weight_rule,
-    )
+#: Create a :class:`DiffusionAlgorithm` participant (same signature).
+create_diffusion_participant = DiffusionAlgorithm
 
 
 def create_diffusion_start(

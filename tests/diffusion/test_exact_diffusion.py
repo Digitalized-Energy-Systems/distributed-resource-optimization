@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    DiffusionActor,
     LinearCostEconomicDispatchDiffusionActor,
-    NoDiffusionActor,
     ReservoirStorageDiffusionActor,
     create_diffusion_participant,
     create_diffusion_start,
@@ -35,10 +35,7 @@ async def test_exact_diffusion_all_callbacks_fire():
 
         return finish
 
-    actors = [
-        create_exact_diffusion_participant(make_finish(i), max_iter=50, horizon=horizon)
-        for i in range(n)
-    ]
+    actors = [create_exact_diffusion_participant(make_finish(i), max_iter=50) for i in range(n)]
     start = create_exact_diffusion_start(initial_lam=5.0, horizon=horizon)
     await start_distributed_optimization(actors, start)
 
@@ -47,7 +44,7 @@ async def test_exact_diffusion_all_callbacks_fire():
 
 @pytest.mark.asyncio
 async def test_exact_diffusion_no_actor_converges_to_consensus():
-    """With NoDiffusionActor all agents must converge to the same λ value."""
+    """With DiffusionActor all agents must converge to the same λ value."""
     n = 3
     horizon = 1
     results: dict[int, np.ndarray] = {}
@@ -61,10 +58,9 @@ async def test_exact_diffusion_no_actor_converges_to_consensus():
     actors = [
         create_exact_diffusion_participant(
             make_finish(i),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=float((i + 1) * 5),
             max_iter=100,
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -98,10 +94,9 @@ async def test_exact_diffusion_converges_under_every_weight_rule(weight_rule):
     actors = [
         create_exact_diffusion_participant(
             make_finish(i),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=float((i + 1) * 5),
             max_iter=100,
-            horizon=horizon,
             weight_rule=weight_rule,
         )
         for i in range(n)
@@ -123,7 +118,7 @@ async def test_exact_diffusion_converges_under_every_weight_rule(weight_rule):
 async def test_exact_diffusion_combine_uses_ibar_w_over_two(weight_rule):
     """The combine step must use W̄ = (I + W)/2 (eq. 31), not the raw rule matrix.
 
-    With NoDiffusionActor (zero gradient) φ̄ = λ exactly on the first round, so
+    With DiffusionActor (zero gradient) φ̄ = λ exactly on the first round, so
     the post-combine λ is directly checkable against the hand-computed halved
     weights. max_iter=1 stops right after that first combine.
     """
@@ -139,18 +134,16 @@ async def test_exact_diffusion_combine_uses_ibar_w_over_two(weight_rule):
     actors = [
         create_exact_diffusion_participant(
             make_finish(0),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=lam0,
             max_iter=1,
-            horizon=1,
             weight_rule=weight_rule,
         ),
         create_exact_diffusion_participant(
             make_finish(1),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=lam1,
             max_iter=1,
-            horizon=1,
             weight_rule=weight_rule,
         ),
     ]
@@ -188,7 +181,6 @@ async def test_exact_diffusion_merit_order():
                 cost=2.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.1,
         ),
         create_exact_diffusion_participant(
@@ -197,7 +189,6 @@ async def test_exact_diffusion_merit_order():
                 cost=8.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.1,
         ),
     ]
@@ -232,7 +223,6 @@ async def test_exact_diffusion_with_storage_respects_box_constraints():
                 cost=5.0, p_max=15.0, epsilon=0.1, n_guess=2
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.1,
         ),
         create_exact_diffusion_participant(
@@ -247,7 +237,6 @@ async def test_exact_diffusion_with_storage_respects_box_constraints():
                 n_guess=2,
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.1,
         ),
     ]
@@ -281,7 +270,6 @@ async def test_exact_diffusion_horizon_larger_than_one():
                 cost=5.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=100,
-            horizon=horizon,
             epsilon=0.1,
         )
         for i in range(n)
@@ -346,7 +334,6 @@ async def test_exact_diffusion_removes_classical_diffusion_bias():
                     cost=c, p_max=p_max, epsilon=actor_epsilon, n_guess=n
                 ),
                 max_iter=300,
-                horizon=1,
                 epsilon=algo_epsilon,
             )
             for i, c in enumerate(costs)
@@ -385,10 +372,10 @@ async def test_exact_diffusion_first_iteration_has_no_correction():
     captured: dict[str, np.ndarray] = {}
 
     class RecordingCarrier:
-        def others(self, _):
+        def others(self):
             return ["neighbour"]
 
-        def send_to_other(self, content, receiver, meta=None):
+        def send_to_other(self, content, receiver):
             captured["phi"] = content.phi.copy()
 
     from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
@@ -397,16 +384,15 @@ async def test_exact_diffusion_first_iteration_has_no_correction():
 
     algo = ExactDiffusionAlgorithm(
         finish_callback=lambda a, c: None,
-        diffusion_actor=NoDiffusionActor(),
+        diffusion_actor=DiffusionActor(),
         initial_lam=7.0,
         epsilon=0.1,
         max_iter=10,
-        horizon=horizon,
     )
     start = create_exact_diffusion_start(initial_lam=7.0, horizon=horizon)
     await algo.on_exchange_message(RecordingCarrier(), start, {})
 
-    # NoDiffusionActor's gradient is 0, so φ^0 = λ^0 = 7.0 exactly, uncorrected.
+    # DiffusionActor's gradient is 0, so φ^0 = λ^0 = 7.0 exactly, uncorrected.
     assert np.allclose(captured["phi"], [7.0])
 
 
@@ -418,10 +404,10 @@ async def test_exact_diffusion_first_iteration_has_no_correction():
 class _MuteCarrier:
     """Fake carrier that reports two neighbours and swallows sends."""
 
-    def others(self, _):
+    def others(self):
         return ["a", "b"]
 
-    def send_to_other(self, content, receiver, meta=None):
+    def send_to_other(self, content, receiver):
         pass
 
 
@@ -435,7 +421,7 @@ async def test_exact_diffusion_rejects_mismatched_neighbour_degree():
         ExactDiffusionAlgorithm,
     )
 
-    algo = ExactDiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10, horizon=1)
+    algo = ExactDiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10)
     start = create_exact_diffusion_start(initial_lam=1.0, horizon=1)
     carrier = _MuteCarrier()
     await algo.on_exchange_message(carrier, start, {})  # initialise (2 neighbours)
@@ -468,7 +454,7 @@ async def test_exact_diffusion_rejects_mismatched_weight_rule():
     )
 
     algo = ExactDiffusionAlgorithm(
-        finish_callback=lambda a, c: None, max_iter=10, horizon=1, weight_rule="mean_metropolis"
+        finish_callback=lambda a, c: None, max_iter=10, weight_rule="mean_metropolis"
     )
     start = create_exact_diffusion_start(initial_lam=1.0, horizon=1)
     carrier = _MuteCarrier()
@@ -502,7 +488,7 @@ async def test_exact_diffusion_ignores_stale_message_after_termination():
 
     finished = []
     algo = ExactDiffusionAlgorithm(
-        finish_callback=lambda a, c: finished.append(a._lam.copy()), max_iter=1, horizon=1
+        finish_callback=lambda a, c: finished.append(a._lam.copy()), max_iter=1
     )
     carrier = _MuteCarrier()
     start = create_exact_diffusion_start(initial_lam=1.0, horizon=1)

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    FDGDMActor,
     LinearCostEconomicDispatchFDGDMActor,
-    NoFDGDMActor,
     ReservoirStorageFDGDMActor,
     create_fdgdm_participant,
     create_fdgdm_start,
@@ -29,8 +29,7 @@ async def test_fdgdm_no_cost_stays_at_initial():
 
     initial_p = np.array([10.0, 10.0, 10.0])
     actors = [
-        create_fdgdm_participant(finish, fdgdm_actor=NoFDGDMActor(), max_iter=20, horizon=3)
-        for _ in range(3)
+        create_fdgdm_participant(finish, fdgdm_actor=FDGDMActor(), max_iter=20) for _ in range(3)
     ]
     start = create_fdgdm_start(data=initial_p)
     await start_distributed_optimization(actors, start)
@@ -43,7 +42,6 @@ async def test_fdgdm_no_cost_stays_at_initial():
 @pytest.mark.asyncio
 async def test_fdgdm_equal_cost_equal_dispatch():
     """Three identical generators should converge to equal power outputs."""
-    horizon = 4
     demand = np.array([30.0, 30.0, 30.0, 30.0])
     n = 3
     initial_p = demand / n  # 10 MW each — demand-feasible start
@@ -58,7 +56,6 @@ async def test_fdgdm_equal_cost_equal_dispatch():
             finish,
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(cost=5.0, p_max=30.0, epsilon=0.1),
             max_iter=150,
-            horizon=horizon,
         )
         for _ in range(n)
     ]
@@ -73,7 +70,6 @@ async def test_fdgdm_equal_cost_equal_dispatch():
 @pytest.mark.asyncio
 async def test_fdgdm_merit_order():
     """Cheap generator should receive more load than the expensive one."""
-    horizon = 2
     demand = np.array([20.0, 20.0])
     n = 2
     initial_p = demand / n  # 10 MW each
@@ -95,7 +91,6 @@ async def test_fdgdm_merit_order():
                 epsilon=0.1,  # cheap
             ),
             max_iter=200,
-            horizon=horizon,
         ),
         create_fdgdm_participant(
             make_finish(1),
@@ -105,7 +100,6 @@ async def test_fdgdm_merit_order():
                 epsilon=0.1,  # expensive
             ),
             max_iter=200,
-            horizon=horizon,
         ),
     ]
     start = create_fdgdm_start(data=initial_p)
@@ -301,7 +295,6 @@ async def test_fdgdm_power_conservation_heterogeneous_capacity():
                 initial_schedule=np.array([init_large]),
             ),
             max_iter=300,
-            horizon=horizon,
         ),
         create_fdgdm_participant(
             make_finish(1),
@@ -312,7 +305,6 @@ async def test_fdgdm_power_conservation_heterogeneous_capacity():
                 initial_schedule=np.array([init_small]),
             ),
             max_iter=300,
-            horizon=horizon,
         ),
     ]
     start = create_fdgdm_start(data=np.zeros(horizon))
@@ -345,7 +337,6 @@ async def test_fdgdm_power_conservation():
     gradient=0 message in its first update, shifting its power down by ~6 MW
     and breaking conservation.
     """
-    horizon = 1
     demand = np.array([30.0])
     n = 3
     initial_p = demand / n  # [10 MW] each — demand-feasible start
@@ -368,7 +359,6 @@ async def test_fdgdm_power_conservation():
                 cost=costs[i], p_max=100.0, epsilon=0.1
             ),
             max_iter=300,
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -396,7 +386,6 @@ async def test_fdgdm_with_storage_converges():
     - Storage actor output must lie within its box constraints.
     - Total power must be conserved.
     """
-    horizon = 4
     demand = np.array([20.0, 20.0, 20.0, 20.0])
     n = 2
     initial_p = demand / n  # 10 MW each
@@ -422,12 +411,8 @@ async def test_fdgdm_with_storage_converges():
         return finish
 
     actors = [
-        create_fdgdm_participant(
-            make_finish(0), fdgdm_actor=thermal_actor, max_iter=300, horizon=horizon
-        ),
-        create_fdgdm_participant(
-            make_finish(1), fdgdm_actor=storage_actor, max_iter=300, horizon=horizon
-        ),
+        create_fdgdm_participant(make_finish(0), fdgdm_actor=thermal_actor, max_iter=300),
+        create_fdgdm_participant(make_finish(1), fdgdm_actor=storage_actor, max_iter=300),
     ]
     start = create_fdgdm_start(data=initial_p)
     await start_distributed_optimization(actors, start)
@@ -515,7 +500,7 @@ async def test_stale_message_after_termination_does_not_restart():
 
     finished: list[int] = []
     algo = create_fdgdm_participant(
-        lambda a, c: finished.append(1), fdgdm_actor=NoFDGDMActor(), max_iter=5
+        lambda a, c: finished.append(1), fdgdm_actor=FDGDMActor(), max_iter=5
     )
     carrier = StubCarrier(test_neighbors={2})
 

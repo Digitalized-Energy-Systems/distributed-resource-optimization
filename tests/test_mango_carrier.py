@@ -66,19 +66,6 @@ async def test_coordinator_wait_done_raises_before_start():
 
 
 @pytest.mark.asyncio
-async def test_mango_carrier_get_address_matches_role_context():
-    """MangoCarrier.get_address() should return the hosting role's own address."""
-    actor = create_admm_flex_actor_one_to_many(10, [0.1, 0.5, -1.0])
-    role = DistributedOptimizationRole(actor)
-    container = create_tcp_container(addr=("127.0.0.1", 58433))
-    agent = container.register(RoleAgent())
-    agent.add_role(role)
-
-    async with activate(container):
-        assert role._carrier.get_address() == agent.addr
-
-
-@pytest.mark.asyncio
 async def test_admm_sharing_end_to_end_over_mango_carrier():
     """The sharing-ADMM example from the module docstring / README, run for
     real over mango Roles in a single container, must reproduce the same
