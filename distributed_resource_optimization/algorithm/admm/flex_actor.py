@@ -8,11 +8,9 @@ Solves a quadratic program (QP) at each ADMM iteration:
 
    \\text{subject to} \\quad l \\le x \\le u, \\quad Cx \\le d
 
-where *v* = ``-correction`` (the signal sent by the coordinator), *S_i* is
-a per-sector priority/penalty vector, and the constraints represent box and
-coupling feasibility.
-
-
+where *v* is the correction vector sent by the coordinator, *S_i* is a
+per-sector linear cost vector (negative entries act as rewards), and the
+constraints represent box and coupling feasibility.
 """
 
 from __future__ import annotations
@@ -102,37 +100,31 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
 def _create_C_and_d(tech_capacity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Coupling constraints for a one-to-many conversion device.
 
-    *tech_capacity* is the per-output capacity ``in_capacity * eta``.  Row 0
-    caps the total allocation: each output enters with the sign of its
-    capacity, so ``Σ |x_i| ≤ Σ |tech_capacity|``.  The remaining row pairs
-    tie every output *j* to the last output via
-    ``x_j / t_j == x_{m-1} / t_{m-1}`` (two ``≤`` rows per equality): all
+    *tech_capacity* is the per-output capacity ``in_capacity * eta``.  All
     outputs of the device must run at the same utilisation fraction of their
-    capacity, which is what a single shared input implies.  Pairs involving a
-    zero-capacity output are skipped (all-zero rows) since their ratio is
-    undefined and the box bounds already pin those outputs to 0.
+    capacity, which is what a single shared input implies.  Every
+    nonzero-capacity output *j* is therefore tied to a reference output *r*
+    (the last one with nonzero capacity) via ``x_j / t_j == x_r / t_r``,
+    encoded as two opposing ``≤`` rows.  Zero-capacity outputs get no rows:
+    their ratio is undefined and the box bounds already pin them to 0.  A
+    total-capacity row is unnecessary since the box bounds plus the ratio
+    rows already imply it.
     """
     m = len(tech_capacity)
-    n_rows = 1 + 2 * (m - 1)
-    C = np.zeros((n_rows, m))
-    d = np.zeros(n_rows)
+    nonzero = [j for j in range(m) if tech_capacity[j] != 0]
+    if len(nonzero) < 2:
+        return np.zeros((0, m)), np.zeros(0)
 
-    for i in range(m):
-        C[0, i] = -1.0 if tech_capacity[i] < 0 else 1.0
-    d[0] = float(np.sum(np.abs(tech_capacity)))
-
-    for j in range(m - 1):
-        r1 = 1 + 2 * j
-        r2 = r1 + 1
+    r = nonzero[-1]
+    tr = tech_capacity[r]
+    C = np.zeros((2 * (len(nonzero) - 1), m))
+    for k, j in enumerate(nonzero[:-1]):
         tj = tech_capacity[j]
-        tm = tech_capacity[m - 1]
-        if tj != 0 and tm != 0:  # zero-capacity pairs keep their all-zero rows
-            C[r1, j] = 1.0 / tj
-            C[r1, m - 1] = -1.0 / tm
-            C[r2, j] = -1.0 / tj
-            C[r2, m - 1] = 1.0 / tm
-
-    return C, d
+        C[2 * k, j] = 1.0 / tj
+        C[2 * k, r] = -1.0 / tr
+        C[2 * k + 1, j] = -1.0 / tj
+        C[2 * k + 1, r] = 1.0 / tr
+    return C, np.zeros(C.shape[0])
 
 
 def create_admm_flex_actor_box_bounded(
@@ -144,7 +136,8 @@ def create_admm_flex_actor_box_bounded(
 
     :param lb: Lower bounds per decision variable.
     :param u: Upper bounds per decision variable.
-    :param S: Linear cost / priority penalties (positive = penalised).
+    :param S: Linear cost per decision variable (positive = penalised,
+              negative = rewarded).
     :returns: Configured :class:`ADMMFlexActor`.
     """
     lb_arr = np.asarray(lb, dtype=float)
@@ -179,8 +172,10 @@ def create_admm_flex_actor_one_to_many(
     :param in_capacity: Input resource capacity (e.g. rated power in kW).
     :param eta: Efficiency factors for each output (may be negative for
                 bidirectional devices).
-    :param P: Per-output priority penalties.  Positive = penalised,
-              negative = rewarded.  Default: zeros (neutral).
+    :param P: Per-output priorities, entering the local objective as the
+              linear term ``S = -P``.  Positive = rewarded (pulls the output
+              towards its capacity), negative = penalised.  Default: zeros
+              (neutral).
     :returns: Configured :class:`ADMMFlexActor`.
     """
     eta_arr = np.asarray(eta, dtype=float)

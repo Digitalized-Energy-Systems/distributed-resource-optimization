@@ -52,32 +52,42 @@ class TestLocalUpdateCoupled:
         assert x == pytest.approx([0.6, 1.2], abs=1e-3)
         assert x[1] == pytest.approx(2.0 * x[0], abs=1e-3)
 
-    def test_capacity_row_caps_total_allocation(self):
+    def test_strong_pull_saturates_at_full_utilisation(self):
         actor = create_admm_flex_actor_one_to_many(1.0, [1.0, 2.0])
-        # Strong pull toward the upper bounds.
+        # Strong pull toward the upper bounds: full utilisation, ratio kept.
         x = _local_update(actor, v=np.array([-100.0, -100.0]), rho=1.0)
-        assert np.sum(np.abs(x)) <= 3.0 + 1e-6
-        assert x[1] == pytest.approx(2.0 * x[0], abs=1e-3)
+        assert x == pytest.approx([1.0, 2.0], abs=1e-3)
+
+    def test_zero_capacity_last_output_keeps_coupling(self):
+        """Regression: a zero-capacity *last* output used to drop every
+        coupling row, letting the remaining outputs move independently."""
+        actor = create_admm_flex_actor_one_to_many(10.0, [0.5, -1.0, 0.0])
+        x = _local_update(actor, v=np.array([-5.0, 0.0, 0.0]), rho=1.0)
+        # Outputs must stay on the ratio line x0/5 == x1/-10, x2 pinned to 0.
+        assert x[1] == pytest.approx(-2.0 * x[0], abs=1e-3)
+        assert x[2] == pytest.approx(0.0, abs=1e-6)
+        assert x[0] == pytest.approx(1.0, abs=1e-3)
 
 
 class TestCreateCAndD:
-    def test_capacity_row_signs_and_rhs(self):
-        C, d = _create_C_and_d(np.array([1.0, -2.0, 3.0]))
-        np.testing.assert_allclose(C[0], [1.0, -1.0, 1.0])
-        assert d[0] == 6.0  # sum of absolute capacities
-
     def test_ratio_rows_tie_outputs_to_last(self):
         C, d = _create_C_and_d(np.array([2.0, 4.0]))
-        assert C.shape == (3, 2)
-        # Rows 1/2 encode x0/2 == x1/4 as two opposing inequalities.
-        np.testing.assert_allclose(C[1], [0.5, -0.25])
-        np.testing.assert_allclose(C[2], [-0.5, 0.25])
-        np.testing.assert_allclose(d[1:], 0.0)
+        assert C.shape == (2, 2)
+        # x0/2 == x1/4 as two opposing inequalities.
+        np.testing.assert_allclose(C[0], [0.5, -0.25])
+        np.testing.assert_allclose(C[1], [-0.5, 0.25])
+        np.testing.assert_allclose(d, 0.0)
 
-    def test_zero_capacity_rows_are_skipped(self):
+    def test_zero_capacity_outputs_get_no_rows(self):
         C, d = _create_C_and_d(np.array([0.0, 4.0]))
-        # The ratio pair for the zero-capacity output must be all-zero rows.
-        np.testing.assert_allclose(C[1:], 0.0)
+        assert C.shape == (0, 2)
+        assert d.shape == (0,)
+
+    def test_reference_is_last_nonzero_output(self):
+        C, _ = _create_C_and_d(np.array([2.0, 4.0, 0.0]))
+        assert C.shape == (2, 3)
+        np.testing.assert_allclose(C[0], [0.5, -0.25, 0.0])
+        np.testing.assert_allclose(C[:, 2], 0.0)
 
     def test_one_to_many_box_bounds_respect_sign(self):
         actor = create_admm_flex_actor_one_to_many(10.0, [0.5, -1.0])

@@ -3,9 +3,8 @@
 Provides the :class:`ADMMGenericCoordinator` which drives the standard
 Alternating Direction Method of Multipliers iteration loop.  Concrete
 global-actor implementations live in :mod:`.consensus_admm` and
-:mod:`.sharing_admm`; the local actor lives in :mod:`.flex_actor`.
-
-
+:mod:`.sharing_admm`; the local actors live in :mod:`.flex_actor` and
+:mod:`.storage`.
 """
 
 from __future__ import annotations
@@ -35,8 +34,8 @@ logger = logging.getLogger(__name__)
 class ADMMStart:
     """Sent to the coordinator to begin a new ADMM run.
 
-    :param data: Algorithm-specific input (e.g. :class:`ADMMSharingData` or a
-                 target vector).
+    :param data: Algorithm-specific input (e.g. :class:`~.sharing_admm.ADMMSharingData`
+                 or a target vector).
     :param solution_length: Number of decision variables per participant.
     """
 
@@ -48,23 +47,13 @@ class ADMMStart:
 class ADMMMessage:
     """Sent by the coordinator to each participant to request an x-update.
 
-    :param v: Scaled consensus/sharing vector (the local QP reference point).
+    :param v: Correction vector; the local update minimises
+              ``f_i(x) + (rho/2)·‖x + v‖²``, i.e. it is pulled towards ``-v``.
     :param rho: ADMM penalty parameter.
-    :param z: Snapshot of the coordinator's global variable.  Its shape is
-              variant-specific: for **sharing** ADMM it is a single vector of
-              length *m* (used as a uniform price signal by the
-              economic-dispatch actors); for the **consensus/exchange**
-              variant it is the per-participant list packed into an ``(n, m)``
-              matrix.  Actors that read ``z`` as a price
-              (:class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`,
-              :class:`~.economic_dispatch.StorageADMMFlexActor`) therefore only
-              work with the sharing coordinator; exchange-ADMM actors must use
-              ``v``/``rho`` only.
     """
 
     v: np.ndarray
     rho: float
-    z: np.ndarray | None = None
 
 
 @dataclass
@@ -172,19 +161,14 @@ class ADMMGenericCoordinator(Coordinator):
     3. Dual *u*-update via :meth:`~ADMMGlobalActor.u_update`.
     4. Check primal and dual residuals against tolerances; stop if met.
 
+    After a run, :attr:`iterations` and :attr:`converged` describe how it
+    ended (hitting ``max_iters`` also logs a warning).
+
     :param global_actor: Variant-specific global update logic.
     :param rho: ADMM penalty parameter (default: 1.0).
     :param max_iters: Maximum number of iterations (default: 1000).
     :param abs_tol: Absolute convergence tolerance (default: 1e-4).
     :param rel_tol: Relative convergence tolerance (default: 1e-3).
-    :param single_shot_clearing: If ``True`` (default, historical behaviour)
-        and the input data carries merit-order ``generators`` specs, skip the
-        ADMM loop entirely: *z* is set from closed-form clearing prices and a
-        single x-update round distributes the dispatch.  Only valid when every
-        registered participant is a price-responsive economic-dispatch actor
-        (e.g. :class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`);
-        structurally different actors (storage, coupled QPs) need the
-        iterative loop.  Set to ``False`` to always iterate.
     """
 
     def __init__(
@@ -194,14 +178,14 @@ class ADMMGenericCoordinator(Coordinator):
         max_iters: int = 1000,
         abs_tol: float = 1e-4,
         rel_tol: float = 1e-3,
-        single_shot_clearing: bool = True,
     ) -> None:
         self.global_actor = global_actor
         self.rho = rho
         self.max_iters = max_iters
         self.abs_tol = abs_tol
         self.rel_tol = rel_tol
-        self.single_shot_clearing = single_shot_clearing
+        self.iterations = 0
+        self.converged = False
 
     async def start_optimization(
         self,
@@ -223,12 +207,7 @@ class ADMMGenericCoordinator(Coordinator):
         futures: list[asyncio.Future] = []
         for i, addr in enumerate(participant_addrs):
             correction = self.global_actor.actor_correction(x, z, u, i)
-            futures.append(
-                carrier.send_awaitable(
-                    ADMMMessage(v=correction, rho=self.rho, z=np.asarray(z, dtype=float)),
-                    addr,
-                )
-            )
+            futures.append(carrier.send_awaitable(ADMMMessage(v=correction, rho=self.rho), addr))
         replies = await asyncio.gather(*futures)
         for i, reply in enumerate(replies):
             x[i] = np.asarray(reply.x, dtype=float)
@@ -253,32 +232,10 @@ class ADMMGenericCoordinator(Coordinator):
 
         x: list[np.ndarray] = [np.zeros(m) for _ in range(n)]
         u = actor.init_u(n, m)
-
-        generators = getattr(input_data, "generators", None)
-        if generators is not None and self.single_shot_clearing:
-            if len(generators) != n:
-                raise ValueError(
-                    f"Single-shot merit-order clearing has {len(generators)} generator "
-                    f"specs but {n} registered participants. This coordinator was "
-                    "constructed with a merit-order clearing input, which assumes every "
-                    "participant is a price-responsive economic-dispatch actor "
-                    "(e.g. LinearCostEconomicDispatchADMMFlexActor). A participant-count "
-                    "mismatch usually means a structurally different actor (e.g. storage) "
-                    "was registered without a matching generator spec — its response won't "
-                    "match the linear price-clip curve the clearing price assumes, and "
-                    "single-shot mode gives it no further rounds to correct that. Either "
-                    "add matching specs for every participant, or construct the coordinator "
-                    "with single_shot_clearing=False to run the full iterative ADMM loop."
-                )
-            from .sharing_admm import _z_from_clearing_prices
-
-            # z is fixed by the closed-form clearing prices: a single x-update
-            # round distributes the dispatch, no z/u iteration is needed.
-            z = _z_from_clearing_prices(input_data, rho, n)
-            await self._x_update_round(carrier, participant_addrs, x, z, u)
-            return x
-
         z = actor.init_z(n, m)
+        self.iterations = 0
+        self.converged = False
+
         for k in range(1, self.max_iters + 1):
             # 1. x-update round (all participants in parallel)
             await self._x_update_round(carrier, participant_addrs, x, z, u)
@@ -294,9 +251,12 @@ class ADMMGenericCoordinator(Coordinator):
             r_norm = actor.primal_residual(x, z)
             s_norm = rho * _max_diff_norm(z, z_old)
             eps_pri = np.sqrt(m * n) * self.abs_tol + self.rel_tol * max(_max_norm(x), _max_norm(z))
-            eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * _max_norm(u)
+            # u is the *scaled* dual, so the unscaled dual is rho·u (Boyd §3.3).
+            eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * rho * _max_norm(u)
+            self.iterations = k
 
             if r_norm < eps_pri and s_norm < eps_dual:
+                self.converged = True
                 logger.debug("ADMM converged in %d iterations.", k)
                 break
 

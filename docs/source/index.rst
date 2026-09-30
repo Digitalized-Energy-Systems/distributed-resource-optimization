@@ -65,8 +65,8 @@ Algorithms
 
       **ADMM Consensus**
       ^^^
-      Drive all agents to agree on a shared solution vector while satisfying individual
-      box and coupling constraints.
+      Exchange ADMM: agents' solutions must sum exactly to a target vector (e.g. economic
+      dispatch meeting demand) while satisfying individual box and coupling constraints.
 
       :doc:`algorithms/admm`
 

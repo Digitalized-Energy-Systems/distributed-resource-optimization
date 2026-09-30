@@ -89,7 +89,7 @@ Example — ADMM Consensus with MangoCarrier
 
        async with mango.activate(c):
            start = StartCoordinatedDistributedOptimization(
-               create_admm_start_consensus([1.0, 2.0])
+               create_admm_start_consensus([1.5, 1.0])
            )
            await ca.send_message(start, ca.addr)
            await asyncio.sleep(5.0)
