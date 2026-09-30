@@ -2,10 +2,10 @@
 
 Provides the :class:`ADMMGenericCoordinator` which drives the standard
 Alternating Direction Method of Multipliers iteration loop.  Concrete
-global-actor implementations live in :mod:`.consensus_admm` and
-:mod:`.sharing_admm`; the local actor lives in :mod:`.flex_actor`.
-
-
+global-actor implementations live in
+:mod:`~distributed_resource_optimization.algorithm.admm.consensus_admm` and
+:mod:`~distributed_resource_optimization.algorithm.admm.sharing_admm`; the local
+actor lives in :mod:`~distributed_resource_optimization.algorithm.admm.flex_actor`.
 """
 
 from __future__ import annotations
@@ -35,8 +35,9 @@ logger = logging.getLogger(__name__)
 class ADMMStart:
     """Sent to the coordinator to begin a new ADMM run.
 
-    :param data: Algorithm-specific input (e.g. :class:`ADMMSharingData` or a
-                 target vector).
+    :param data: Algorithm-specific input (e.g.
+                 :class:`~distributed_resource_optimization.algorithm.admm.sharing_admm.ADMMSharingData`
+                 or a target vector).
     :param solution_length: Number of decision variables per participant.
     """
 
@@ -56,8 +57,8 @@ class ADMMMessage:
               economic-dispatch actors); for the **consensus/exchange**
               variant it is the per-participant list packed into an ``(n, m)``
               matrix.  Actors that read ``z`` as a price
-              (:class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`,
-              :class:`~.economic_dispatch.StorageADMMFlexActor`) therefore only
+              (:class:`~distributed_resource_optimization.algorithm.admm.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`,
+              :class:`~distributed_resource_optimization.algorithm.admm.economic_dispatch.StorageADMMFlexActor`) therefore only
               work with the sharing coordinator; exchange-ADMM actors must use
               ``v``/``rho`` only.
     """
@@ -182,9 +183,14 @@ class ADMMGenericCoordinator(Coordinator):
         ADMM loop entirely: *z* is set from closed-form clearing prices and a
         single x-update round distributes the dispatch.  Only valid when every
         registered participant is a price-responsive economic-dispatch actor
-        (e.g. :class:`~.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`);
-        structurally different actors (storage, coupled QPs) need the
-        iterative loop.  Set to ``False`` to always iterate.
+        with its own spec (e.g.
+        :class:`~distributed_resource_optimization.algorithm.admm.economic_dispatch.LinearCostEconomicDispatchADMMFlexActor`
+        or
+        :class:`~distributed_resource_optimization.algorithm.admm.economic_dispatch.StorageADMMFlexActor`);
+        actors that solve a true proximal subproblem (e.g.
+        :class:`~distributed_resource_optimization.algorithm.admm.economic_dispatch.ProximalStorageADMMActor`,
+        coupled-QP flex actors) need the iterative loop.  Set to ``False`` to
+        always iterate.
     """
 
     def __init__(

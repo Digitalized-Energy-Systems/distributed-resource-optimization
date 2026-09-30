@@ -14,8 +14,6 @@ The z-update minimises a weighted L1 distance to the target:
 
 where :math:`\\bar{x}` is the participant average, *p* the priorities, and
 *t* the target vector.
-
-
 """
 
 from __future__ import annotations
@@ -66,9 +64,12 @@ class ADMMSharingData:
                        (:func:`create_admm_sharing_data` stores them negated
                        for historical reasons).
     :param generators: Optional specs for the coordinator's single-shot
-                       merit-order clearing (see
-                       :attr:`~.core.ADMMGenericCoordinator.single_shot_clearing`).
-    :param epsilon: Price sensitivity used with :class:`~.economic_dispatch` actors.
+                       merit-order clearing (see the ``single_shot_clearing``
+                       parameter of
+                       :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`).
+    :param epsilon: Price sensitivity used with the
+                    :mod:`~distributed_resource_optimization.algorithm.admm.economic_dispatch`
+                    actors.
     """
 
     target: np.ndarray

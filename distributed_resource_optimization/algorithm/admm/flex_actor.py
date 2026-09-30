@@ -8,11 +8,10 @@ Solves a quadratic program (QP) at each ADMM iteration:
 
    \\text{subject to} \\quad l \\le x \\le u, \\quad Cx \\le d
 
-where *v* = ``-correction`` (the signal sent by the coordinator), *S_i* is
-a per-sector priority/penalty vector, and the constraints represent box and
-coupling feasibility.
-
-
+where *v* is the correction sent by the coordinator (``ADMMMessage.v``; the
+QP is centred on ``-v``), *S_i* is a per-sector linear cost/priority vector
+(positive entries penalise, negative entries reward), and the constraints
+represent box and coupling feasibility.
 """
 
 from __future__ import annotations
@@ -179,8 +178,9 @@ def create_admm_flex_actor_one_to_many(
     :param in_capacity: Input resource capacity (e.g. rated power in kW).
     :param eta: Efficiency factors for each output (may be negative for
                 bidirectional devices).
-    :param P: Per-output priority penalties.  Positive = penalised,
-              negative = rewarded.  Default: zeros (neutral).
+    :param P: Per-output priorities, stored as ``S = -P``: positive entries
+              reward (push up) that output, negative entries penalise it.
+              Default: zeros (neutral).
     :returns: Configured :class:`ADMMFlexActor`.
     """
     eta_arr = np.asarray(eta, dtype=float)

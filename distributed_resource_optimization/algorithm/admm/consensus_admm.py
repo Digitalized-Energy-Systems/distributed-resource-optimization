@@ -110,7 +110,7 @@ def create_consensus_target_reach_admm_coordinator(
     max_iters: int = 1000,
     alpha: float = 0.0,
 ) -> ADMMGenericCoordinator:
-    """Create an :class:`ADMMGenericCoordinator` for the consensus variant.
+    """Create an :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator` for the consensus variant.
 
     :param rho: ADMM penalty parameter.
     :param max_iters: Maximum number of iterations.

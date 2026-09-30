@@ -1,6 +1,7 @@
 """Economic-dispatch actors for the diffusion algorithm.
 
-Two :class:`~.diffusion.DiffusionActor` implementations:
+Two :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+implementations:
 
 * :class:`LinearCostEconomicDispatchDiffusionActor` — linearised inverted
   quadratic cost response.
@@ -102,7 +103,8 @@ class ReservoirStorageDiffusionActor(DiffusionActor):
     :param soc_min: Minimum state of charge (fraction).
     :param soc_max: Maximum state of charge (fraction).
     :param charge_cost: Marginal cost for charging.
-    :param discharge_cost: Marginal benefit for discharging.
+    :param discharge_cost: Marginal cost of discharging (the price must exceed
+                           ``charge_cost + discharge_cost`` before the unit discharges).
     :param epsilon: Sensitivity of power response to price (default 0.1).
     :param n_guess: Estimated number of participants for target normalisation.
     """

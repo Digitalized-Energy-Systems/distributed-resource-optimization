@@ -15,7 +15,7 @@ Algorithm
 
 Let :math:`\lambda_i^k` be the value held by agent :math:`i` at iteration :math:`k`, and
 :math:`P_i(\lambda_i^k)` its locally projected power output (see
-:meth:`~distributed_resource_optimization.ConsensusActor.project_power`). The update rule is:
+:meth:`~distributed_resource_optimization.algorithm.consensus.averaging.ConsensusActor.project_power`). The update rule is:
 
 .. math::
 
@@ -77,7 +77,7 @@ Parameters
      - Called with ``(algorithm, carrier)`` when ``max_iter`` is reached
    * - ``consensus_actor``
      - ``None``
-     - :class:`~distributed_resource_optimization.ConsensusActor` providing the price-to-power projection
+     - :class:`~distributed_resource_optimization.algorithm.consensus.averaging.ConsensusActor` providing the price-to-power projection
    * - ``initial_lam``
      - ``10.0``
      - Starting scalar value broadcast to all :math:`\lambda` components
@@ -100,8 +100,8 @@ Local Power Projection
 -----------------------
 
 To steer the consensus toward a local optimum, subclass
-:class:`~distributed_resource_optimization.ConsensusActor` and override
-:meth:`~distributed_resource_optimization.ConsensusActor.project_power`:
+:class:`~distributed_resource_optimization.algorithm.consensus.averaging.ConsensusActor` and override
+:meth:`~distributed_resource_optimization.algorithm.consensus.averaging.ConsensusActor.project_power`:
 
 .. doctest::
 
@@ -113,14 +113,14 @@ To steer the consensus toward a local optimum, subclass
    ...         return np.clip(lam, self.p_min, self.p_max)
 
 The ``data`` argument carries whatever was embedded in the initial
-:class:`~distributed_resource_optimization.AveragingConsensusMessage` — typically the total
+:class:`~distributed_resource_optimization.algorithm.consensus.averaging.AveragingConsensusMessage` — typically the total
 demand vector, used by the leader to compute the real power imbalance :math:`\Delta P`.
 
 Economic Dispatch
 -----------------
 
 The built-in
-:class:`~distributed_resource_optimization.LinearCostEconomicDispatchConsensusActor`
+:class:`~distributed_resource_optimization.algorithm.consensus.economic_dispatch.LinearCostEconomicDispatchConsensusActor`
 implements the price-to-power projection of eq. (23): each agent has a linear cost and power
 limits; :math:`\lambda` is the shared incremental (marginal) cost, and
 
@@ -186,8 +186,8 @@ see ``tests/consensus/test_consensus_sc.py::test_merit_order_dispatch_with_heter
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.create_averaging_consensus_participant`,
-  :class:`~distributed_resource_optimization.AveragingConsensusAlgorithm`
-- :class:`~distributed_resource_optimization.ConsensusActor`,
-  :class:`~distributed_resource_optimization.NoConsensusActor`
-- :class:`~distributed_resource_optimization.LinearCostEconomicDispatchConsensusActor`
+- :func:`~distributed_resource_optimization.algorithm.consensus.averaging.create_averaging_consensus_participant`,
+  :class:`~distributed_resource_optimization.algorithm.consensus.averaging.AveragingConsensusAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.consensus.averaging.ConsensusActor`,
+  (the base class is the neutral, pure-averaging actor)
+- :class:`~distributed_resource_optimization.algorithm.consensus.economic_dispatch.LinearCostEconomicDispatchConsensusActor`

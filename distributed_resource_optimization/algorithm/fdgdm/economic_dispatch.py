@@ -1,6 +1,7 @@
 """Economic-dispatch actors for the FDGDM algorithm.
 
-Two :class:`~.fdgdm.FDGDMActor` implementations:
+Two :class:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.FDGDMActor`
+implementations:
 
 * :class:`LinearCostEconomicDispatchFDGDMActor` — quadratic cost function
   ``F(P) = (ε/2)P² + c·P`` whose gradient and curvature are available in
@@ -36,6 +37,9 @@ class LinearCostEconomicDispatchFDGDMActor(FDGDMActor):
     :param p_max: Maximum power output (scalar or per-timestep vector).
     :param epsilon: Quadratic cost coefficient / curvature bound (default 0.1).
     :param p_min: Minimum power output (default 0).
+    :param initial_schedule: Optional per-agent starting schedule; replaces the
+                             shared kick-off vector on the first
+                             :meth:`project` call (see there).
     """
 
     cost: float
@@ -97,7 +101,7 @@ class ReservoirStorageFDGDMActor(FDGDMActor):
     :param p_charge_max: Maximum charging power (MW, positive value).
     :param p_discharge_max: Maximum discharging power (MW, positive value).
     :param charge_cost: Marginal cost for charging (default 0).
-    :param discharge_cost: Marginal benefit for discharging (default 0).
+    :param discharge_cost: Marginal cost of discharging (default 0).
     :param epsilon: Quadratic regularisation / curvature bound (default 0.1).
     """
 

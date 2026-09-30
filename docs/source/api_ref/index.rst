@@ -61,6 +61,9 @@ Diffusion & Exact Diffusion
 .. automodule:: distributed_resource_optimization.algorithm.diffusion.economic_dispatch
    :members:
 
+.. automodule:: distributed_resource_optimization.algorithm._weight_rules
+   :members:
+
 FDGDM
 -----
 

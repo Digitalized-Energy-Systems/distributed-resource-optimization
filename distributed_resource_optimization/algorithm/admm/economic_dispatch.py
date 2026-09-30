@@ -34,9 +34,10 @@ class LinearCostEconomicDispatchADMMFlexActor(ADMMFlexActor):
         x = \\mathrm{clip}\\left(\\frac{\\pi - c}{\\varepsilon},\\; x_{\\min},\\; x_{\\max}\\right),
         \\quad \\pi = \\rho N z.
 
-    where *N* is the number of participants.  At convergence
-    :math:`Nz \\approx` target, so :math:`\\pi \\approx \\rho \\cdot` target and
-    merit-order dispatch fills demand across heterogeneous units.
+    where *N* is the number of participants.  Under the coordinator's
+    single-shot merit-order clearing, *z* is set to ``price / (ρN)``, so
+    :math:`\\pi` is exactly the per-timestep clearing price and merit-order
+    dispatch fills demand across heterogeneous units.
     """
 
     def __init__(
@@ -95,9 +96,15 @@ def create_admm_economic_dispatch_actor(
 class StorageADMMFlexActor(ADMMFlexActor):
     """Reservoir storage participant for horizon ADMM sharing.
 
-    Positive power means discharge; negative power means charge.  Uses the
-    same price-driven heuristic as :class:`~.diffusion.economic_dispatch.ReservoirStorageDiffusionActor`,
-    then projects the schedule onto SOC-feasible trajectories.
+    Positive power means discharge; negative power means charge.  Reads the
+    coordinator's *z* as a price signal (like
+    :class:`LinearCostEconomicDispatchADMMFlexActor`), so it is meant for the
+    sharing coordinator with single-shot merit-order clearing, with its own
+    :class:`~distributed_resource_optimization.algorithm.admm.sharing_admm.ADMMGeneratorSpec`.
+    Uses the same price-driven heuristic as
+    :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.ReservoirStorageDiffusionActor`
+    (:func:`~distributed_resource_optimization.misc.util.project_storage_schedule_from_price`)
+    to project the schedule onto SOC-feasible trajectories.
     """
 
     def __init__(
@@ -167,9 +174,9 @@ class ProximalStorageADMMActor(ADMMFlexActor):
         \\quad \\text{s.t. SOC dynamics, power and energy bounds,}
 
     with ``x = p_d − p_c`` (positive = discharge) and *v* the coordinator's
-    correction vector, so it composes with
-    :class:`~.consensus_admm.ADMMConsensusGlobalActor` exactly like the
-    archive prototype's local Pyomo solver composed with its collector.
+    correction vector, so it composes with the iterative
+    :class:`~distributed_resource_optimization.algorithm.admm.consensus_admm.ADMMConsensusGlobalActor`
+    loop like any other flex actor.
     """
 
     def __init__(

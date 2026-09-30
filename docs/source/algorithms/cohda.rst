@@ -15,11 +15,13 @@ the combined schedule sum to a target vector :math:`T`:
 
 .. math::
 
-   \max_{x_{i,j}} \left(-\bigl\lVert T - \sum_{i=1}^{N}\sum_{j=1}^{M} U_{i,j}\cdot x_{i,j}\bigr\rVert_1\right)
+   \max_{x_{i,j}} \left(-\bigl\lVert w \odot \bigl(T - \sum_{i=1}^{N}\sum_{j=1}^{M} U_{i,j}\cdot x_{i,j}\bigr)\bigr\rVert_1\right)
 
    \text{s.t.}\quad \sum_{j=1}^{M} x_{i,j} = 1 \;\forall\, i,\quad x_{i,j}\in\{0,1\}
 
-where :math:`U_{i,j} \in \mathbb{R}^m` is the :math:`j`-th schedule of participant :math:`i`.
+where :math:`U_{i,j} \in \mathbb{R}^m` is the :math:`j`-th schedule of participant :math:`i`
+and :math:`w \in \mathbb{R}^m` are the per-interval weights passed to
+:func:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.create_cohda_start_message` (default: ones).
 
 How It Works
 ------------
@@ -74,12 +76,12 @@ Working Memory and Solution Candidates
 
 Internally COHDA uses three data structures:
 
-- :class:`~distributed_resource_optimization.WorkingMemory` — each participant's current
+- :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.WorkingMemory` — each participant's current
   view of the world: target parameters, the best known system configuration, and the best
   known solution candidate.
-- :class:`~distributed_resource_optimization.SystemConfig` — a mapping from participant IDs
+- :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.SystemConfig` — a mapping from participant IDs
   to their currently selected schedule.
-- :class:`~distributed_resource_optimization.SolutionCandidate` — a proposed full system
+- :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.SolutionCandidate` — a proposed full system
   configuration together with its performance value (negative weighted L1 distance).
 
 These types are exported and can be inspected after the algorithm runs.
@@ -89,7 +91,7 @@ Custom Performance Functions
 
 By default COHDA uses a weighted L1 distance metric. Provide a custom performance function
 when creating a participant. The function receives a 2-D NumPy array (rows = participants,
-columns = time steps) and a :class:`~distributed_resource_optimization.TargetParams`
+columns = time steps) and a :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.TargetParams`
 instance, and must return a ``float``:
 
 .. doctest::
@@ -104,7 +106,7 @@ Local Search Decider
 --------------------
 
 For participants with *continuous* feasible sets (corridors) rather than discrete schedule
-lists, use :class:`~distributed_resource_optimization.LocalSearchDecider`:
+lists, use :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.decider.LocalSearchDecider`:
 
 .. doctest::
 
@@ -131,10 +133,10 @@ lists, use :class:`~distributed_resource_optimization.LocalSearchDecider`:
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.create_cohda_participant`,
-  :func:`~distributed_resource_optimization.create_cohda_start_message`
-- :class:`~distributed_resource_optimization.WorkingMemory`,
-  :class:`~distributed_resource_optimization.SolutionCandidate`,
-  :class:`~distributed_resource_optimization.SystemConfig`
-- :class:`~distributed_resource_optimization.LocalSearchDecider`
+- :func:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.create_cohda_participant`,
+  :func:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.create_cohda_start_message`
+- :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.WorkingMemory`,
+  :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.SolutionCandidate`,
+  :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.SystemConfig`
+- :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.decider.LocalSearchDecider`
 - :doc:`../tutorials/schedule_coordination`

@@ -22,7 +22,7 @@ Several algorithm families are available:
 | Algorithm | Problem type | Coordination |
 |-----------|-------------|--------------|
 | **ADMM Sharing** | Continuous resource allocation, sum-to-target | Coordinator required |
-| **ADMM Consensus** | Agents converge to a shared target vector | Coordinator required |
+| **ADMM Consensus** | Exchange ADMM: agents' solutions sum to a target vector | Coordinator required |
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Averaging Consensus** | Distributed averaging with optional gradient terms | Fully distributed |
 | **Diffusion** | Adapt-then-combine averaging over a scheduling horizon | Fully distributed |
@@ -125,11 +125,13 @@ async def main():
 asyncio.run(main())
 ```
 
-### Diffusion, FDGDM, and DEED-ADMM
+### Averaging Consensus, Diffusion, FDGDM, and DEED-ADMM
 
-These follow the same `create_<algorithm>_participant(...)` + `finish_callback` shape as
-COHDA/consensus above — see the full documentation for worked examples of each:
-`create_diffusion_participant`, `create_fdgdm_participant`,
+These run fully distributed like COHDA (`start_distributed_optimization`), but each
+participant factory takes a `finish_callback(algorithm, carrier)` that fires when the run
+ends — see the full documentation for worked examples of each:
+`create_averaging_consensus_participant`, `create_diffusion_participant` /
+`create_exact_diffusion_participant`, `create_fdgdm_participant`,
 `create_deed_admm_thermal_participant` / `create_deed_admm_renewable_participant` /
 `create_deed_admm_storage_participant`.
 

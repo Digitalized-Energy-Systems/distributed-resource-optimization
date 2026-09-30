@@ -5,8 +5,6 @@ whose feasible set is a continuous corridor rather than a finite enumeration.
 The decider samples random values in each corridor dimension, evaluates a
 combined local+global performance, and narrows the corridor by pruning
 undesirable regions.
-
-
 """
 
 from __future__ import annotations
@@ -31,7 +29,7 @@ from .core import (
 class LocalSearchDecider(LocalDecider):
     """Random local search within per-dimension corridors.
 
-    For each schedule dimension *i*, ``find_new_value`` samples candidate
+    For each schedule dimension *i*, ``_find_new_value`` samples candidate
     values from ``corridors[i]``, evaluates a combined local+global
     performance, and iteratively prunes the search space toward the best
     region found.
@@ -41,7 +39,8 @@ class LocalSearchDecider(LocalDecider):
     :param local_performance: ``(schedule) -> float`` local objective.
     :param convergence_force_factor: Weight of the global deviation term
                                      (pushes the agent toward the target).
-    :param max_iterations: Pruning iterations per dimension.
+    :param max_iterations: Maximum number of samples evaluated per dimension
+                           (the remaining samples are pruned after every three).
     :param sample_size_per_value: Number of random samples drawn initially.
     :param distribution: Factory ``(low, high) -> Callable[[], float]``
                          that produces random values (default: uniform).

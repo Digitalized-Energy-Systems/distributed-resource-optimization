@@ -6,8 +6,8 @@ Development Setup
 
 .. code-block:: bash
 
-   git clone https://github.com/Digitalized-Energy-Systems/mango-optimization
-   cd mango-optimization
+   git clone https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization
+   cd distributed-resource-optimization
    pip install -e ".[dev,docs]"
 
 Running Tests
@@ -50,4 +50,4 @@ Contributing
 5. Open a pull request against ``main``.
 
 Please follow the existing code style (line length ≤ 100, type hints on public APIs,
-Google-style docstrings).
+reStructuredText docstrings with Sphinx ``:param:`` / ``:returns:`` fields).

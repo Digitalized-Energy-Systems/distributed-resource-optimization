@@ -25,7 +25,7 @@ Each agent i runs the following update per iteration k (Algorithm 1):
   x-side of p̂ / v (p̂ₓ, vₓ) is tracked; bᵧ, p̂ᵧ and vᵧ cannot influence it.
 
 For the electricity-only PyPSA benchmark the multi-energy hub model
-simplifies to Aᵢ = Iᵀ (no energy conversion), B = 0, zᵢ = 0.  The
+simplifies to Aᵢ = I (no energy conversion), B = 0, zᵢ = 0.  The
 weight matrix is uniform: wᵢⱼ = 1/n for all j (including self).
 
 Deviations from the paper (by design):
@@ -90,7 +90,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     """Peer-to-peer DEED-ADMM participant for a single electricity generator.
 
     This implementation covers the electricity-only (single-carrier) case:
-    * Aᵢ = Iᵀ  (no energy-carrier transformation)
+    * Aᵢ = I   (no energy-carrier transformation)
     * B  = 0    (no storage coupling; use a dedicated storage subclass for that)
     * zᵢ = 0
 
@@ -343,7 +343,7 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
     * Terminal energy target: SOC_τ ≈ e_final·e_max  (bisection enforced)
 
     The λ/ξ consensus protocol and the ``_step`` update are inherited
-    unchanged from the parent class; only the :meth:`_project_x` hook is
+    unchanged from the parent class; only the ``_project_x`` hook is
     overridden to insert the SOC projection after the raw x-update.
 
     Note this deviates from the paper, which folds the SOC dynamics

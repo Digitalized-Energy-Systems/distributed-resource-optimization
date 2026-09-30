@@ -12,8 +12,10 @@ Algorithm
 ---------
 
 Each agent :math:`i` holds a supply variable :math:`x_i`, a demand-side variable
-:math:`y_i` (pinned to its demand allocation :math:`d_i`), box-projected copies
-:math:`\hat p`, a dual :math:`\lambda_i`, and a consensus tracker :math:`\xi_i`.
+:math:`y_i` (pinned to its demand allocation :math:`d_i`), a box-projected copy
+:math:`\hat p_x` of :math:`x_i` with its dual :math:`v_x`, a dual :math:`\lambda_i`, and a
+consensus tracker :math:`\xi_i`.  (Because :math:`y_i = d_i` exactly in this setting, the
+paper's y-side copy and dual cannot affect the result and are not tracked.)
 Per iteration (Algorithm 1):
 
 .. math::
@@ -29,14 +31,14 @@ Per iteration (Algorithm 1):
    x \leftarrow H_x b_x
 
 followed by the :math:`y`-projection onto :math:`A_i y = d_i`, the box projection
-:math:`\hat p \leftarrow \operatorname{clip}(x + v/\gamma,\, p_{\min},\, p_{\max})`,
+:math:`\hat p_x \leftarrow \operatorname{clip}(x + v_x/\gamma,\, p_{\min},\, p_{\max})`,
 and the tracker/dual updates
 
 .. math::
 
    \xi \leftarrow \tilde\xi + \Delta x - \Delta y, \qquad
    \lambda \leftarrow \tilde\lambda + \tfrac{\gamma}{2}\xi, \qquad
-   v \leftarrow v + \gamma\,(x - \hat p).
+   v_x \leftarrow v_x + \gamma\,(x - \hat p_x).
 
 The tracker :math:`\xi` measures the running supply–demand mismatch; at convergence
 :math:`\sum_i x_i = \sum_i d_i` and :math:`\lambda` agrees across agents (the
@@ -116,11 +118,11 @@ Parameters
 Participant factories
 ---------------------
 
-- :func:`~distributed_resource_optimization.create_deed_admm_thermal_participant` —
+- :func:`~distributed_resource_optimization.algorithm.deed_admm.actors.create_deed_admm_thermal_participant` —
   generator with cost :math:`a_i x^2 + b_i x` and box limits.
-- :func:`~distributed_resource_optimization.create_deed_admm_renewable_participant` —
+- :func:`~distributed_resource_optimization.algorithm.deed_admm.actors.create_deed_admm_renewable_participant` —
   zero-marginal-cost unit whose upper bound is a per-step availability time series.
-- :func:`~distributed_resource_optimization.create_deed_admm_storage_participant` —
+- :func:`~distributed_resource_optimization.algorithm.deed_admm.actors.create_deed_admm_storage_participant` —
   battery/reservoir with power bounds, efficiencies, SOC bounds, and a terminal-SOC
   target; its ``E`` attribute carries the SOC trajectory at termination.
 
@@ -133,6 +135,6 @@ Participant factories
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.DEEDADMMAlgorithm`,
-  :class:`~distributed_resource_optimization.DEEDADMMStorageAlgorithm`
-- :class:`~distributed_resource_optimization.DEEDADMMMessage`
+- :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMAlgorithm`,
+  :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMStorageAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMMessage`

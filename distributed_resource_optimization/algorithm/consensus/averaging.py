@@ -100,8 +100,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     graph it would pin λ against a partial, understated imbalance.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when the run
-                            ends (either :attr:`max_iter` reached or all
-                            neighbours signal convergence).
+                            ends, i.e. after exactly ``max_iter`` rounds (there
+                            is no residual-based stopping criterion).
     :param consensus_actor: Optional :class:`ConsensusActor` for the price
                             to power projection (eq. 23).
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
@@ -242,7 +242,12 @@ def create_averaging_consensus_start(
 ) -> AveragingConsensusMessage:
     """Create the initial kick-off message for an averaging consensus run.
 
-    :param initial_lam: Starting scalar broadcast to all λ dimensions.
+    :param initial_lam: Placeholder λ value.  Recipients only use the
+                        message's λ *length* (always 1 here) to size their
+                        state; each participant (re)starts from its own
+                        ``initial_lam``.  For a multi-step horizon, build an
+                        :class:`AveragingConsensusMessage` with a λ vector of
+                        that length directly.
     :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`.
     :returns: An :class:`AveragingConsensusMessage` with ``initial=True``.
     """

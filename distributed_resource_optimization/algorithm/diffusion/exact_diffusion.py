@@ -1,6 +1,7 @@
 """Exact Diffusion algorithm (adapt-correct-combine).
 
-Classical Diffusion (:mod:`.diffusion`) converges, for a constant step size,
+Classical Diffusion
+(:mod:`~distributed_resource_optimization.algorithm.diffusion.diffusion`) converges, for a constant step size,
 to a point that is *biased* relative to the true minimiser of the network's
 aggregate cost whenever participants' local costs differ -- the combine step
 mixes already-adapted iterates, so the network never quite agrees on the
@@ -22,7 +23,7 @@ Per iteration, each participant:
 4. **combines**: :math:`\\lambda_i^k = \\sum_{j \\in \\mathcal{N}_i} \\bar w_{ij} \\bar\\varphi_j^k`
    (eq. 29), using the left-stochastic matrix :math:`\\bar W = (I + W)/2`
    (eq. 31), where *W* is built from one of the four rules Ces et al.
-   evaluate via :mod:`.._weight_rules` (``weight_rule``). The averaging with
+   evaluate via :mod:`~distributed_resource_optimization.algorithm._weight_rules` (``weight_rule``). The averaging with
    *I* is what keeps :math:`\\bar W` positive semi-definite -- required by
    Exact Diffusion's convergence proof -- since the raw rule matrices alone
    can have a negative eigenvalue (e.g. Mean Metropolis on a complete graph).
@@ -36,8 +37,9 @@ at scenario-setup time, :math:`p_i` is expected to be computed once centrally
 economic-dispatch actors. On a degree-regular graph :math:`p_i \\equiv 1`, so
 *perron_scale* defaults to ``1.0`` (no scaling).
 
-Reuses :class:`~.diffusion.DiffusionActor` (same gradient-term interface) and
-:class:`~.diffusion.DiffusionMessage` (same wire shape -- the ``phi`` field
+Reuses :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+(same gradient-term interface) and
+:class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionMessage` (same wire shape -- the ``phi`` field
 just carries the corrected :math:`\\bar\\varphi` instead of the raw one).
 """
 
@@ -59,15 +61,19 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
     """Distributed adapt-correct-combine exact diffusion over a scheduling horizon.
 
     ``on_exchange_message`` shares its termination/kick-off/message-queueing
-    skeleton with :class:`~.diffusion.DiffusionAlgorithm` -- a fix to one
+    skeleton with
+    :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionAlgorithm`
+    -- a fix to one
     (e.g. the stale-message-after-termination guard below) likely needs to
     be applied to the other too.
 
-    :param finish_callback: Called with ``(algorithm, carrier)`` when
-                            :attr:`max_iter` is reached.
-    :param diffusion_actor: Optional :class:`DiffusionActor` supplying the
-                            gradient.  ``None`` → the zero-gradient base
-                            :class:`DiffusionActor`.
+    :param finish_callback: Called with ``(algorithm, carrier)`` when the run
+                            terminates — via the ``tol`` criterion or the
+                            ``max_iter`` failsafe (see :attr:`converged`).
+    :param diffusion_actor: Optional
+                            :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+                            supplying the gradient.  ``None`` → the
+                            zero-gradient base class.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
     :param epsilon: Base gradient step size (ε in eq. 31).
     :param perron_scale: This agent's Perron-eigenvector entry :math:`p_i`

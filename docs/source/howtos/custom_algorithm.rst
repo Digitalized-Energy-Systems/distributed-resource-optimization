@@ -9,8 +9,8 @@ The Interface
 -------------
 
 All distributed algorithms extend
-:class:`~distributed_resource_optimization.DistributedAlgorithm` and implement
-:meth:`~distributed_resource_optimization.DistributedAlgorithm.on_exchange_message`:
+:class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm` and implement
+:meth:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm.on_exchange_message`:
 
 .. code-block:: python
 
@@ -29,7 +29,7 @@ All distributed algorithms extend
      - Type
      - Description
    * - ``carrier``
-     - :class:`~distributed_resource_optimization.Carrier`
+     - :class:`~distributed_resource_optimization.carrier.core.Carrier`
      - Use this to send replies or inspect neighbours
    * - ``message_data``
      - Any
@@ -41,7 +41,9 @@ All distributed algorithms extend
 Step-by-Step Example — Echo Algorithm
 ---------------------------------------
 
-As a minimal example: an algorithm that counts messages received and echoes each one back.
+As a minimal example: an algorithm that counts messages received and acknowledges each
+one.  Acknowledgements themselves are not answered — otherwise the two participants would
+echo each other forever and the run would never finish.
 
 **1. Define the algorithm class**
 
@@ -53,8 +55,9 @@ As a minimal example: an algorithm that counts messages received and echoes each
    )
 
    class EchoMessage(OptimizationMessage):
-       def __init__(self, payload: str):
+       def __init__(self, payload: str, is_ack: bool = False):
            self.payload = payload
+           self.is_ack = is_ack
 
    class EchoAlgorithm(DistributedAlgorithm):
        def __init__(self):
@@ -63,7 +66,10 @@ As a minimal example: an algorithm that counts messages received and echoes each
        async def on_exchange_message(self, carrier, message_data, meta):
            self.count += 1
            print(f"Received #{self.count}: {message_data.payload}")
-           carrier.reply_to_other(EchoMessage(f"ACK: {message_data.payload}"), meta)
+           if not message_data.is_ack:
+               carrier.reply_to_other(
+                   EchoMessage(f"ACK: {message_data.payload}", is_ack=True), meta
+               )
 
 **2. Run it with SimpleCarrier**
 
@@ -90,7 +96,7 @@ Coordinated Algorithms
 -----------------------
 
 For algorithms that require a central coordinator (like ADMM), implement a
-:class:`~distributed_resource_optimization.Coordinator` alongside your algorithm:
+:class:`~distributed_resource_optimization.algorithm.core.Coordinator` alongside your algorithm:
 
 .. code-block:: python
 
@@ -98,13 +104,13 @@ For algorithms that require a central coordinator (like ADMM), implement a
 
    class MyCoordinator(Coordinator):
        async def start_optimization(self, carrier, message_data, meta):
-           participants = carrier.others("coordinator")
+           participants = carrier.others()
            # ... send messages, collect replies, return results
            return []
 
 The coordinator is automatically given its own ``SimpleCarrier`` (or mango agent) and
 becomes the entry point for
-:func:`~distributed_resource_optimization.start_coordinated_optimization`.
+:func:`~distributed_resource_optimization.carrier.simple.start_coordinated_optimization`.
 
 Practical Tips
 --------------
@@ -133,8 +139,8 @@ on the ``ActorContainer`` fires automatically once all in-flight tasks have fini
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.DistributedAlgorithm`,
-  :class:`~distributed_resource_optimization.Coordinator`
-- :class:`~distributed_resource_optimization.Carrier`,
-  :class:`~distributed_resource_optimization.OptimizationMessage`
+- :class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm`,
+  :class:`~distributed_resource_optimization.algorithm.core.Coordinator`
+- :class:`~distributed_resource_optimization.carrier.core.Carrier`,
+  :class:`~distributed_resource_optimization.algorithm.core.OptimizationMessage`
 - :doc:`custom_carrier`
