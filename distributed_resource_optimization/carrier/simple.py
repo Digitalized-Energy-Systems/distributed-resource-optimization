@@ -77,13 +77,11 @@ class SimpleCarrier(Carrier):
         meta: dict,
     ) -> None:
         """Route an incoming message to the right handler."""
-        from ..algorithm.core import on_exchange_message
-
         msg_id = meta.get("message_id")
         if msg_id is not None and msg_id in target._uuid_to_handler:
             await target._uuid_to_handler[msg_id](target, content, meta)
         else:
-            await on_exchange_message(target.actor, target, content, meta)
+            await target.actor.on_exchange_message(target, content, meta)
 
     def _track_dispatch(self, coro: Any) -> asyncio.Task:
         """Run *coro* as a task tracked by the container's active-task counter."""
@@ -106,12 +104,14 @@ class SimpleCarrier(Carrier):
     # Carrier interface
     # ------------------------------------------------------------------
 
-    def send_to_other(
-        self,
-        content: Any,
-        receiver: int,
-        meta: dict | None = None,
-    ) -> asyncio.Task:
+    def _send(self, content: Any, receiver: int, extra_meta: dict | None = None) -> asyncio.Task:
+        """Dispatch *content* to 1-indexed *receiver* with optional extra meta."""
+        other = self.container.actors[receiver - 1]
+        full_meta: dict = {"sender": self.aid, "message_id": uuid4()}
+        full_meta.update(extra_meta or {})
+        return self._track_dispatch(self._dispatch_to(other, content, full_meta))
+
+    def send_to_other(self, content: Any, receiver: int) -> asyncio.Task:
         """Dispatch *content* to the carrier identified by 1-indexed *receiver*.
 
         The dispatch runs in a fresh asyncio Task so that the caller is not
@@ -119,12 +119,7 @@ class SimpleCarrier(Carrier):
         is incremented before the task starts and decremented (with possible
         done-event notification) when the task finishes.
         """
-        other = self.container.actors[receiver - 1]
-        extra = meta or {}
-        full_meta: dict = {"sender": self.aid, "message_id": uuid4()}
-        full_meta.update(extra)
-
-        return self._track_dispatch(self._dispatch_to(other, content, full_meta))
+        return self._send(content, receiver)
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         """Reply to the sender recorded in *meta*.
@@ -134,14 +129,9 @@ class SimpleCarrier(Carrier):
         """
         sender = meta["sender"]
         reply_meta = {**meta, "reply": True}
-        return self.send_to_other(content, sender, meta=reply_meta)
+        return self._send(content, sender, reply_meta)
 
-    def send_awaitable(
-        self,
-        content: Any,
-        receiver: int,
-        meta: dict | None = None,
-    ) -> asyncio.Future:
+    def send_awaitable(self, content: Any, receiver: int) -> asyncio.Future:
         """Send *content* and return a Future that resolves to the reply.
 
         The reply is matched by the ``message_id`` stored in the outgoing meta.
@@ -150,10 +140,8 @@ class SimpleCarrier(Carrier):
         triggers the handler, resolving the future.
         """
         other = self.container.actors[receiver - 1]
-        extra = meta or {}
         msg_id = uuid4()
         full_meta: dict = {"sender": self.aid, "message_id": msg_id}
-        full_meta.update(extra)
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
@@ -169,22 +157,9 @@ class SimpleCarrier(Carrier):
         self._track_dispatch(self._dispatch_to(other, content, full_meta))
         return future
 
-    def others(self, participant_id: str) -> list[int]:
+    def others(self) -> list[int]:
         """Return all 1-indexed carrier IDs except *this* carrier's ID."""
         return [i + 1 for i in range(len(self.container.actors)) if i + 1 != self.aid]
-
-    def get_address(self) -> int:
-        return self.aid
-
-    def schedule_using(self, fn: Any, delay_s: float) -> asyncio.Task:
-        """Schedule *fn* to run after *delay_s* seconds on the event loop."""
-
-        async def _run() -> None:
-            if delay_s > 0:
-                await asyncio.sleep(delay_s)
-            fn()
-
-        return asyncio.create_task(_run())
 
 
 def cid(carrier: SimpleCarrier) -> int:
@@ -226,18 +201,17 @@ async def start_coordinated_optimization(
 
     Creates a shared :class:`ActorContainer`, registers all actor carriers
     and a coordinator carrier, then delegates to
-    :func:`~...algorithm.core.start_optimization`.
+    :meth:`~...algorithm.core.Coordinator.start_optimization`.
 
     :param actors: List of algorithm participants.
     :param coordinator: The coordinator (e.g. an
                         :class:`~...admm.core.ADMMGenericCoordinator`).
     :param start_message: The start payload (e.g.
                           :class:`~...admm.core.ADMMStart`).
-    :returns: Whatever :func:`start_optimization` returns (coordinator-specific).
+    :returns: Whatever the coordinator's ``start_optimization`` returns.
     """
-    from ..algorithm.core import start_optimization
-
     container = ActorContainer()
-    _carriers = [SimpleCarrier(container, actor) for actor in actors]
+    for actor in actors:
+        SimpleCarrier(container, actor)  # registers itself with the container
     coordinator_carrier = SimpleCarrier(container, coordinator)
-    return await start_optimization(coordinator, coordinator_carrier, start_message, {})
+    return await coordinator.start_optimization(coordinator_carrier, start_message, {})

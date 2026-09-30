@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    DiffusionActor,
     LinearCostEconomicDispatchDiffusionActor,
-    NoDiffusionActor,
     ReservoirStorageDiffusionActor,
     create_diffusion_participant,
     create_diffusion_start,
@@ -32,9 +32,7 @@ async def test_diffusion_all_callbacks_fire():
 
         return finish
 
-    actors = [
-        create_diffusion_participant(make_finish(i), max_iter=50, horizon=horizon) for i in range(n)
-    ]
+    actors = [create_diffusion_participant(make_finish(i), max_iter=50) for i in range(n)]
     start = create_diffusion_start(initial_lam=5.0, horizon=horizon)
     await start_distributed_optimization(actors, start)
 
@@ -43,7 +41,7 @@ async def test_diffusion_all_callbacks_fire():
 
 @pytest.mark.asyncio
 async def test_diffusion_no_actor_converges_to_consensus():
-    """With NoDiffusionActor all agents must converge to the same λ value."""
+    """With DiffusionActor all agents must converge to the same λ value."""
     n = 3
     horizon = 1
     results: dict[int, np.ndarray] = {}
@@ -57,10 +55,9 @@ async def test_diffusion_no_actor_converges_to_consensus():
     actors = [
         create_diffusion_participant(
             make_finish(i),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=float((i + 1) * 5),
             max_iter=100,
-            horizon=horizon,
         )
         for i in range(n)
     ]
@@ -94,10 +91,9 @@ async def test_diffusion_converges_under_every_weight_rule(weight_rule):
     actors = [
         create_diffusion_participant(
             make_finish(i),
-            diffusion_actor=NoDiffusionActor(),
+            diffusion_actor=DiffusionActor(),
             initial_lam=float((i + 1) * 5),
             max_iter=100,
-            horizon=horizon,
             weight_rule=weight_rule,
         )
         for i in range(n)
@@ -133,7 +129,6 @@ async def test_diffusion_merit_order():
                 cost=2.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.2,
         ),
         create_diffusion_participant(
@@ -142,7 +137,6 @@ async def test_diffusion_merit_order():
                 cost=8.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.2,
         ),
     ]
@@ -176,7 +170,6 @@ async def test_diffusion_equal_cost_equal_dispatch():
                 cost=5.0, p_max=30.0, epsilon=0.1, n_guess=n
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.2,
         )
         for i in range(n)
@@ -213,7 +206,6 @@ async def test_diffusion_with_storage_respects_box_constraints():
                 cost=5.0, p_max=15.0, epsilon=0.1, n_guess=2
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.2,
         ),
         create_diffusion_participant(
@@ -228,7 +220,6 @@ async def test_diffusion_with_storage_respects_box_constraints():
                 n_guess=2,
             ),
             max_iter=300,
-            horizon=horizon,
             epsilon=0.2,
         ),
     ]
@@ -262,7 +253,6 @@ async def test_diffusion_horizon_larger_than_one():
                 cost=5.0, p_max=20.0, epsilon=0.1, n_guess=n
             ),
             max_iter=100,
-            horizon=horizon,
             epsilon=0.2,
         )
         for i in range(n)
@@ -461,10 +451,10 @@ class TestReservoirStorageDiffusionActor:
 class _MuteCarrier:
     """Fake carrier that reports two neighbours and swallows sends."""
 
-    def others(self, _):
+    def others(self):
         return ["a", "b"]
 
-    def send_to_other(self, content, receiver, meta=None):
+    def send_to_other(self, content, receiver):
         pass
 
 
@@ -478,7 +468,7 @@ async def test_diffusion_rejects_mismatched_neighbour_degree():
         DiffusionMessage,
     )
 
-    algo = DiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10, horizon=1)
+    algo = DiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10)
     start = create_diffusion_start(initial_lam=1.0, horizon=1)
     carrier = _MuteCarrier()
     await algo.on_exchange_message(carrier, start, {})  # initialise (2 neighbours)
@@ -511,7 +501,7 @@ async def test_diffusion_rejects_mismatched_weight_rule():
     )
 
     algo = DiffusionAlgorithm(
-        finish_callback=lambda a, c: None, max_iter=10, horizon=1, weight_rule="mean_metropolis"
+        finish_callback=lambda a, c: None, max_iter=10, weight_rule="mean_metropolis"
     )
     start = create_diffusion_start(initial_lam=1.0, horizon=1)
     carrier = _MuteCarrier()
@@ -545,7 +535,7 @@ async def test_diffusion_ignores_stale_message_after_termination():
 
     finished = []
     algo = DiffusionAlgorithm(
-        finish_callback=lambda a, c: finished.append(a._lam.copy()), max_iter=1, horizon=1
+        finish_callback=lambda a, c: finished.append(a._lam.copy()), max_iter=1
     )
     carrier = _MuteCarrier()
     start = create_diffusion_start(initial_lam=1.0, horizon=1)

@@ -5,14 +5,12 @@ from .fdgdm import (
     FDGDMActor,
     FDGDMAlgorithm,
     FDGDMMessage,
-    NoFDGDMActor,
     create_fdgdm_participant,
     create_fdgdm_start,
 )
 
 __all__ = [
     "FDGDMActor",
-    "NoFDGDMActor",
     "FDGDMMessage",
     "FDGDMAlgorithm",
     "create_fdgdm_participant",

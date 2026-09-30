@@ -110,7 +110,7 @@ class StorageADMMFlexActor(ADMMFlexActor):
         eta_charge: float = 0.95,
         eta_discharge: float = 0.95,
         e_initial: float = 0.5,
-        e_final: float = 0.5,
+        e_final: float | None = None,
         soc_min: float = 0.0,
         soc_max: float = 1.0,
         charge_cost: float = 0.0,
@@ -125,14 +125,13 @@ class StorageADMMFlexActor(ADMMFlexActor):
             d=np.zeros(0),
             S=np.zeros(horizon),
         )
-        self.horizon = horizon
         self.e_max = e_max
         self.p_charge_max = p_charge_max
         self.p_discharge_max = p_discharge_max
         self.eta_charge = eta_charge
         self.eta_discharge = eta_discharge
         self.e_initial = e_initial
-        self.e_final = e_final
+        self.e_final = e_initial if e_final is None else e_final
         self.soc_min = soc_min
         self.soc_max = soc_max
         self.charge_cost = charge_cost
@@ -150,18 +149,8 @@ class StorageADMMFlexActor(ADMMFlexActor):
         if not isinstance(message_data, ADMMMessage):
             return
         pi = _price_from_message(message_data, self.n_participants)
-        self.x = _storage_schedule_from_price(self, pi)
+        self.x, _, _ = project_storage_schedule_from_price(self, pi)
         carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
-
-
-def _storage_schedule_from_price(actor: StorageADMMFlexActor, pi: np.ndarray) -> np.ndarray:
-    """Build a price-responsive storage schedule that meets the target final SOC.
-
-    Uses the same bias-bisection approach as the consensus and diffusion storage
-    actors (see :func:`~distributed_resource_optimization.misc.util.project_storage_schedule_from_price`).
-    """
-    p, _, _ = project_storage_schedule_from_price(actor, pi)
-    return p
 
 
 class ProximalStorageADMMActor(ADMMFlexActor):
@@ -273,74 +262,12 @@ class ProximalStorageADMMActor(ADMMFlexActor):
         return np.asarray(x.value, dtype=float)
 
 
-def create_admm_proximal_storage_actor(
-    *,
-    horizon: int,
-    e_max: float,
-    p_charge_max: float,
-    p_discharge_max: float,
-    eta_charge: float = 0.95,
-    eta_discharge: float = 0.95,
-    e_initial: float = 0.5,
-    e_final: float | None = None,
-    soc_min: float = 0.0,
-    soc_max: float = 1.0,
-    charge_cost: float = 0.0,
-    discharge_cost: float = 0.0,
-) -> ProximalStorageADMMActor:
-    """Create a SOC-constrained storage participant for iterative exchange ADMM."""
-    return ProximalStorageADMMActor(
-        horizon=horizon,
-        e_max=e_max,
-        p_charge_max=p_charge_max,
-        p_discharge_max=p_discharge_max,
-        eta_charge=eta_charge,
-        eta_discharge=eta_discharge,
-        e_initial=e_initial,
-        e_final=e_final,
-        soc_min=soc_min,
-        soc_max=soc_max,
-        charge_cost=charge_cost,
-        discharge_cost=discharge_cost,
-    )
+#: Create a :class:`ProximalStorageADMMActor` (same keyword-only signature).
+create_admm_proximal_storage_actor = ProximalStorageADMMActor
 
 
-def create_admm_storage_actor(
-    *,
-    horizon: int,
-    e_max: float,
-    p_charge_max: float,
-    p_discharge_max: float,
-    eta_charge: float = 0.95,
-    eta_discharge: float = 0.95,
-    e_initial: float = 0.5,
-    e_final: float | None = None,
-    soc_min: float = 0.0,
-    soc_max: float = 1.0,
-    charge_cost: float = 0.0,
-    discharge_cost: float = 0.0,
-    epsilon: float = 0.1,
-    n_participants: int = 1,
-) -> StorageADMMFlexActor:
-    """Create a horizon-vector storage actor for sharing ADMM."""
-    if e_final is None:
-        e_final = e_initial
-    return StorageADMMFlexActor(
-        horizon=horizon,
-        e_max=e_max,
-        p_charge_max=p_charge_max,
-        p_discharge_max=p_discharge_max,
-        eta_charge=eta_charge,
-        eta_discharge=eta_discharge,
-        e_initial=e_initial,
-        e_final=e_final,
-        soc_min=soc_min,
-        soc_max=soc_max,
-        charge_cost=charge_cost,
-        discharge_cost=discharge_cost,
-        epsilon=epsilon,
-        n_participants=n_participants,
-    )
+#: Create a :class:`StorageADMMFlexActor` (same keyword-only signature).
+create_admm_storage_actor = StorageADMMFlexActor
 
 
 __all__ = [

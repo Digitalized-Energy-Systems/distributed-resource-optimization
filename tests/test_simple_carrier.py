@@ -1,8 +1,8 @@
 """Unit tests for SimpleCarrier and ActorContainer.
 
 These tests exercise the SimpleCarrier machinery directly — registration,
-address lookup, neighbour enumeration, message routing, done-event lifecycle,
-and schedule_using — without going through a full algorithm run.
+neighbour enumeration, message routing and the done-event lifecycle — without
+going through a full algorithm run.
 """
 
 from __future__ import annotations
@@ -52,12 +52,6 @@ def test_container_registers_carriers():
     assert len(container.actors) == 2
 
 
-def test_get_address_matches_cid():
-    container = ActorContainer()
-    c = SimpleCarrier(container, _EchoAlgorithm())
-    assert c.get_address() == cid(c)
-
-
 def test_others_excludes_self():
     container = ActorContainer()
     c1 = SimpleCarrier(container, _EchoAlgorithm())
@@ -65,11 +59,11 @@ def test_others_excludes_self():
     c3 = SimpleCarrier(container, _EchoAlgorithm())
 
     # c1 should see c2 and c3
-    assert set(c1.others("any")) == {2, 3}
+    assert set(c1.others()) == {2, 3}
     # c2 should see c1 and c3
-    assert set(c2.others("any")) == {1, 3}
+    assert set(c2.others()) == {1, 3}
     # c3 should see c1 and c2
-    assert set(c3.others("any")) == {1, 2}
+    assert set(c3.others()) == {1, 2}
 
 
 # ---------------------------------------------------------------------------
@@ -207,21 +201,3 @@ async def test_send_awaitable_counts_toward_done_event():
     c1.send_awaitable("ping", cid(c2))
     await asyncio.wait_for(container.done_event.wait(), timeout=2.0)
     assert received == ["ping"]
-
-
-# ---------------------------------------------------------------------------
-# schedule_using
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_schedule_using_executes_function():
-    """schedule_using should run the callable (after the given delay)."""
-    container = ActorContainer()
-    c = SimpleCarrier(container, _EchoAlgorithm())
-    called = []
-
-    c.schedule_using(lambda: called.append(True), 0.0)
-    # Give the event loop a tick to execute the spawned task
-    await asyncio.sleep(0.05)
-    assert called == [True]

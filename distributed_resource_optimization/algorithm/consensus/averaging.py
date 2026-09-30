@@ -40,7 +40,8 @@ class ConsensusActor:
     """Optional plug-in that derives a local power output from the price λ.
 
     Subclass this to project the shared price signal onto a local dispatch
-    (e.g. economic dispatch via eq. 23 of Jian et al. 2020).
+    (e.g. economic dispatch via eq. 23 of Jian et al. 2020).  Used as-is it is
+    the neutral actor (pure averaging, no dispatch).
     """
 
     def project_power(self, lam: np.ndarray, data: Any) -> np.ndarray | float:
@@ -52,10 +53,6 @@ class ConsensusActor:
         :returns: Projected local power (default: 0, i.e. no dispatch).
         """
         return 0.0
-
-
-class NoConsensusActor(ConsensusActor):
-    """Neutral consensus actor — no gradient term (pure averaging)."""
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +124,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: ConsensusActor = (
-            consensus_actor if consensus_actor is not None else NoConsensusActor()
+            consensus_actor if consensus_actor is not None else ConsensusActor()
         )
         self.initial_lam = initial_lam
         self.alpha = alpha
@@ -150,7 +147,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         meta: Any,
     ) -> None:
         """Process one incoming averaging consensus message."""
-        neighbours = carrier.others("")
+        neighbours = carrier.others()
 
         # --- Termination path ---
         if message_data.k >= self.max_iter:
@@ -235,35 +232,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 
 
-def create_averaging_consensus_participant(
-    finish_callback: Callable,
-    consensus_actor: ConsensusActor | None = None,
-    initial_lam: float = 10.0,
-    alpha: float = 0.3,
-    max_iter: int = 50,
-    is_leader: bool = False,
-    leader_gain: float = 0.0,
-) -> AveragingConsensusAlgorithm:
-    """Create an :class:`AveragingConsensusAlgorithm` participant.
-
-    :param finish_callback: ``(algorithm, carrier) -> None`` — called when done.
-    :param consensus_actor: Optional price-to-power actor.  ``None`` → pure averaging.
-    :param initial_lam: Initial λ scalar.
-    :param alpha: Step size.
-    :param max_iter: Maximum iterations.
-    :param is_leader: Whether this participant is the leader (eq. 22).
-                      Exactly one participant per run should set this.
-    :param leader_gain: Leader's power-imbalance pinning gain (ε in eq. 22).
-    """
-    return AveragingConsensusAlgorithm(
-        finish_callback=finish_callback,
-        consensus_actor=consensus_actor,
-        initial_lam=initial_lam,
-        alpha=alpha,
-        max_iter=max_iter,
-        is_leader=is_leader,
-        leader_gain=leader_gain,
-    )
+#: Create an :class:`AveragingConsensusAlgorithm` participant (same signature).
+create_averaging_consensus_participant = AveragingConsensusAlgorithm
 
 
 def create_averaging_consensus_start(

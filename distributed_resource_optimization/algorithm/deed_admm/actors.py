@@ -120,8 +120,6 @@ def create_deed_admm_storage_participant(
     :param max_iter: Maximum iterations.
     :param n_agents: Total number of agents n (generators + storage).
     """
-    if e_final is None:
-        e_final = e_initial
     return DEEDADMMStorageAlgorithm(
         finish_callback=finish_callback,
         cost_quad=np.zeros(tau),
@@ -138,7 +136,7 @@ def create_deed_admm_storage_participant(
         eta_charge=float(eta_charge),
         eta_discharge=float(eta_discharge),
         e_initial=float(e_initial),
-        e_final=float(e_final),
+        e_final=e_final,
         soc_min=float(soc_min),
         soc_max=float(soc_max),
     )

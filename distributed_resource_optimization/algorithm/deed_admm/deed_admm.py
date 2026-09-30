@@ -21,6 +21,9 @@ Each agent i runs the following update per iteration k (Algorithm 1):
     λ ← λ̃ + (γ/2)ξ
     v ← v + γ(Mp − p̂)
 
+  With Aᵢ = I (below) the y-update collapses to y = dᵢ exactly, so only the
+  x-side of p̂ / v (p̂ₓ, vₓ) is tracked; bᵧ, p̂ᵧ and vᵧ cannot influence it.
+
 For the electricity-only PyPSA benchmark the multi-energy hub model
 simplifies to Aᵢ = Iᵀ (no energy conversion), B = 0, zᵢ = 0.  The
 weight matrix is uniform: wᵢⱼ = 1/n for all j (including self).
@@ -139,31 +142,16 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._d_i = np.asarray(d_i, dtype=float).copy()
         self._tau = tau
 
-        # Precomputed inverse matrices (diagonal → stored as 1-D arrays).
-        #
-        # With X = Y = I (box constraints only):
-        #   Hₓᵢ = (∇²cᵢ + 2γ I)⁻¹  →  diag: 1 / (2aᵢ + 2γ)
-        #   Hᵧ  = (2γ I)⁻¹           →  scalar: 1/(2γ)
-        #   Hᵢ  = (Aᵢ Hᵧ Aᵢᵀ)⁻¹     →  Aᵢ=I  ⇒  Hᵢ = 1/Hᵧ = 2γ I
-        g = self.gamma
-        self._H_x = 1.0 / (2.0 * self._cost_quad + 2.0 * g)  # shape (τ,)
-        self._H_y_scalar = 1.0 / (2.0 * g)  # scalar
-        self._H_i_scalar = 2.0 * g  # scalar (= 1/H_y)
-
-        # Runtime state (initialised in _reset_state)
-        self._x: np.ndarray = np.zeros(tau)
-        self._y: np.ndarray = np.zeros(tau)
-        self._p_hat_x: np.ndarray = np.zeros(tau)
-        self._p_hat_y: np.ndarray = np.zeros(tau)
-        self._xi: np.ndarray = np.zeros(tau)
-        self._lam: np.ndarray = np.zeros(tau)
-        self._v_x: np.ndarray = np.zeros(tau)
-        self._v_y: np.ndarray = np.zeros(tau)
-        self._k: int = 0
+        # Precomputed inverse (diagonal → stored as a 1-D array).  With X = I
+        # (box constraints only): Hₓᵢ = (∇²cᵢ + 2γ I)⁻¹ → diag 1 / (2aᵢ + 2γ).
+        # The y-side inverses Hᵧ = 1/(2γ) and Hᵢ = 2γ multiply to 1, which is
+        # why the y-update reduces to y = dᵢ (see _step).
+        self._H_x = 1.0 / (2.0 * self._cost_quad + 2.0 * self.gamma)  # shape (τ,)
 
         self._msg_queue: dict[int, list[DEEDADMMMessage]] = {}
         self._first_message: bool = True
         self._started: bool = False
+        self._reset_state()
 
         # Public result — written by finish_callback convention
         self.P: np.ndarray = np.zeros(tau)
@@ -196,11 +184,9 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._x = np.zeros(tau)
         self._y = np.zeros(tau)
         self._p_hat_x = np.zeros(tau)
-        self._p_hat_y = np.zeros(tau)
         self._xi = np.zeros(tau)
         self._lam = np.zeros(tau)
         self._v_x = np.zeros(tau)
-        self._v_y = np.zeros(tau)
         self._k = 0
         self._msg_queue.clear()
 
@@ -224,7 +210,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         lam_tilde = lam_sum / n
         xi_tilde = xi_sum / n
 
-        # --- 2. b-vectors (X = Y = I, so Xᵀ = Yᵀ = I) ---
+        # --- 2. b-vector (X = I, so Xᵀ = I) ---
         # The x-stationarity condition is:
         #   (∇²cᵢ + γ(I + XᵀX)) x = b_xi − ∇cᵢ_linear
         # so we subtract the constant part of the cost gradient (= cost_lin)
@@ -236,28 +222,18 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
             - (g / 2.0) * xi_tilde
             - self._cost_lin  # linear cost gradient (constant part of ∇cᵢ)
         )
-        b_y = g * self._y + lam_tilde + (g * self._p_hat_y - self._v_y) + (g / 2.0) * xi_tilde
 
         # --- 3. Primal updates ---
         # x update: x ← Hₓ bₓ, then the subclass feasibility hook.
         x_new = self._project_x(self._H_x * b_x)
 
-        # y update (Aᵢ=I, Hᵧ=scalar, Hᵢ=scalar):
-        #   inner = d − Hᵧ bᵧ
-        #   y ← Hᵧ(bᵧ + Hᵢ inner)  =  Hᵧ bᵧ + Hᵧ Hᵢ inner
-        # With Hᵧ = 1/(2γ) and Hᵢ = 2γ:  Hᵧ Hᵢ = 1, so y = dᵢ exactly at
-        # every iteration (projection onto Aᵢy = dᵢ).  The first-iteration
-        # jump y: 0 → dᵢ is how demand enters the ξ tracker.  Consequently
-        # p̂_y and v_y below cannot influence the result; they are kept only
-        # to mirror the paper's Algorithm 1 structure.
-        Hy_b_y = self._H_y_scalar * b_y
-        inner = self._d_i - Hy_b_y
-        y_new = Hy_b_y + self._H_i_scalar * (self._H_y_scalar * inner)
+        # y update (Aᵢ=I):  y ← Hᵧ bᵧ + Hᵧ Hᵢ (dᵢ − Hᵧ bᵧ)  with  Hᵧ Hᵢ = 1,
+        # i.e. y = dᵢ exactly at every iteration (projection onto Aᵢy = dᵢ).
+        # The first-iteration jump y: 0 → dᵢ is how demand enters the ξ tracker.
+        y_new = self._d_i.copy()
 
-        # p̂ projection: clip(Mp + v/γ, p̂_min, p̂_max)
-        # M = blkdiag(I, I) → Mx = [x; y], p̂ = [p̂_x; p̂_y]
+        # p̂ₓ projection: clip(x + vₓ/γ, p̂_min, p̂_max)
         p_hat_x_new = np.clip(x_new + self._v_x / g, self._x_min, self._x_max)
-        p_hat_y_new = np.clip(y_new + self._v_y / g, self._x_min, self._x_max)
 
         # --- 4. Auxiliary update ---
         xi_new = xi_tilde + (x_new - self._x) - (y_new - self._y)
@@ -265,17 +241,14 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         # --- 5. Dual updates ---
         lam_new = lam_tilde + (g / 2.0) * xi_new
         v_x_new = self._v_x + g * (x_new - p_hat_x_new)
-        v_y_new = self._v_y + g * (y_new - p_hat_y_new)
 
         # Store
         self._x = x_new
         self._y = y_new
         self._p_hat_x = p_hat_x_new
-        self._p_hat_y = p_hat_y_new
         self._xi = xi_new
         self._lam = lam_new
         self._v_x = v_x_new
-        self._v_y = v_y_new
 
     # ------------------------------------------------------------------
     # DistributedAlgorithm interface
@@ -288,7 +261,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         meta: Any,
     ) -> None:
         """Handle one incoming DEED-ADMM message from a neighbour."""
-        neighbours = carrier.others("")
+        neighbours = carrier.others()
 
         # --- Termination path ---
         if message_data.k >= self.max_iter:
@@ -488,33 +461,34 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         energy (mirrors ``ReservoirStorageDiffusionActor``).
         """
         e_target = self._e_final_frac * self._e_max
+        best_x: np.ndarray = x_desired
+        best_err = float("inf")
 
         def f(bias: float) -> float:
-            _, _, e_fin = self._project_soc_forward(x_desired, bias)
-            return e_fin - e_target
+            """Terminal-energy error at *bias*; tracks the best schedule seen."""
+            nonlocal best_x, best_err
+            x, _, e_fin = self._project_soc_forward(x_desired, bias)
+            err = e_fin - e_target
+            if abs(err) < best_err:
+                best_x, best_err = x, abs(err)
+            return err
 
         # Fast path — no terminal correction needed.
-        x0, e0, e_fin0 = self._project_soc_forward(x_desired, 0.0)
-        if abs(e_fin0 - e_target) < 1e-3:
-            return x0
+        f0 = f(0.0)
+        if abs(f0) < 1e-3:
+            return best_x
 
         # Exponential expansion to bracket the root. f(bias) is decreasing in
         # bias (larger bias -> more discharge -> lower terminal energy), so
         # when f0 < 0 (ended below target) the bias must go negative (more
         # charging) to raise it back up, and vice versa.
-        f0 = e_fin0 - e_target
-        best_x, best_err = x0, abs(f0)
         lo, hi = 0.0, (-1.0 if f0 < 0.0 else 1.0)
         f_lo, f_hi = f0, f(hi)
-        if abs(f_hi) < best_err:
-            best_x, best_err = self._project_soc_forward(x_desired, hi)[0], abs(f_hi)
         for _ in range(20):
             if f_lo * f_hi <= 0.0:
                 break
             hi *= 2.0
             f_hi = f(hi)
-            if abs(f_hi) < best_err:
-                best_x, best_err = self._project_soc_forward(x_desired, hi)[0], abs(f_hi)
         else:
             # Couldn't bracket — return the best bias tried so far.
             return best_x
@@ -523,10 +497,6 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         for _ in range(35):
             mid = 0.5 * (lo + hi)
             f_mid = f(mid)
-            x_mid, _, _ = self._project_soc_forward(x_desired, mid)
-            if abs(f_mid) < best_err:
-                best_err = abs(f_mid)
-                best_x = x_mid
             if f_lo * f_mid <= 0.0:
                 hi, f_hi = mid, f_mid
             else:

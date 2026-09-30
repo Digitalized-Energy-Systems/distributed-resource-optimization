@@ -129,12 +129,7 @@ class MangoCarrier(Carrier):
     # Carrier interface
     # ------------------------------------------------------------------
 
-    def send_to_other(
-        self,
-        content: Any,
-        receiver: "AgentAddress",
-        meta: dict | None = None,
-    ) -> asyncio.Task:
+    def send_to_other(self, content: Any, receiver: "AgentAddress") -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
 
         async def _send() -> None:
@@ -161,12 +156,7 @@ class MangoCarrier(Carrier):
 
         return asyncio.create_task(_send())
 
-    def send_awaitable(
-        self,
-        content: Any,
-        receiver: "AgentAddress",
-        meta: dict | None = None,
-    ) -> asyncio.Future:
+    def send_awaitable(self, content: Any, receiver: "AgentAddress") -> asyncio.Future:
         """Send *content* and return a Future that resolves when the reply arrives."""
         request_id = str(uuid4())
         loop = asyncio.get_event_loop()
@@ -190,18 +180,43 @@ class MangoCarrier(Carrier):
             return True
         return False
 
-    def others(self, participant_id: str) -> list["AgentAddress"]:
+    def others(self) -> list["AgentAddress"]:
         """Return topology neighbours; optionally include own address."""
         neighbors = list(self._parent.context.neighbors())
         if self._include_self:
             neighbors.append(self._parent.context.addr)
         return neighbors
 
-    def get_address(self) -> "AgentAddress":
-        return self._parent.context.addr
 
-    async def wait_for(self, awaitable: asyncio.Future) -> Any:
-        return await awaitable
+# ---------------------------------------------------------------------------
+# Shared role base
+# ---------------------------------------------------------------------------
+
+
+class _CarrierRole(Role):
+    """Base for roles that own a :class:`MangoCarrier` and resolve its replies.
+
+    :param include_self: Passed to :class:`MangoCarrier`.
+    """
+
+    def __init__(self, include_self: bool = False) -> None:
+        super().__init__()
+        self._include_self = include_self
+        self._carrier: MangoCarrier | None = None
+
+    def setup(self) -> None:
+        """Create the carrier and subscribe the reply handler."""
+        self._carrier = MangoCarrier(self, self._include_self)
+        self.context.subscribe_message(
+            self,
+            self._handle_reply,
+            lambda c, m: isinstance(c, _CarrierReply),
+        )
+
+    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
+        """Resolve the pending request future matching this reply."""
+        if self._carrier is not None:
+            self._carrier._resolve_reply(content)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +224,7 @@ class MangoCarrier(Carrier):
 # ---------------------------------------------------------------------------
 
 
-class DistributedOptimizationRole(Role):
+class DistributedOptimizationRole(_CarrierRole):
     """Mango Role hosting a :class:`~..algorithm.core.DistributedAlgorithm`.
 
     :param algorithm: The distributed algorithm instance.
@@ -221,14 +236,12 @@ class DistributedOptimizationRole(Role):
         algorithm: "DistributedAlgorithm",
         include_self: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(include_self)
         self.algorithm = algorithm
-        self._carrier: MangoCarrier | None = None
-        self._include_self = include_self
 
     def setup(self) -> None:
         """Create the carrier and subscribe the optimization/reply handlers."""
-        self._carrier = MangoCarrier(self, self._include_self)
+        super().setup()
         self.context.subscribe_message(
             self,
             self._handle_optimization,
@@ -243,16 +256,9 @@ class DistributedOptimizationRole(Role):
                 )
             ),
         )
-        self.context.subscribe_message(
-            self,
-            self._handle_reply,
-            lambda c, m: isinstance(c, _CarrierReply),
-        )
 
     def _handle_optimization(self, content: Any, meta: dict) -> None:
         """Unwrap carrier requests and forward the payload to the algorithm."""
-        from ..algorithm.core import on_exchange_message
-
         # Unwrap request if needed (from send_awaitable on other side)
         if isinstance(content, _CarrierRequest):
             actual_meta = {**meta, "_request_id": content.request_id}
@@ -262,13 +268,8 @@ class DistributedOptimizationRole(Role):
             actual_content = content
 
         asyncio.create_task(
-            on_exchange_message(self.algorithm, self._carrier, actual_content, actual_meta)
+            self.algorithm.on_exchange_message(self._carrier, actual_content, actual_meta)
         )
-
-    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
-        """Resolve the pending request future matching this reply."""
-        if self._carrier is not None:
-            self._carrier._resolve_reply(content)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,7 @@ class DistributedOptimizationRole(Role):
 # ---------------------------------------------------------------------------
 
 
-class CoordinatorRole(Role):
+class CoordinatorRole(_CarrierRole):
     """Mango Role hosting a :class:`~..algorithm.core.Coordinator`.
 
     Listens for :class:`StartCoordinatedDistributedOptimization` messages,
@@ -295,24 +296,17 @@ class CoordinatorRole(Role):
         coordinator: "Coordinator",
         include_self: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(include_self)
         self.coordinator = coordinator
-        self._include_self = include_self
-        self._carrier: MangoCarrier | None = None
         self._done_future: asyncio.Future | None = None
 
     def setup(self) -> None:
         """Create the carrier and subscribe the start/reply handlers."""
-        self._carrier = MangoCarrier(self, self._include_self)
+        super().setup()
         self.context.subscribe_message(
             self,
             self._handle_start,
             lambda c, m: isinstance(c, StartCoordinatedDistributedOptimization),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_reply,
-            lambda c, m: isinstance(c, _CarrierReply),
         )
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
@@ -324,18 +318,16 @@ class CoordinatorRole(Role):
         replaces :attr:`_done_future`; waiters of the previous run are only
         served if that run already finished.
         """
-        from ..algorithm.core import start_optimization
-
         loop = asyncio.get_event_loop()
         done_future = loop.create_future()
         self._done_future = done_future
 
         async def _run() -> None:
             try:
-                results = await start_optimization(
-                    self.coordinator, self._carrier, content.input, meta
+                results = await self.coordinator.start_optimization(
+                    self._carrier, content.input, meta
                 )
-                for i, addr in enumerate(self._carrier.others("coordinator")):
+                for i, addr in enumerate(self._carrier.others()):
                     await self.context.send_message(
                         OptimizationFinishedMessage(result=results[i]), addr
                     )
@@ -347,11 +339,6 @@ class CoordinatorRole(Role):
                 done_future.set_result(results)
 
         asyncio.create_task(_run())
-
-    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
-        """Resolve the pending request future matching this reply."""
-        if self._carrier is not None:
-            self._carrier._resolve_reply(content)
 
     async def wait_done(self) -> Any:
         """Await the completion of the optimization run."""

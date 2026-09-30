@@ -25,26 +25,7 @@ from dataclasses import dataclass
 import cvxpy as cp
 import numpy as np
 
-from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMGlobalObjective, ADMMStart
-
-# ---------------------------------------------------------------------------
-# Global objective (currently informational only)
-# ---------------------------------------------------------------------------
-
-
-class ADMMTargetDistanceObjective(ADMMGlobalObjective):
-    """Quadratic target-distance objective (informational)."""
-
-    def objective(
-        self,
-        x: list[np.ndarray],
-        u: np.ndarray,
-        z: np.ndarray,
-        n: int,
-    ) -> float:
-        """Squared distance between *z* and the participant average."""
-        return float(np.sum((z - np.asarray(x).mean(axis=0)) ** 2))
-
+from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMStart
 
 # ---------------------------------------------------------------------------
 # Sharing data
@@ -84,7 +65,9 @@ class ADMMSharingData:
                        absolute-value constraints, so the sign is immaterial
                        (:func:`create_admm_sharing_data` stores them negated
                        for historical reasons).
-    :param generators: Optional specs for merit-order clearing in ``z_update``.
+    :param generators: Optional specs for the coordinator's single-shot
+                       merit-order clearing (see
+                       :attr:`~.core.ADMMGenericCoordinator.single_shot_clearing`).
     :param epsilon: Price sensitivity used with :class:`~.economic_dispatch` actors.
     """
 
@@ -213,13 +196,7 @@ def _z_from_clearing_prices(
 
 
 class ADMMSharingGlobalActor(ADMMGlobalActor):
-    """Global actor for the sharing ADMM variant.
-
-    :param global_objective: Global objective (currently unused in updates).
-    """
-
-    def __init__(self, global_objective: ADMMGlobalObjective) -> None:
-        self.global_objective = global_objective
+    """Global actor for the sharing ADMM variant (target-distance z-update)."""
 
     def z_update(
         self,
@@ -231,9 +208,6 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
         n: int,
     ) -> np.ndarray:
         """Solve QP to find the optimal global *z*."""
-        if input_data.generators is not None:
-            return _z_from_clearing_prices(input_data, rho, n)
-
         x_avg = sum(x) / len(x)
         m = len(x_avg)
 
@@ -300,6 +274,4 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
 
 def create_sharing_target_distance_admm_coordinator() -> ADMMGenericCoordinator:
     """Create an :class:`~.core.ADMMGenericCoordinator` for target-distance sharing."""
-    return ADMMGenericCoordinator(
-        global_actor=ADMMSharingGlobalActor(ADMMTargetDistanceObjective())
-    )
+    return ADMMGenericCoordinator(global_actor=ADMMSharingGlobalActor())

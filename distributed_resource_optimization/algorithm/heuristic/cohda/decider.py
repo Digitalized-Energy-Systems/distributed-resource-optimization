@@ -12,23 +12,20 @@ undesirable regions.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
 import numpy as np
 
 from .core import (
     COHDAAlgorithmData,
     LocalDecider,
-    ScheduleSelection,
     SolutionCandidate,
     SystemConfig,
     WorkingMemory,
     _evaluated,
     create_from_updated_sysconf,
+    publish_own_schedule,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class LocalSearchDecider(LocalDecider):
@@ -75,6 +72,48 @@ class LocalSearchDecider(LocalDecider):
     def initial_schedule(self, memory: WorkingMemory) -> np.ndarray:
         """Return the configured starting schedule (ignores *memory*)."""
         return self._initial_schedule
+
+    def decide(
+        self,
+        cohda_data: COHDAAlgorithmData,
+        sysconfig: SystemConfig,
+        candidate: SolutionCandidate,
+    ) -> tuple[SystemConfig, SolutionCandidate]:
+        """LocalSearchDecider decide step.
+
+        Searches for a better schedule in the local search corridor.  The
+        *open_schedule* (residual distance from the current candidate sum to the
+        target) guides the convergence-force term.  The searched schedule is
+        adopted — and published to the system config — only when the resulting
+        candidate outperforms the incumbent, mirroring the monotone-improvement
+        rule of the enumerating default decider.
+
+        :returns: Updated ``(system_config, candidate)`` pair.
+        """
+        participant_id = cohda_data.participant_id
+        perf_func = cohda_data.performance_function
+        target = cohda_data.memory.target_params
+
+        current_best_schedule = candidate.schedules[participant_id - 1].copy()
+        open_schedule = target.schedule - candidate.schedules.sum(axis=0)
+
+        incumbent = candidate
+        if incumbent.perf is None:
+            incumbent = _evaluated(incumbent, perf_func, target)
+
+        new_best_schedule = _find_in_local_search_room(self, current_best_schedule, open_schedule)
+        new_candidate = create_from_updated_sysconf(participant_id, sysconfig, new_best_schedule)
+        new_candidate = _evaluated(new_candidate, perf_func, target)
+
+        if new_candidate.perf > incumbent.perf:  # type: ignore[operator]
+            chosen_candidate = new_candidate
+            chosen_schedule = new_best_schedule
+        else:
+            chosen_candidate = incumbent
+            chosen_schedule = current_best_schedule
+
+        publish_own_schedule(cohda_data, sysconfig, chosen_schedule)
+        return sysconfig, chosen_candidate
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +183,7 @@ def _find_new_value(
         if len(window) == 3:
             # Sort by value ascending; prune based on monotonicity
             window.sort(key=lambda t: t[0])
-            v1, p1 = window[0]
+            _, p1 = window[0]
             v2, p2 = window[1]
             v3, p3 = window[2]
 
@@ -174,53 +213,3 @@ def _find_in_local_search_room(
             decider, i, current_best_schedule, float(open_schedule[i])
         )
     return new_solution
-
-
-def decide(
-    cohda_data: COHDAAlgorithmData,
-    decider: LocalSearchDecider,
-    sysconfig: SystemConfig,
-    candidate: SolutionCandidate,
-) -> tuple[SystemConfig, SolutionCandidate]:
-    """LocalSearchDecider decide step.
-
-    Searches for a better schedule in the local search corridor.  The
-    *open_schedule* (residual distance from the current candidate sum to the
-    target) guides the convergence-force term.  The searched schedule is
-    adopted — and published to the system config — only when the resulting
-    candidate outperforms the incumbent, mirroring the monotone-improvement
-    rule of the enumerating default decider.
-
-    :returns: Updated ``(system_config, candidate)`` pair.
-    """
-    participant_id = cohda_data.participant_id
-    perf_func = cohda_data.performance_function
-    target = cohda_data.memory.target_params
-
-    current_best_schedule = candidate.schedules[participant_id - 1].copy()
-    open_schedule = target.schedule - candidate.schedules.sum(axis=0)
-
-    incumbent = candidate
-    if incumbent.perf is None:
-        incumbent = _evaluated(incumbent, perf_func, target)
-
-    new_best_schedule = _find_in_local_search_room(decider, current_best_schedule, open_schedule)
-    new_candidate = create_from_updated_sysconf(participant_id, sysconfig, new_best_schedule)
-    new_candidate = _evaluated(new_candidate, perf_func, target)
-
-    if new_candidate.perf > incumbent.perf:  # type: ignore[operator]
-        chosen_candidate = new_candidate
-        chosen_schedule = new_best_schedule
-    else:
-        chosen_candidate = incumbent
-        chosen_schedule = current_best_schedule
-
-    existing = sysconfig.schedule_choices.get(participant_id)
-    if existing is None or not np.array_equal(chosen_schedule, existing.schedule):
-        sysconfig.schedule_choices[participant_id] = ScheduleSelection(
-            schedule=chosen_schedule,
-            counter=cohda_data.counter + 1,
-        )
-        cohda_data.counter += 1
-
-    return sysconfig, chosen_candidate

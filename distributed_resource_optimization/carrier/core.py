@@ -20,12 +20,11 @@ class Carrier(ABC):
     """
 
     @abstractmethod
-    def send_to_other(self, content: Any, receiver: Any, meta: dict | None = None) -> asyncio.Task:
+    def send_to_other(self, content: Any, receiver: Any) -> asyncio.Task:
         """Send *content* to *receiver* (fire-and-forget, returns the task).
 
         :param content: Arbitrary message payload.
         :param receiver: Carrier-specific address of the target participant.
-        :param meta: Optional extra metadata merged with transport defaults.
         :returns: The asyncio Task that performs the dispatch.
         """
 
@@ -39,9 +38,7 @@ class Carrier(ABC):
         """
 
     @abstractmethod
-    def send_awaitable(
-        self, content: Any, receiver: Any, meta: dict | None = None
-    ) -> asyncio.Future:
+    def send_awaitable(self, content: Any, receiver: Any) -> asyncio.Future:
         """Send *content* to *receiver* and return a Future for the reply.
 
         The future resolves to the first reply message received in response to
@@ -49,22 +46,9 @@ class Carrier(ABC):
 
         :param content: Arbitrary message payload.
         :param receiver: Carrier-specific address of the target participant.
-        :param meta: Optional extra metadata.
         :returns: A :class:`asyncio.Future` that yields the reply content.
         """
 
     @abstractmethod
-    def others(self, participant_id: str) -> list[Any]:
-        """Return all participant addresses except *participant_id*.
-
-        :param participant_id: The string identifier of the calling participant.
-        :returns: List of addresses for every other participant.
-        """
-
-    @abstractmethod
-    def get_address(self) -> Any:
-        """Return the address of this carrier's participant."""
-
-    async def wait_for(self, awaitable: asyncio.Future) -> Any:
-        """Await *awaitable*."""
-        return await awaitable
+    def others(self) -> list[Any]:
+        """Return the addresses of every other participant this one talks to."""

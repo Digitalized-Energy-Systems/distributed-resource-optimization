@@ -264,7 +264,7 @@ class TestSelectionMultiplePerceiveDecide:
             ),
         )
         sysconf, candidate = perceive(cohda, [init_wm])
-        sysconf, candidate = decide(cohda, cohda.decider, sysconf, candidate)
+        sysconf, candidate = decide(cohda, sysconf, candidate)
 
         assert np.allclose(candidate.schedules[0], [1, 1, 1])
         assert sysconf.schedule_choices[1].counter == 2

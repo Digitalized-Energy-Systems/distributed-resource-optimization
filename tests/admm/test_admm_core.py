@@ -42,23 +42,20 @@ class ScriptedCarrier(Carrier):
         self.responders = responders
         self.calls = [0] * len(responders)
 
-    def send_to_other(self, content, receiver, meta=None):
+    def send_to_other(self, content, receiver):
         raise NotImplementedError
 
     def reply_to_other(self, content, meta):
         raise NotImplementedError
 
-    def send_awaitable(self, content: ADMMMessage, receiver: int, meta=None) -> asyncio.Future:
+    def send_awaitable(self, content: ADMMMessage, receiver: int) -> asyncio.Future:
         self.calls[receiver] += 1
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         fut.set_result(ADMMAnswer(x=self.responders[receiver](content)))
         return fut
 
-    def others(self, participant_id: str) -> list[int]:
+    def others(self) -> list[int]:
         return list(range(len(self.responders)))
-
-    def get_address(self) -> int:
-        return -1
 
 
 def _box_responder(lb: np.ndarray, ub: np.ndarray, cost: np.ndarray):

@@ -75,50 +75,41 @@ def project_storage_schedule_from_price(
 
         return p, e_path[:-1], float(e_path[-1])
 
-    def _final_energy_with_bias(bias: float) -> tuple[np.ndarray, np.ndarray, float]:
-        return _project(desired + bias)
+    best: tuple[np.ndarray, np.ndarray, float] | None = None
+    best_err = float("inf")
 
-    p0, e0, e_end0 = _final_energy_with_bias(0.0)
-    f0 = e_end0 - e_final_abs
+    def _error_with_bias(bias: float) -> float:
+        """Terminal-SOC error at *bias*; keeps the closest schedule seen in *best*."""
+        nonlocal best, best_err
+        result = _project(desired + bias)
+        err = result[2] - e_final_abs
+        if abs(err) < best_err:
+            best, best_err = result, abs(err)
+        return err
 
-    best_p, best_e, best_e_end, best_err = p0, e0, e_end0, abs(f0)
+    _error_with_bias(0.0)
 
     if best_err > 1e-3 and T > 0:
         lo, hi = -1.0, 1.0
-        p_lo, e_lo, e_end_lo = _final_energy_with_bias(lo)
-        p_hi, e_hi, e_end_hi = _final_energy_with_bias(hi)
-        f_lo = e_end_lo - e_final_abs
-        f_hi = e_end_hi - e_final_abs
-
-        if abs(f_lo) < best_err:
-            best_p, best_e, best_e_end, best_err = p_lo, e_lo, e_end_lo, abs(f_lo)
-        if abs(f_hi) < best_err:
-            best_p, best_e, best_e_end, best_err = p_hi, e_hi, e_end_hi, abs(f_hi)
+        f_lo = _error_with_bias(lo)
+        f_hi = _error_with_bias(hi)
 
         expansions = 0
         while f_lo * f_hi > 0 and expansions < 20:
             lo *= 2.0
             hi *= 2.0
-            p_lo, e_lo, e_end_lo = _final_energy_with_bias(lo)
-            p_hi, e_hi, e_end_hi = _final_energy_with_bias(hi)
-            f_lo = e_end_lo - e_final_abs
-            f_hi = e_end_hi - e_final_abs
-            if abs(f_lo) < best_err:
-                best_p, best_e, best_e_end, best_err = p_lo, e_lo, e_end_lo, abs(f_lo)
-            if abs(f_hi) < best_err:
-                best_p, best_e, best_e_end, best_err = p_hi, e_hi, e_end_hi, abs(f_hi)
+            f_lo = _error_with_bias(lo)
+            f_hi = _error_with_bias(hi)
             expansions += 1
 
         if f_lo * f_hi <= 0:
             for _ in range(35):
                 mid = 0.5 * (lo + hi)
-                p_mid, e_mid, e_end_mid = _final_energy_with_bias(mid)
-                f_mid = e_end_mid - e_final_abs
-                if abs(f_mid) < best_err:
-                    best_p, best_e, best_e_end, best_err = p_mid, e_mid, e_end_mid, abs(f_mid)
+                f_mid = _error_with_bias(mid)
                 if f_lo * f_mid <= 0:
                     hi, f_hi = mid, f_mid
                 else:
                     lo, f_lo = mid, f_mid
 
-    return best_p, best_e, best_e_end
+    assert best is not None
+    return best

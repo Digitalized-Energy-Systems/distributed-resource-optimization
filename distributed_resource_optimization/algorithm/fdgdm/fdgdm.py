@@ -49,7 +49,7 @@ Deliberate deviations from the paper
   neighbour's ``k ≥ max_iter`` message.
 
 The optional :class:`FDGDMActor` plug-in supplies ``∇F``, ``u``, and the
-feasibility projection; the default :class:`NoFDGDMActor` uses no cost.
+feasibility projection; the base class itself uses no cost.
 """
 
 from __future__ import annotations
@@ -74,7 +74,8 @@ class FDGDMActor:
     """Optional plug-in that supplies the gradient and projection for FDGDM.
 
     Subclass this to add a local cost function (e.g. economic dispatch or
-    battery storage) to the FDGDM iterates.
+    battery storage) to the FDGDM iterates.  Used as-is it is the neutral
+    actor: zero gradient, unit curvature, no projection.
     """
 
     def gradient(self, P: np.ndarray, data: Any) -> np.ndarray:
@@ -106,10 +107,6 @@ class FDGDMActor:
         return self.P
 
 
-class NoFDGDMActor(FDGDMActor):
-    """Neutral FDGDM actor — zero gradient, no projection."""
-
-
 # ---------------------------------------------------------------------------
 # Message types
 # ---------------------------------------------------------------------------
@@ -119,20 +116,21 @@ class NoFDGDMActor(FDGDMActor):
 class FDGDMMessage(OptimizationMessage):
     """Message exchanged between FDGDM participants.
 
-    :param gradient: Current cost gradient ``∇F_i(P_i[k])`` of the sender.
-    :param d_u_product: ``d_i × u_i`` — out-degree times curvature upper bound
-                        of the sender.  Used by recipients to compute off-diagonal
-                        weights.
     :param k: Current iteration counter.
     :param data: Auxiliary payload forwarded to :meth:`FDGDMActor.gradient`.
+    :param gradient: Current cost gradient ``∇F_i(P_i[k])`` of the sender
+                     (unused on the kick-off message).
+    :param d_u_product: ``d_i × u_i`` — out-degree times curvature upper bound
+                        of the sender.  Used by recipients to compute off-diagonal
+                        weights (unused on the kick-off message).
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state from ``data``.
     """
 
-    gradient: np.ndarray
-    d_u_product: float
     k: int
     data: Any
+    gradient: np.ndarray | None = None
+    d_u_product: float = 0.0
     initial: bool = False
 
 
@@ -147,10 +145,8 @@ class FDGDMAlgorithm(DistributedAlgorithm):
     :param finish_callback: Called with ``(algorithm, carrier)`` when
                             :attr:`max_iter` is reached.
     :param fdgdm_actor: Optional :class:`FDGDMActor` supplying gradient and
-                        projection.  ``None`` → :class:`NoFDGDMActor`.
+                        projection.  ``None`` → the neutral base :class:`FDGDMActor`.
     :param max_iter: Maximum number of FDGDM iterations.
-    :param horizon: Number of time steps in the schedule (used for
-                    placeholder initialisation only; resized from first message).
     """
 
     def __init__(
@@ -158,19 +154,18 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         finish_callback: Callable,
         fdgdm_actor: FDGDMActor | None = None,
         max_iter: int = 300,
-        horizon: int = 24,
     ) -> None:
         self.finish_callback = finish_callback
-        self.actor: FDGDMActor = fdgdm_actor if fdgdm_actor is not None else NoFDGDMActor()
+        self.actor: FDGDMActor = fdgdm_actor if fdgdm_actor is not None else FDGDMActor()
         self.max_iter = max_iter
-        self.horizon = horizon
 
         self._message_queue: dict[int, list[FDGDMMessage]] = {}
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
-        self._P: np.ndarray = np.zeros(horizon)
-        self._last_grad: np.ndarray = np.zeros(horizon)
+        # Schedule state is sized from the kick-off data on (re-)initialisation.
+        self._P: np.ndarray = np.zeros(1)
+        self._last_grad: np.ndarray = np.zeros(1)
         self._last_du: float = 1.0
 
     async def on_exchange_message(
@@ -180,7 +175,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         meta: Any,
     ) -> None:
         """Process one incoming FDGDM message."""
-        neighbours = carrier.others("")
+        neighbours = carrier.others()
         n_neighbours = len(neighbours)
 
         # --- Termination path ---
@@ -213,9 +208,10 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._last_grad = np.asarray(
                 self.actor.gradient(self._P, message_data.data), dtype=float
             )
-            self._last_du = (
-                float(n_neighbours + 1) * self.actor.curvature_bound() if n_neighbours > 0 else 1.0
-            )
+            curvature = self.actor.curvature_bound()
+            if curvature <= 0.0:
+                raise ValueError(f"FDGDM curvature_bound must be > 0, got {curvature}.")
+            self._last_du = float(n_neighbours + 1) * curvature
 
             for addr in neighbours:
                 carrier.send_to_other(
@@ -240,13 +236,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             del self._message_queue[message_data.k]
 
             # Weighted gradient update (Eq. 9, Bai et al. 2022).
-            my_du = self._last_du
             delta_P = np.zeros_like(self._P)
             for msg in queue:
-                if my_du > 0.0 and msg.d_u_product > 0.0:
-                    w_abs = min(1.0 / my_du, 1.0 / msg.d_u_product)
-                else:
-                    w_abs = 0.0
+                w_abs = 1.0 / max(self._last_du, msg.d_u_product)
                 delta_P += w_abs * (np.asarray(msg.gradient, dtype=float) - self._last_grad)
 
             # Apply update and project onto feasibility set (Eq. 16).
@@ -275,30 +267,11 @@ class FDGDMAlgorithm(DistributedAlgorithm):
 # ---------------------------------------------------------------------------
 
 
-def create_fdgdm_participant(
-    finish_callback: Callable,
-    fdgdm_actor: FDGDMActor | None = None,
-    max_iter: int = 300,
-    horizon: int = 24,
-) -> FDGDMAlgorithm:
-    """Create an :class:`FDGDMAlgorithm` participant.
-
-    :param finish_callback: ``(algorithm, carrier) -> None`` — called when done.
-    :param fdgdm_actor: Optional gradient actor.  ``None`` → no gradient.
-    :param max_iter: Maximum iterations.
-    :param horizon: Number of schedule time steps.
-    """
-    return FDGDMAlgorithm(
-        finish_callback=finish_callback,
-        fdgdm_actor=fdgdm_actor,
-        max_iter=max_iter,
-        horizon=horizon,
-    )
+#: Create an :class:`FDGDMAlgorithm` participant (same signature).
+create_fdgdm_participant = FDGDMAlgorithm
 
 
-def create_fdgdm_start(
-    data: Any = None,
-) -> FDGDMMessage:
+def create_fdgdm_start(data: Any = None) -> FDGDMMessage:
     """Create the initial kick-off message for an FDGDM run.
 
     :param data: Initial power allocation vector (one per time step).
@@ -306,11 +279,4 @@ def create_fdgdm_start(
                  to obtain its starting power schedule.
     :returns: An :class:`FDGDMMessage` with ``initial=True``.
     """
-    initial_p = np.asarray(data if data is not None else [0.0], dtype=float)
-    return FDGDMMessage(
-        gradient=np.zeros_like(initial_p),
-        d_u_product=1.0,
-        k=0,
-        data=data,
-        initial=True,
-    )
+    return FDGDMMessage(k=0, data=data, initial=True)

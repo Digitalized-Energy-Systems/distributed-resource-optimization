@@ -51,28 +51,3 @@ class Coordinator(ABC):
         :param meta: Transport metadata from the triggering message.
         :returns: The final result (algorithm-specific).
         """
-
-
-# ---------------------------------------------------------------------------
-# Module-level shim functions — preserved for compatibility with carrier code
-# ---------------------------------------------------------------------------
-
-
-async def on_exchange_message(
-    algorithm: DistributedAlgorithm,
-    carrier: "Carrier",
-    message_data: Any,
-    meta: Any,
-) -> Any:
-    """Delegate to ``algorithm.on_exchange_message(carrier, message_data, meta)``."""
-    return await algorithm.on_exchange_message(carrier, message_data, meta)
-
-
-async def start_optimization(
-    coordinator: Coordinator,
-    carrier: "Carrier",
-    message_data: Any,
-    meta: Any,
-) -> Any:
-    """Delegate to ``coordinator.start_optimization(carrier, message_data, meta)``."""
-    return await coordinator.start_optimization(carrier, message_data, meta)

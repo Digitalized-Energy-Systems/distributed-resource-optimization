@@ -146,13 +146,11 @@ class WorkingMemory(OptimizationMessage):
     :param target_params: Global optimisation target (set once, on first recv).
     :param system_config: Current view of all participants' schedule choices.
     :param solution_candidate: Best complete solution known to this agent.
-    :param additional_parameters: Arbitrary extra payload (unused by core).
     """
 
     target_params: TargetParams | None
     system_config: SystemConfig
     solution_candidate: SolutionCandidate | None
-    additional_parameters: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +184,15 @@ class LocalDecider:
     def initial_schedule(self, memory: WorkingMemory) -> np.ndarray:
         raise NotImplementedError
 
+    def decide(
+        self,
+        cohda_data: "COHDAAlgorithmData",
+        sysconfig: SystemConfig,
+        candidate: SolutionCandidate,
+    ) -> tuple[SystemConfig, SolutionCandidate]:
+        """Pick this participant's schedule; return ``(sysconfig, candidate)``."""
+        raise NotImplementedError
+
 
 class DefaultLocalDecider(LocalDecider):
     """Enumerate all feasible schedules and pick the globally best one.
@@ -205,6 +212,37 @@ class DefaultLocalDecider(LocalDecider):
 
     def initial_schedule(self, memory: WorkingMemory) -> np.ndarray:
         return np.array(self.schedule_provider(memory)[0], dtype=float)
+
+    def decide(
+        self,
+        cohda_data: "COHDAAlgorithmData",
+        sysconfig: SystemConfig,
+        candidate: SolutionCandidate,
+    ) -> tuple[SystemConfig, SolutionCandidate]:
+        """Evaluate all feasible schedules; keep the best-performing candidate."""
+        possible = [np.array(s, dtype=float) for s in self.schedule_provider(cohda_data.memory)]
+        current_best = candidate
+        if current_best.perf is None:
+            current_best = _evaluated(
+                current_best, cohda_data.performance_function, cohda_data.memory.target_params
+            )
+
+        current_best_schedule = current_best.schedules[cohda_data.participant_id - 1].copy()
+
+        for schedule in possible:
+            if self.is_local_acceptable(schedule):
+                new_cand = create_from_updated_sysconf(
+                    cohda_data.participant_id, sysconfig, schedule
+                )
+                new_cand = _evaluated(
+                    new_cand, cohda_data.performance_function, cohda_data.memory.target_params
+                )
+                if new_cand.perf > current_best.perf:  # type: ignore[operator]
+                    current_best = new_cand
+                    current_best_schedule = schedule
+
+        publish_own_schedule(cohda_data, sysconfig, current_best_schedule)
+        return sysconfig, current_best
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +280,27 @@ class COHDAAlgorithmData(DistributedAlgorithm):
         message_data: WorkingMemory,
         meta: Any,
     ) -> None:
-        """Run one perceive → decide → act cycle for the received memory."""
-        await process_exchange_message(self, [message_data], carrier)
+        """Run one perceive → decide → act cycle and forward updates to neighbours.
+
+        Skipped entirely if nothing changed during perception.
+
+        .. note::
+           The :class:`WorkingMemory` is forwarded **by reference** — an
+           in-process carrier like ``SimpleCarrier`` delivers the live object, so
+           receivers may observe later in-place mutations (harmless under
+           single-threaded asyncio, since counters only grow, but different from
+           a serialising network transport, which delivers immutable snapshots).
+        """
+        old_sysconf = self.memory.system_config
+        old_candidate = self.memory.solution_candidate
+
+        sysconf, candidate = perceive(self, [message_data])
+
+        if sysconf != old_sysconf or candidate != old_candidate:
+            sysconf, candidate = decide(self, sysconf, candidate)
+            wm = act(self, sysconf, candidate)
+            for other in carrier.others():
+                carrier.send_to_other(wm, other)
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +417,7 @@ def perceive(
     current_candidate: SolutionCandidate | None = None
     own_id = cohda_data.participant_id
     own_memory = cohda_data.memory
+    initial: np.ndarray | None = None  # computed at most once per call
 
     for new_wm in working_memories:
         if own_memory.target_params is None:
@@ -382,9 +440,10 @@ def perceive(
                 own_memory.solution_candidate is None
                 or own_id not in own_memory.solution_candidate.present
             ):
-                own_schedule = cohda_data.decider.initial_schedule(own_memory)
-                base = np.zeros((own_id, len(own_schedule)))
-                base[own_id - 1] = own_schedule
+                if initial is None:
+                    initial = cohda_data.decider.initial_schedule(own_memory)
+                base = np.zeros((own_id, len(initial)))
+                base[own_id - 1] = initial
                 own_memory.solution_candidate = SolutionCandidate(
                     participant_id=own_id,
                     schedules=base,
@@ -427,61 +486,26 @@ def create_from_updated_sysconf(
 
 def decide(
     cohda_data: COHDAAlgorithmData,
-    decider: LocalDecider,
     sysconfig: SystemConfig,
     candidate: SolutionCandidate,
 ) -> tuple[SystemConfig, SolutionCandidate]:
-    """Dispatch to the right decide implementation for *decider*."""
-    from .decider import LocalSearchDecider
-    from .decider import decide as local_search_decide
-
-    if isinstance(decider, LocalSearchDecider):
-        return local_search_decide(cohda_data, decider, sysconfig, candidate)
-    if isinstance(decider, DefaultLocalDecider):
-        return _decide_default(cohda_data, decider, sysconfig, candidate)
-    raise NotImplementedError(f"decide not implemented for {type(decider)}")
+    """Run the participant's own :meth:`LocalDecider.decide`."""
+    return cohda_data.decider.decide(cohda_data, sysconfig, candidate)
 
 
-def _decide_default(
+def publish_own_schedule(
     cohda_data: COHDAAlgorithmData,
-    decider: DefaultLocalDecider,
     sysconfig: SystemConfig,
-    candidate: SolutionCandidate,
-) -> tuple[SystemConfig, SolutionCandidate]:
-    """Evaluate all feasible schedules; keep the best-performing candidate."""
-    possible = [np.array(s, dtype=float) for s in decider.schedule_provider(cohda_data.memory)]
-    current_best = candidate
-    if current_best.perf is None:
-        current_best = _evaluated(
-            current_best, cohda_data.performance_function, cohda_data.memory.target_params
-        )
-
-    current_best_schedule = current_best.schedules[cohda_data.participant_id - 1].copy()
-
-    for schedule in possible:
-        if decider.is_local_acceptable(schedule):
-            new_cand = create_from_updated_sysconf(cohda_data.participant_id, sysconfig, schedule)
-            new_perf = cohda_data.performance_function(
-                new_cand.schedules, cohda_data.memory.target_params
-            )
-            if new_perf > current_best.perf:  # type: ignore[operator]
-                current_best = SolutionCandidate(
-                    participant_id=new_cand.participant_id,
-                    schedules=new_cand.schedules,
-                    perf=new_perf,
-                    present=new_cand.present,
-                )
-                current_best_schedule = schedule
-
+    schedule: np.ndarray,
+) -> None:
+    """Write *schedule* to *sysconfig*, bumping the counter only if it changed."""
     existing = sysconfig.schedule_choices.get(cohda_data.participant_id)
-    if existing is None or not np.array_equal(current_best_schedule, existing.schedule):
-        sysconfig.schedule_choices[cohda_data.participant_id] = ScheduleSelection(
-            schedule=current_best_schedule,
-            counter=cohda_data.counter + 1,
-        )
+    if existing is None or not np.array_equal(schedule, existing.schedule):
         cohda_data.counter += 1
-
-    return sysconfig, current_best
+        sysconfig.schedule_choices[cohda_data.participant_id] = ScheduleSelection(
+            schedule=schedule,
+            counter=cohda_data.counter,
+        )
 
 
 def act(
@@ -493,34 +517,6 @@ def act(
     cohda_data.memory.system_config = new_sysconfig
     cohda_data.memory.solution_candidate = new_candidate
     return cohda_data.memory
-
-
-async def process_exchange_message(
-    algorithm_data: COHDAAlgorithmData,
-    messages: list[WorkingMemory],
-    carrier: "Carrier",
-) -> None:
-    """Run the perceive → decide → act cycle and forward updates to neighbours.
-
-    Skipped entirely if nothing changed during perception.
-
-    .. note::
-       The :class:`WorkingMemory` is forwarded **by reference** — an
-       in-process carrier like ``SimpleCarrier`` delivers the live object, so
-       receivers may observe later in-place mutations (harmless under
-       single-threaded asyncio, since counters only grow, but different from
-       a serialising network transport, which delivers immutable snapshots).
-    """
-    old_sysconf = algorithm_data.memory.system_config
-    old_candidate = algorithm_data.memory.solution_candidate
-
-    sysconf, candidate = perceive(algorithm_data, messages)
-
-    if sysconf != old_sysconf or candidate != old_candidate:
-        sysconf, candidate = decide(algorithm_data, algorithm_data.decider, sysconf, candidate)
-        wm = act(algorithm_data, sysconf, candidate)
-        for other in carrier.others(str(algorithm_data.participant_id)):
-            carrier.send_to_other(wm, other)
 
 
 # ---------------------------------------------------------------------------
@@ -570,14 +566,6 @@ def create_cohda_participant(
     return create_cohda_participant_with_decider(participant_id, decider, performance_function)
 
 
-def create_cohda_participant_with_decider(
-    participant_id: int,
-    decider: LocalDecider,
-    performance_function: Callable = cohda_default_performance,
-) -> COHDAAlgorithmData:
-    """Create a COHDA participant with an explicit local *decider*."""
-    return COHDAAlgorithmData(
-        participant_id=participant_id,
-        decider=decider,
-        performance_function=performance_function,
-    )
+#: Create a COHDA participant with an explicit local decider (same signature
+#: as :class:`COHDAAlgorithmData`).
+create_cohda_participant_with_decider = COHDAAlgorithmData
