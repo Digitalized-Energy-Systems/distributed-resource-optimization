@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 from distributed_resource_optimization import (
+    ADMMConsensusGlobalActor,
     ADMMFlexActor,
+    create_admm_flex_actor_box_bounded,
     create_admm_flex_actor_one_to_many,
     create_admm_start_consensus,
     create_consensus_target_reach_admm_coordinator,
@@ -193,3 +195,58 @@ async def test_consensus_admm_complex_four_actors():
     assert np.allclose(
         results[2], [0.3000377811917589, -2.683958412610146e-7, 0.33336868924468077], atol=1e-3
     )
+
+
+def _merit_order_fleet(n: int, horizon: int):
+    """Box-bounded linear-cost generators and a reachable flat target (60 % of capacity)."""
+    rng = np.random.default_rng(0)
+    caps = rng.uniform(10, 100, n)
+    costs = rng.uniform(10, 80, n)
+    actors = [
+        create_admm_flex_actor_box_bounded(
+            np.zeros(horizon), np.full(horizon, c), np.full(horizon, k)
+        )
+        for c, k in zip(caps, costs)
+    ]
+    return actors, np.full(horizon, 0.6 * caps.sum())
+
+
+@pytest.mark.asyncio
+async def test_consensus_admm_converged_x_meets_target():
+    """A converged run's x must sum to the target within feas_tol·max|target|.
+
+    The standard ADMM residuals are per participant, so on their own they let
+    the aggregate imbalance Σx − target grow with the number of participants:
+    without the feasibility check (feas_tol=inf) this fleet "converges" while
+    still missing the target by ~0.26 %.
+    """
+    feas_tol = 1e-4
+
+    actors, target = _merit_order_fleet(10, 4)
+    coordinator = create_consensus_target_reach_admm_coordinator(
+        rho=0.05, max_iters=3000, feas_tol=feas_tol
+    )
+    results = await start_coordinated_optimization(
+        actors, coordinator, create_admm_start_consensus(target)
+    )
+    assert coordinator.converged
+    gap = np.max(np.abs(sum(results) - target))
+    assert gap <= coordinator.abs_tol + feas_tol * np.max(target)
+
+    actors, target = _merit_order_fleet(10, 4)
+    loose = create_consensus_target_reach_admm_coordinator(
+        rho=0.05, max_iters=3000, feas_tol=float("inf")
+    )
+    loose_results = await start_coordinated_optimization(
+        actors, loose, create_admm_start_consensus(target)
+    )
+    assert loose.converged
+    assert np.max(np.abs(sum(loose_results) - target)) > 10 * gap
+
+
+def test_consensus_constraint_violation():
+    """Exact exchange ADMM reports max|Σx − target| against max|target|; soft (alpha>0) opts out."""
+    x = [np.array([1.0, 2.0]), np.array([3.0, 1.0])]
+    target = np.array([5.0, -4.0])
+    assert ADMMConsensusGlobalActor().constraint_violation(target, x) == (7.0, 5.0)
+    assert ADMMConsensusGlobalActor(alpha=1.0).constraint_violation(target, x) is None

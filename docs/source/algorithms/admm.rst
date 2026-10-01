@@ -67,6 +67,14 @@ converges to the (scaled) market-clearing price. ``alpha > 0`` softens the const
 quadratic penalty :math:`\tfrac{\alpha}{2}\lVert\sum_i z_i - \text{target}\rVert^2`, which
 biases the converged sum — keep ``alpha = 0`` for economic dispatch.
 
+Besides the per-participant residuals, the loop only stops once the returned schedules
+meet the target: :math:`\max_t \lvert\sum_i x_{i,t} - \text{target}_t\rvert \le
+\texttt{abs\_tol} + \texttt{feas\_tol}\cdot\max_t\lvert\text{target}_t\rvert`.
+The per-participant residuals alone let the aggregate imbalance grow with the number of
+participants (each carries a similar :math:`x_i - z_i`), so without this check large
+fleets could report convergence while missing the target by up to ``N`` times the
+per-participant tolerance. The check is skipped for ``alpha > 0``.
+
 The target must be reachable by the participants' feasible sets; otherwise the loop runs
 until ``max_iters`` and logs a warning.
 
@@ -130,6 +138,15 @@ exact local subproblem over the whole horizon — charge/discharge costs plus th
 term, subject to SOC dynamics, power and energy limits and a terminal SOC (dropped if
 unreachable). Its output is net power, positive = discharge.
 
+.. note::
+
+   Charging and discharging are separate non-negative variables with no
+   complementarity constraint, so the QP may run both at once in the same timestep.
+   Because of the round-trip losses this turns energy into heat without moving the
+   SOC — e.g. a full battery can still "absorb" power. The optimizer only does this
+   when surplus cannot be shed otherwise (such as must-run output above demand); a
+   positive ``charge_cost`` makes it strictly less attractive than curtailment.
+
 Coordinator Parameters
 ----------------------
 
@@ -155,9 +172,15 @@ Coordinator Parameters
    * - ``rel_tol``
      - ``1e-3``
      - Relative primal/dual residual tolerance
+   * - ``feas_tol``
+     - ``1e-4``
+     - Max aggregate coupling-constraint violation of the returned ``x``, relative to
+       the constraint's scale (consensus: ``max|target|``); unused by sharing ADMM
+
+At least one participant must be registered with the coordinator.
 
 Both factories accept ``rho`` and ``max_iters``; the consensus factory also accepts
-``alpha``. After a run, the coordinator's ``iterations`` and ``converged`` attributes
+``alpha`` and ``feas_tol``. After a run, the coordinator's ``iterations`` and ``converged`` attributes
 report how the loop ended.
 
 Complete Example — ADMM Sharing

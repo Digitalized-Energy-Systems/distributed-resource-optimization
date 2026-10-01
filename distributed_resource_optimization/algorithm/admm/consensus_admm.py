@@ -99,6 +99,19 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
         """Largest per-participant ``‖xᵢ − zᵢ‖`` (consensus violation)."""
         return float(max(np.linalg.norm(xi - zi) for xi, zi in zip(x, z)))
 
+    def constraint_violation(
+        self, input_data: np.ndarray, x: list[np.ndarray]
+    ) -> tuple[float, float] | None:
+        """Per-element ``max |Σxᵢ − target|``, judged against ``max |target|``.
+
+        ``None`` when ``alpha > 0``: the soft penalty biases the converged sum
+        away from *target* by design, so it is not a hard constraint.
+        """
+        if self.alpha > 0.0:
+            return None
+        target = np.asarray(input_data, dtype=float)
+        return float(np.max(np.abs(sum(x) - target))), float(np.max(np.abs(target)))
+
 
 # ---------------------------------------------------------------------------
 # Factories
@@ -109,17 +122,21 @@ def create_consensus_target_reach_admm_coordinator(
     rho: float = 1.0,
     max_iters: int = 1000,
     alpha: float = 0.0,
+    feas_tol: float = 1e-4,
 ) -> ADMMGenericCoordinator:
     """Create an :class:`ADMMGenericCoordinator` for the consensus variant.
 
     :param rho: ADMM penalty parameter.
     :param max_iters: Maximum number of iterations.
     :param alpha: Sum-constraint softness (``0`` = exact exchange ADMM).
+    :param feas_tol: Max ``|Σxᵢ − target|`` at convergence, relative to
+                     ``max |target|`` (ignored when ``alpha > 0``).
     """
     return ADMMGenericCoordinator(
         global_actor=ADMMConsensusGlobalActor(alpha=alpha),
         rho=rho,
         max_iters=max_iters,
+        feas_tol=feas_tol,
     )
 
 

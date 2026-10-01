@@ -30,6 +30,11 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
     :class:`~.consensus_admm.ADMMConsensusGlobalActor`.  If the terminal SOC
     ``e_final`` is unreachable within the horizon, that constraint is dropped.
 
+    ``p_d`` and ``p_c`` have no complementarity constraint, so the QP may
+    charge and discharge simultaneously, burning energy through the round-trip
+    losses without moving the SOC.  This only pays off when surplus cannot be
+    shed otherwise; a positive ``charge_cost`` makes it less attractive.
+
     :param horizon: Number of timesteps.
     :param e_max: Energy capacity.
     :param p_charge_max: Maximum charging power.
