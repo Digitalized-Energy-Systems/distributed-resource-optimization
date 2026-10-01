@@ -5,42 +5,67 @@ DEED-ADMM combines ADMM primal/dual updates with a dynamic-consensus tracker so
 that economic dispatch runs fully peer-to-peer — no coordinator (Zhu et al. 2025,
 *"DEED-ADMM: A Scalable Distributed Algorithm for Economic Dispatch in Multi-Energy
 Systems With Energy Storage"*). This implementation covers the electricity-only
-single-carrier case of the paper's multi-energy hub model
-(:math:`A_i = I`, :math:`B = 0`, :math:`z_i = 0`).
+single-carrier case of the paper's energy-hub model: :math:`A_i = I`, no hub power
+limit (empty :math:`Y` block), and storage as the paper's :math:`z_i` block.
 
 Algorithm
 ---------
 
-Each agent :math:`i` holds a supply variable :math:`x_i`, a demand-side variable
-:math:`y_i` (pinned to its demand allocation :math:`d_i`), box-projected copies
-:math:`\hat p`, a dual :math:`\lambda_i`, and a consensus tracker :math:`\xi_i`.
-Per iteration (Algorithm 1):
+Each agent :math:`i` is an energy hub with an optional supplier :math:`x_i`, the
+hub input :math:`y_i`, optional storage :math:`z_i = [P^{Sd}_i; P^{Sc}_i]`, a local
+demand :math:`d_i` (hub balance :math:`y_i + B z_i = d_i`, :math:`B = [I, -I]`),
+box-projected copies :math:`\hat p`, a dual :math:`\lambda_i`, and a consensus
+tracker :math:`\xi_i`. Per iteration (Algorithm 1):
 
 .. math::
 
    \tilde\lambda_i = \sum_j w_{ij} \lambda_j, \quad
    \tilde\xi_i = \sum_j w_{ij} \xi_j
-   \qquad\text{(uniform } w_{ij} = 1/n\text{)}
+   \qquad\text{with } W = I - \beta L
 
 .. math::
 
-   b_x = \gamma x - \tilde\lambda + (\gamma \hat p_x - v_x)
+   b_x = \gamma x - \tilde\lambda + (\gamma \hat x - \nu_x)
          - \tfrac{\gamma}{2}\tilde\xi - \nabla c_i^{\text{lin}}, \qquad
    x \leftarrow H_x b_x
 
-followed by the :math:`y`-projection onto :math:`A_i y = d_i`, the box projection
-:math:`\hat p \leftarrow \operatorname{clip}(x + v/\gamma,\, p_{\min},\, p_{\max})`,
+.. math::
+
+   b_y = \gamma y + \tilde\lambda + \tfrac{\gamma}{2}\tilde\xi, \qquad
+   b_z = Z^\top(\gamma \hat z - \nu_z)
+
+.. math::
+
+   y \leftarrow H_y\bigl(b_y + H_i(d - H_y b_y - B H_z b_z)\bigr), \qquad
+   z \leftarrow H_z\bigl(b_z + B^\top H_i(d - H_y b_y - B H_z b_z)\bigr)
+
+followed by the box projection
+:math:`\hat p \leftarrow \operatorname{clip}(M p + \nu/\gamma,\, \hat p_{\min},\, \hat p_{\max})`
 and the tracker/dual updates
 
 .. math::
 
    \xi \leftarrow \tilde\xi + \Delta x - \Delta y, \qquad
    \lambda \leftarrow \tilde\lambda + \tfrac{\gamma}{2}\xi, \qquad
-   v \leftarrow v + \gamma\,(x - \hat p).
+   \nu \leftarrow \nu + \gamma\,(M p - \hat p).
 
-The tracker :math:`\xi` measures the running supply–demand mismatch; at convergence
-:math:`\sum_i x_i = \sum_i d_i` and :math:`\lambda` agrees across agents (the
-market-clearing price).
+Without storage the :math:`y`-update collapses to :math:`y = d_i`. With storage,
+:math:`Z = [I_{2\tau}; Z_1^\top]` where :math:`Z_1^\top z = E - E_0` is the energy
+level change (eq. 9), so the power limits (5), the energy limits (8) and the
+terminal reserve :math:`E_\tau \ge \omega E_{\max}` (11) are box constraints on
+:math:`\hat z`. The tracker :math:`\xi` measures the running supply–demand
+mismatch; at convergence :math:`\sum_i x_i = \sum_i y_i` and :math:`\lambda`
+agrees across agents (the market-clearing price).
+
+Protocol
+--------
+
+Rounds are synchronous: an agent broadcasts its round-:math:`k` state and steps
+once it holds round-:math:`k` state from every neighbour (state from a neighbour
+that is one round ahead is buffered). Each agent stops by itself after
+``max_iter`` rounds; its last broadcast is round ``max_iter - 1``, which every
+neighbour consumes in its own last step, so no protocol message outlives a run.
+An agent without neighbours runs all rounds locally.
 
 Deviations from the paper (by design)
 -------------------------------------
@@ -48,12 +73,8 @@ Deviations from the paper (by design)
 - Ramp-rate constraints (eqs. 16–17) are not modelled — the benchmark networks
   specify none.
 - Fixed ``max_iter`` instead of a residual-based stop; the reported schedule is the
-  box-projected :math:`\hat p_x` (generators) or the SOC-feasible :math:`x`
-  (storage), so it stays feasible even when cut off early.
-- Storage SOC dynamics use a greedy forward projection with terminal-SOC bisection
-  (mirroring the diffusion storage actor) instead of the paper's linear-inequality
-  :math:`M_i` mechanism — convergence guarantees do not formally carry over, but it
-  keeps the per-iteration cost trivial and works well empirically.
+  box-projected :math:`\hat x` (suppliers) or :math:`\hat P^{Sd} - \hat P^{Sc}`
+  (storage), so power limits hold even when cut off early.
 
 Usage
 -----
@@ -110,25 +131,29 @@ Parameters
      - Number of iterations (no residual-based stop)
    * - ``n_agents``
      - ``1``
-     - Total number of participants; must match the actual (complete-graph)
-       neighbourhood size + 1, since the uniform weights are :math:`1/n`
+     - Total number of participants; sets the default ``beta = 1/n``
+   * - ``beta``
+     - ``1/n_agents``
+     - Laplacian step of :math:`W = I - \beta L` (:math:`w_{ij} = \beta` per
+       neighbour, :math:`w_{ii} = 1 - \beta |N_i|`). On a complete graph the
+       default gives the uniform average; any connected graph works as long as
+       :math:`\beta |N_i| < 1` (checked at start-up). The paper uses
+       :math:`\beta = 0.2` on a sparse graph.
 
 Participant factories
 ---------------------
 
 - :func:`~distributed_resource_optimization.create_deed_admm_thermal_participant` —
-  generator with cost :math:`a_i x^2 + b_i x` and box limits.
+  generator with cost :math:`a_i x^2 + b_i x` and (optionally per-step) box limits.
 - :func:`~distributed_resource_optimization.create_deed_admm_renewable_participant` —
-  zero-marginal-cost unit whose upper bound is a per-step availability time series.
+  unit whose upper bound is a per-step availability time series, with an optional
+  linear ``marginal_cost`` (zero for wind/solar, non-zero for e.g. biomass).
 - :func:`~distributed_resource_optimization.create_deed_admm_storage_participant` —
-  battery/reservoir with power bounds, efficiencies, SOC bounds, and a terminal-SOC
-  target; its ``E`` attribute carries the SOC trajectory at termination.
-
-.. note::
-
-   The uniform weight matrix assumes a **complete communication graph**: every agent
-   averages over all :math:`n` participants each round. Running on a sparser
-   topology with ``n_agents`` unchanged silently mis-weights the consensus.
+  battery/pumped hydro with power bounds, efficiencies, SOC bounds and a terminal
+  reserve :math:`E_\tau \ge e_{\text{final}} E_{\max}`; its ``E`` attribute carries
+  the SOC trajectory at termination. By the paper's Theorem 1 the relaxation is
+  exact when :math:`\eta_c \eta_d < 1`: optimal schedules never charge and
+  discharge at once.
 
 See Also
 --------
