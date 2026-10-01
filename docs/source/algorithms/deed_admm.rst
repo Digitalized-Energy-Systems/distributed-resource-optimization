@@ -63,9 +63,9 @@ Protocol
 Rounds are synchronous: an agent broadcasts its round-:math:`k` state and steps
 once it holds round-:math:`k` state from every neighbour (state from a neighbour
 that is one round ahead is buffered). Each agent stops by itself after
-``max_iter`` rounds, so no protocol message outlives a run. Messages carry an
-``epoch``; a newer epoch starts a new run, while traffic from older epochs or from
-a finished run is ignored. An agent without neighbours runs all rounds locally.
+``max_iter`` rounds; its last broadcast is round ``max_iter - 1``, which every
+neighbour consumes in its own last step, so no protocol message outlives a run.
+An agent without neighbours runs all rounds locally.
 
 Deviations from the paper (by design)
 -------------------------------------

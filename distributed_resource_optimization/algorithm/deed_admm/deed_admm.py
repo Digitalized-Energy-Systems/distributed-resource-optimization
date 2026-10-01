@@ -54,9 +54,10 @@ Deviations from the paper (by design):
 
 Communication pattern: synchronous peer-to-peer rounds.  Each agent
 broadcasts its (λ, ξ) for round k and advances once it holds round-k state
-from every neighbour.  An agent stops by itself after ``max_iter`` rounds,
-so no protocol message outlives a run; messages carry an ``epoch`` so
-traffic from an earlier run can never restart a finished one.
+from every neighbour (state from a neighbour one round ahead is buffered).
+An agent stops by itself after ``max_iter`` rounds; its last broadcast is
+round ``max_iter − 1``, which every neighbour consumes in its own last step,
+so no protocol message outlives a run.
 """
 
 from __future__ import annotations
@@ -86,11 +87,7 @@ class DEEDADMMMessage(OptimizationMessage):
     :param k: Round the state belongs to.
     :param data: Auxiliary payload forwarded on the initial kick-off.
     :param initial: ``True`` for the external kick-off message, which carries
-                    no neighbour state.
-    :param epoch: Run identifier.  A message with a newer epoch starts a new
-                  run; messages from older epochs (or from the current epoch
-                  once it has finished) are ignored.  Bump it to re-run the
-                  same participants.
+                    no neighbour state and (re-)starts the recipient's run.
     """
 
     lam: np.ndarray
@@ -98,7 +95,6 @@ class DEEDADMMMessage(OptimizationMessage):
     k: int
     data: Any
     initial: bool = False
-    epoch: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +164,6 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._H_y = 1.0 / self.gamma
 
         self._msg_queue: dict[int, list[DEEDADMMMessage]] = {}
-        self._epoch: int = -1
         self._running: bool = False
         self._reset_state()
 
@@ -263,7 +258,6 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                     xi=self._xi.copy(),
                     k=self._k,
                     data=data,
-                    epoch=self._epoch,
                 ),
                 addr,
             )
@@ -283,17 +277,14 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         """Handle one incoming DEED-ADMM message."""
         neighbours = carrier.others()
 
-        # --- Run bookkeeping: older epochs and finished runs are stale ---
-        if message_data.epoch < self._epoch:
-            return
-        if message_data.epoch > self._epoch:
+        # --- Start of a run: external kick-off or first neighbour message ---
+        if message_data.initial or not self._running:
             if self.beta * len(neighbours) >= 1.0:
                 raise ValueError(
                     f"DEED-ADMM needs a positive self-weight 1 - beta*|N_i|, got "
                     f"beta={self.beta} with {len(neighbours)} neighbours; pass "
                     f"n_agents (or beta) matching the communication graph."
                 )
-            self._epoch = message_data.epoch
             self._running = True
             self._reset_state()
             if not neighbours:
@@ -304,8 +295,8 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                 self._finish(carrier)
                 return
             self._broadcast(carrier, neighbours, message_data.data)
-        if not self._running or message_data.initial:
-            return
+            if message_data.initial:
+                return
 
         # --- Synchronous rounds: advance only on complete current-round state ---
         if message_data.k < self._k:

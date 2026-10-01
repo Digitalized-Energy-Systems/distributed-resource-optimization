@@ -500,8 +500,9 @@ def _thermal_fleet(results, costs, p_max, demand, n, *, beta=None, max_iter=300)
     ]
 
 
-async def test_stale_message_after_finish_is_ignored():
-    """A late message of a finished run must not restart the agent."""
+async def test_agent_stops_after_its_own_last_round():
+    """The agent finishes once, right after its own last round, and never
+    sends round max_iter — so no message can outlive the run."""
     calls: list[int] = []
     alg = create_deed_admm_thermal_participant(
         lambda a, c: calls.append(1),
@@ -516,22 +517,24 @@ async def test_stale_message_after_finish_is_ignored():
     z = np.zeros(2)
     await alg.on_exchange_message(carrier, DEEDADMMMessage(z, z, 0, None, initial=True), None)
     await alg.on_exchange_message(carrier, DEEDADMMMessage(z, z, 0, None), None)
+    assert calls == []
     await alg.on_exchange_message(carrier, DEEDADMMMessage(z, z, 1, None), None)
     assert calls == [1]
-    # The agent finishes after its own last round and never sends round max_iter.
-    assert max(m.k for _, m in carrier.sent) == 1
+    assert sorted(m.k for _, m in carrier.sent) == [0, 1]
 
-    carrier.sent.clear()
-    for k in (0, 1, 2):
-        await alg.on_exchange_message(carrier, DEEDADMMMessage(z, z, k, None), None)
-    assert calls == [1]
-    assert carrier.sent == []
 
-    # A new epoch does start a fresh run.
-    await alg.on_exchange_message(
-        carrier, DEEDADMMMessage(z, z, 0, None, initial=True, epoch=1), None
-    )
-    assert [m.epoch for _, m in carrier.sent] == [1]
+async def test_every_agent_finishes_once_under_random_delays():
+    tau, n = 4, 6
+    demand = np.array([100.0, 150.0, 120.0, 80.0])
+    full = {i: [j for j in range(1, n + 1) if j != i] for i in range(1, n + 1)}
+    calls: list[int] = []
+    actors = _thermal_fleet({}, [1, 2, 3, 4, 5, 6], 60.0, demand, n, max_iter=100)
+    for i, actor in enumerate(actors):
+        actor.finish_callback = lambda alg, carrier, i=i: calls.append(i)
+    for seed in range(5):
+        calls.clear()
+        await _run_on_graph(actors, full, tau, seed=seed)
+        assert sorted(calls) == list(range(n))
 
 
 async def test_round_ahead_messages_are_buffered():
