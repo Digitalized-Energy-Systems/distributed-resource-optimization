@@ -119,6 +119,20 @@ class ADMMGlobalActor(ABC):
     def primal_residual(self, x: list[np.ndarray], z: Any) -> float:
         """Compute the primal residual used for convergence checking."""
 
+    def constraint_violation(
+        self, input_data: Any, x: list[np.ndarray]
+    ) -> tuple[float, float] | None:
+        """Violation of the variant's hard coupling constraint by the actual *x*.
+
+        Returns ``(violation, scale)``: the largest per-element violation and
+        the magnitude it is judged against (e.g. the peak target), or ``None``
+        if the variant has no hard constraint.  The standard residuals are
+        per participant, so on their own they let the aggregate violation grow
+        with the number of participants; the coordinator additionally requires
+        ``violation <= abs_tol + feas_tol * scale`` before declaring convergence.
+        """
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Helper: max-norm over list-of-arrays or single array
@@ -159,7 +173,10 @@ class ADMMGenericCoordinator(Coordinator):
        parallel and await :class:`ADMMAnswer` from each.
     2. Global *z*-update via :meth:`~ADMMGlobalActor.z_update`.
     3. Dual *u*-update via :meth:`~ADMMGlobalActor.u_update`.
-    4. Check primal and dual residuals against tolerances; stop if met.
+    4. Check primal and dual residuals against tolerances and, for variants
+       with a hard coupling constraint, the aggregate violation of that
+       constraint by the returned *x* (see
+       :meth:`~ADMMGlobalActor.constraint_violation`); stop if all are met.
 
     After a run, :attr:`iterations` and :attr:`converged` describe how it
     ended (hitting ``max_iters`` also logs a warning).
@@ -169,6 +186,13 @@ class ADMMGenericCoordinator(Coordinator):
     :param max_iters: Maximum number of iterations (default: 1000).
     :param abs_tol: Absolute convergence tolerance (default: 1e-4).
     :param rel_tol: Relative convergence tolerance (default: 1e-3).
+    :param feas_tol: Tolerance on the aggregate coupling-constraint violation,
+        relative to the constraint's scale (default: 1e-4, i.e. ``Σxᵢ`` must
+        be within 0.01 % of the peak target for exchange ADMM).
+
+    At least one participant must be registered with the coordinator; with
+    none, the variant's global update fails (``IndexError`` /
+    ``ZeroDivisionError``) instead of returning an empty result.
     """
 
     def __init__(
@@ -178,12 +202,14 @@ class ADMMGenericCoordinator(Coordinator):
         max_iters: int = 1000,
         abs_tol: float = 1e-4,
         rel_tol: float = 1e-3,
+        feas_tol: float = 1e-4,
     ) -> None:
         self.global_actor = global_actor
         self.rho = rho
         self.max_iters = max_iters
         self.abs_tol = abs_tol
         self.rel_tol = rel_tol
+        self.feas_tol = feas_tol
         self.iterations = 0
         self.converged = False
 
@@ -255,7 +281,15 @@ class ADMMGenericCoordinator(Coordinator):
             eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * rho * _max_norm(u)
             self.iterations = k
 
-            if r_norm < eps_pri and s_norm < eps_dual:
+            # The residuals above are per participant; also bound the
+            # aggregate constraint violation of the x we actually return.
+            feasible = True
+            violation = actor.constraint_violation(input_data, x)
+            if violation is not None:
+                gap, scale = violation
+                feasible = gap <= self.abs_tol + self.feas_tol * scale
+
+            if r_norm < eps_pri and s_norm < eps_dual and feasible:
                 self.converged = True
                 logger.debug("ADMM converged in %d iterations.", k)
                 break
