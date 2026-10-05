@@ -125,13 +125,14 @@ async def main():
 asyncio.run(main())
 ```
 
-### Diffusion, FDGDM, and DEED-ADMM
+### Averaging Consensus, Diffusion, Exact Diffusion, FDGDM, and DEED-ADMM
 
-These follow the same `create_<algorithm>_participant(...)` + `finish_callback` shape as
-COHDA/consensus above — see the full documentation for worked examples of each:
-`create_diffusion_participant`, `create_fdgdm_participant`,
-`create_deed_admm_thermal_participant` / `create_deed_admm_renewable_participant` /
-`create_deed_admm_storage_participant`.
+These are created with a `create_<algorithm>_participant(finish_callback, ...)` factory
+(called as `finish_callback(algorithm, carrier)` once that participant stops iterating) — see the full
+documentation for worked examples of each: `create_averaging_consensus_participant`,
+`create_diffusion_participant`, `create_exact_diffusion_participant`,
+`create_fdgdm_participant`, and `create_deed_admm_thermal_participant` /
+`create_deed_admm_renewable_participant` / `create_deed_admm_storage_participant`.
 
 ### Using SimpleCarrier directly
 
