@@ -21,6 +21,7 @@ def create_deed_admm_thermal_participant(
     max_iter: int = 500,
     n_agents: int = 1,
     beta: float | None = None,
+    round_timeout: float | None = None,
 ) -> DEEDADMMAlgorithm:
     """DEED-ADMM participant for a thermal generator.
 
@@ -35,6 +36,7 @@ def create_deed_admm_thermal_participant(
     :param max_iter: Number of iterations.
     :param n_agents: Total number of agents n (default ``beta = 1/n``).
     :param beta: Laplacian step of the weight matrix W = I − βL.
+    :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     tau = len(d_i)
     return DEEDADMMAlgorithm(
@@ -48,6 +50,7 @@ def create_deed_admm_thermal_participant(
         max_iter=max_iter,
         n_agents=n_agents,
         beta=beta,
+        round_timeout=round_timeout,
     )
 
 
@@ -61,6 +64,7 @@ def create_deed_admm_renewable_participant(
     max_iter: int = 500,
     n_agents: int = 1,
     beta: float | None = None,
+    round_timeout: float | None = None,
 ) -> DEEDADMMAlgorithm:
     """DEED-ADMM participant for a renewable generator.
 
@@ -73,6 +77,7 @@ def create_deed_admm_renewable_participant(
     :param max_iter: Number of iterations.
     :param n_agents: Total number of agents n (default ``beta = 1/n``).
     :param beta: Laplacian step of the weight matrix W = I − βL.
+    :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     tau = len(p_max_timeseries)
     assert len(d_i) == tau, "p_max_timeseries and d_i must have the same length"
@@ -87,6 +92,7 @@ def create_deed_admm_renewable_participant(
         max_iter=max_iter,
         n_agents=n_agents,
         beta=beta,
+        round_timeout=round_timeout,
     )
 
 
@@ -109,6 +115,7 @@ def create_deed_admm_storage_participant(
     max_iter: int = 500,
     n_agents: int = 1,
     beta: float | None = None,
+    round_timeout: float | None = None,
 ) -> DEEDADMMStorageAlgorithm:
     """DEED-ADMM participant for a battery / pumped-hydro storage unit.
 
@@ -134,6 +141,7 @@ def create_deed_admm_storage_participant(
     :param max_iter: Number of iterations.
     :param n_agents: Total number of agents n (generators + storage).
     :param beta: Laplacian step of the weight matrix W = I − βL.
+    :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     return DEEDADMMStorageAlgorithm(
         finish_callback=finish_callback,
@@ -146,6 +154,7 @@ def create_deed_admm_storage_participant(
         max_iter=max_iter,
         n_agents=n_agents,
         beta=beta,
+        round_timeout=round_timeout,
         e_max=float(e_max),
         p_charge_max=float(p_charge_max),
         p_discharge_max=float(p_discharge_max),

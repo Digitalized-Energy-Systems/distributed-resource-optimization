@@ -48,6 +48,18 @@ Deliberate deviations from the paper
   delays an agent could terminate one iteration early on receiving a
   neighbour's ``k ≥ max_iter`` message.
 
+Message loss
+------------
+
+With ``round_timeout`` set, a round advances when complete or when its
+deadline passes; a neighbour whose round-k gradient is missing contributes
+its last received gradient (zero flow if never heard).  The pairwise terms
+``w_ij (∇F_j − ∇F_i)`` are kept equal on both ends of every edge by the
+running-sum protocol of :class:`~.._rounds.EdgeFlows`, so a lost message only
+delays a transfer of power between two agents instead of creating or
+destroying it: ``Σ_i P_i`` stays conserved (up to the projection, as in the
+lossless algorithm).
+
 The optional :class:`FDGDMActor` plug-in supplies ``∇F``, ``u``, and the
 feasibility projection; the base class itself uses no cost.
 """
@@ -59,6 +71,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -125,6 +138,10 @@ class FDGDMMessage(OptimizationMessage):
                         weights (unused on the kick-off message).
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state from ``data``.
+    :param flow_sum: If the sender owns the edge to the receiver: its
+                     cumulative power flow along that edge through round
+                     ``flow_round`` (see :class:`~.._rounds.EdgeFlows`).
+    :param flow_round: Last round included in ``flow_sum``.
     """
 
     k: int
@@ -132,6 +149,8 @@ class FDGDMMessage(OptimizationMessage):
     gradient: np.ndarray | None = None
     d_u_product: float = 0.0
     initial: bool = False
+    flow_sum: np.ndarray | None = None
+    flow_round: int = -1
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +166,10 @@ class FDGDMAlgorithm(DistributedAlgorithm):
     :param fdgdm_actor: Optional :class:`FDGDMActor` supplying gradient and
                         projection.  ``None`` → the neutral base :class:`FDGDMActor`.
     :param max_iter: Maximum number of FDGDM iterations.
+    :param round_timeout: Seconds (carrier clock) to wait for a round's
+                          gradients before advancing with the last received
+                          ones; ``None`` (default) waits for every neighbour,
+                          which stalls if a message is lost.
     """
 
     def __init__(
@@ -154,12 +177,16 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         finish_callback: Callable,
         fdgdm_actor: FDGDMActor | None = None,
         max_iter: int = 300,
+        round_timeout: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: FDGDMActor = fdgdm_actor if fdgdm_actor is not None else FDGDMActor()
         self.max_iter = max_iter
 
-        self._message_queue: dict[int, list[FDGDMMessage]] = {}
+        self._rounds = RoundBuffer()  # (gradient, d·u) per round and sender
+        self._flows = EdgeFlows()  # power flows, kept equal on both ends
+        self._deadline = RoundDeadline(round_timeout)
+        self._data: Any = None
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
@@ -178,13 +205,11 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         neighbours = carrier.others()
         n_neighbours = len(neighbours)
 
-        # --- Termination path ---
+        # --- Termination path: a neighbour already finished its last round ---
         if message_data.k >= self.max_iter:
             if self._first_message:
                 return
-            self.finish_callback(self, carrier)
-            self._first_message = True
-            self._message_queue.clear()
+            self._finish(carrier)
             return
 
         # After termination, ignore stale messages from the previous round.
@@ -197,6 +222,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._first_message = False
             self._started = True
             self._k = 0
+            self._rounds.reset()
+            self._flows.reset()
+            self._data = message_data.data
 
             # Bootstrap power schedule from data (initial power allocation).
             initial_p = np.asarray(message_data.data, dtype=float)
@@ -213,53 +241,86 @@ class FDGDMAlgorithm(DistributedAlgorithm):
                 raise ValueError(f"FDGDM curvature_bound must be > 0, got {curvature}.")
             self._last_du = float(n_neighbours + 1) * curvature
 
-            for addr in neighbours:
-                carrier.send_to_other(
-                    FDGDMMessage(
-                        gradient=self._last_grad.copy(),
-                        d_u_product=self._last_du,
-                        k=0,
-                        data=message_data.data,
-                    ),
-                    addr,
-                )
-
+            self._broadcast(carrier, neighbours)
             if message_data.initial:
                 return  # kickoff is not a real neighbour gradient; do not queue
 
-        # --- Queue the message ---
-        queue = self._message_queue.setdefault(message_data.k, [])
-        queue.append(message_data)
+        sender = sender_key(carrier, meta)
+        if sender is not None and message_data.flow_sum is not None:
+            self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
+        value = (np.asarray(message_data.gradient, dtype=float), float(message_data.d_u_product))
+        if message_data.k < self._k:
+            # Too late for its round, but the freshest gradient of that neighbour.
+            self._rounds.remember(message_data.k, sender, value)
+            return
+        self._rounds.add(message_data.k, sender, value)
+        while not self._first_message and self._rounds.complete(self._k, n_neighbours):
+            self._advance(carrier, neighbours)
 
-        # --- Advance when all neighbours have reported for this iteration ---
-        if len(queue) == n_neighbours:
-            del self._message_queue[message_data.k]
+    def _advance(self, carrier: "Carrier", neighbours: list) -> None:
+        """Weighted gradient update (Eq. 9, Bai et al. 2022) for round ``self._k``."""
+        self._deadline.cancel()
+        own = (self._last_grad, self._last_du)
+        delta_P = np.zeros_like(self._P)
+        me = address_of(carrier)
+        if me is None:
+            # Carrier cannot name this participant: plain update.
+            for grad, du in self._rounds.values(self._k, neighbours, default=lambda _n: own):
+                w_abs = 1.0 / max(self._last_du, du)
+                delta_P += w_abs * (grad - self._last_grad)
+        else:
+            values = self._rounds.value_map(self._k, neighbours, default=lambda _n: own)
+            for n in neighbours:
+                grad, du = values[n]
+                w_abs = 1.0 / max(self._last_du, du)
+                delta_P += self._flows.flow(me, n, self._k, self._last_grad, grad, w_abs)
+                delta_P += self._flows.correction(me, n)
 
-            # Weighted gradient update (Eq. 9, Bai et al. 2022).
-            delta_P = np.zeros_like(self._P)
-            for msg in queue:
-                w_abs = 1.0 / max(self._last_du, msg.d_u_product)
-                delta_P += w_abs * (np.asarray(msg.gradient, dtype=float) - self._last_grad)
+        # Apply update and project onto feasibility set (Eq. 16).
+        self._P = self.actor.project(self._P + delta_P)
 
-            # Apply update and project onto feasibility set (Eq. 16).
-            self._P = self.actor.project(self._P + delta_P)
+        # Prepare next broadcast.
+        self._last_grad = np.asarray(self.actor.gradient(self._P, self._data), dtype=float)
+        self._k += 1
+        self._rounds.discard_before(self._k)
+        self._broadcast(carrier, neighbours)
+        if self._k >= self.max_iter:
+            self._finish(carrier)
 
-            # Prepare next broadcast.
-            self._last_grad = np.asarray(
-                self.actor.gradient(self._P, message_data.data), dtype=float
+    def _broadcast(self, carrier: "Carrier", neighbours: list) -> None:
+        """Send this round's gradient and arm the round deadline."""
+        me = address_of(carrier)
+        for addr in neighbours:
+            owned = self._flows.owner_sum(me, addr) if me is not None else None
+            carrier.send_to_other(
+                FDGDMMessage(
+                    gradient=self._last_grad.copy(),
+                    d_u_product=self._last_du,
+                    k=self._k,
+                    data=self._data,
+                    flow_sum=None if owned is None else np.copy(owned[1]),
+                    flow_round=-1 if owned is None else owned[0],
+                ),
+                addr,
             )
-            self._k += 1
+        if self._k < self.max_iter:
+            k = self._k
+            self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
 
-            for addr in neighbours:
-                carrier.send_to_other(
-                    FDGDMMessage(
-                        gradient=self._last_grad.copy(),
-                        d_u_product=self._last_du,
-                        k=self._k,
-                        data=message_data.data,
-                    ),
-                    addr,
-                )
+    def _on_deadline(self, carrier: "Carrier", k: int) -> None:
+        """Round *k* timed out: advance with what arrived, plus last values."""
+        if self._first_message or self._k != k:
+            return
+        neighbours = carrier.others()
+        self._advance(carrier, neighbours)
+        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
+
+    def _finish(self, carrier: "Carrier") -> None:
+        self._deadline.cancel()
+        self.finish_callback(self, carrier)
+        self._first_message = True
+        self._rounds.reset()
 
 
 # ---------------------------------------------------------------------------
