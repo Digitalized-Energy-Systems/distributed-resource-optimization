@@ -229,6 +229,10 @@ class MangoCarrier(Carrier):
         """Current scheduler-clock time (simulation time in a SimulationWorld)."""
         return self._context.current_timestamp
 
+    def address(self) -> "AgentAddress":
+        """This agent's mango address."""
+        return self._context.addr
+
     def sender_of(self, meta: Any) -> "AgentAddress":
         """mango address of the agent that sent the message described by *meta*."""
         return mango_sender_addr(meta)

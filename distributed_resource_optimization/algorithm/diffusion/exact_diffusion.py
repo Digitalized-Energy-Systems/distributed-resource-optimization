@@ -48,20 +48,20 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 
 from .._weight_rules import WeightRule, regular_graph_weights
-from ..core import DistributedAlgorithm
-from .diffusion import DiffusionActor, DiffusionMessage, create_diffusion_start
+from .diffusion import DiffusionActor, _DiffusionRounds, create_diffusion_start
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
+    pass
 
 
-class ExactDiffusionAlgorithm(DistributedAlgorithm):
+class ExactDiffusionAlgorithm(_DiffusionRounds):
     """Distributed adapt-correct-combine exact diffusion over a scheduling horizon.
 
-    ``on_exchange_message`` shares its termination/kick-off/message-queueing
-    skeleton with :class:`~.diffusion.DiffusionAlgorithm` -- a fix to one
-    (e.g. the stale-message-after-termination guard below) likely needs to
-    be applied to the other too.
+    The round handling (kick-off, termination, round deadline, last-value
+    fallback) is shared with :class:`~.diffusion.DiffusionAlgorithm` via
+    :class:`~.diffusion._DiffusionRounds`.  Under message loss the correction
+    step no longer sees synchronous neighbour iterates, so the result is close
+    to, but no longer exactly, the optimum.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when
                             :attr:`max_iter` is reached.
@@ -90,7 +90,13 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
                         ``"mean_metropolis"``, ``"hastings"`` (left-stochastic
                         is sufficient -- unlike classical Diffusion, Exact
                         Diffusion does not require a doubly-stochastic matrix).
+    :param round_timeout: Seconds (carrier clock) to wait for a round's
+                          messages before advancing with the last received
+                          iterates; ``None`` (default) waits for every
+                          neighbour, which stalls if a message is lost.
     """
+
+    _label = "Exact Diffusion"
 
     def __init__(
         self,
@@ -103,6 +109,7 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         tol: float = 1e-4,
         patience: int = 3,
         weight_rule: WeightRule = "mean_metropolis",
+        round_timeout: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
@@ -121,16 +128,11 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         #: Iterations completed when the last run terminated.
         self.iterations: int = 0
 
-        self._message_queue: dict[int, list[DiffusionMessage]] = {}
-        self._first_message: bool = True
-        self._started: bool = False  # True once any round has begun
-        self._k: int = 0
+        self._init_rounds(round_timeout)
         # λ / φ state is sized from the kick-off message on (re-)initialisation.
         self._lam: np.ndarray = np.array([initial_lam])
         self._phi_prev: np.ndarray | None = None
         self._phi_bar: np.ndarray = np.array([initial_lam])
-        self._converged_flag: bool = False  # own flag from the last combine
-        self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
     def _adapt_and_correct(self, data: Any) -> np.ndarray:
         """Adapt (eq. 28) then correct (eq. 30); advances :attr:`_phi_prev`."""
@@ -143,135 +145,24 @@ class ExactDiffusionAlgorithm(DistributedAlgorithm):
         self._phi_prev = phi
         return phi_bar
 
-    async def on_exchange_message(
-        self,
-        carrier: "Carrier",
-        message_data: DiffusionMessage,
-        meta: Any,
-    ) -> None:
-        """Process one incoming exact-diffusion message."""
-        neighbours = carrier.others()
+    def _start_state(self, horizon: int, data: Any) -> None:
+        self._lam = np.ones(horizon) * self.initial_lam
+        self._phi_prev = None
+        self._phi_bar = self._adapt_and_correct(data)
 
-        # --- Termination path (max_iter failsafe) ---
-        if message_data.k >= self.max_iter:
-            if self._first_message:
-                return
-            self.converged = False
-            self.iterations = self._k
-            self.finish_callback(self, carrier)
-            self._first_message = True
-            self._message_queue.clear()
-            return
+    def _outgoing(self) -> np.ndarray:
+        return self._phi_bar
 
-        # After termination, ignore stale messages from the previous round.
-        # Only an explicit initial=True message may start a new round.
-        if self._first_message and self._started and not message_data.initial:
-            return
+    def _combine_weights(self, n_neighbours: int) -> tuple[float, float]:
+        # W̄ = (I + W)/2 (eq. 31) rather than the raw rule weights -- this is
+        # what makes the combine matrix satisfy the PSD condition Exact
+        # Diffusion's convergence proof relies on (the raw rule matrices have
+        # a negative eigenvalue on a complete graph).
+        raw_self_w, raw_neighbor_w = regular_graph_weights(n_neighbours, self.weight_rule)
+        return (1.0 + raw_self_w) / 2.0, raw_neighbor_w / 2.0
 
-        # --- Initialisation path ---
-        if self._first_message or message_data.initial:
-            self._first_message = False
-            self._started = True
-            self._k = 0
-            self._converged_flag = False
-            self._stable_rounds = 0
-            self.converged = False
-            self._lam = np.ones(len(message_data.phi)) * self.initial_lam
-            self._phi_prev = None
-            self._phi_bar = self._adapt_and_correct(message_data.data)
-
-            phi_out = self._phi_bar.copy()
-            for addr in neighbours:
-                carrier.send_to_other(
-                    DiffusionMessage(
-                        phi=phi_out,
-                        k=0,
-                        data=message_data.data,
-                        degree=len(neighbours),
-                        weight_rule=self.weight_rule,
-                    ),
-                    addr,
-                )
-
-            if message_data.initial:
-                return  # kick-off is not a topology neighbour; do not queue
-
-        # --- Queue the message ---
-        queue = self._message_queue.setdefault(message_data.k, [])
-        queue.append(message_data)
-
-        # --- Advance if all neighbours have reported for this iteration ---
-        if len(queue) == len(neighbours):
-            # regular_graph_weights() assumes every neighbour has the same
-            # degree and the same weight_rule as this node -- verify that
-            # rather than silently computing a wrong (non-stochastic, or
-            # inconsistent-across-nodes) weight matrix if it doesn't.
-            own_degree = len(neighbours)
-            for m in queue:
-                if m.degree != own_degree:
-                    raise ValueError(
-                        f"Exact Diffusion requires a degree-regular communication graph: "
-                        f"this node has {own_degree} neighbours but received a message "
-                        f"from a node with {m.degree} neighbours."
-                    )
-                if m.weight_rule != self.weight_rule:
-                    raise ValueError(
-                        f"All Exact Diffusion participants must share the same weight_rule: "
-                        f"this node uses {self.weight_rule!r} but received a message "
-                        f"from a node using {m.weight_rule!r}."
-                    )
-
-            # --- Termination path (tol criterion) ---
-            # Own flag and every message in this round's queue reflect the
-            # λ change of round k−1.  On the complete graphs this codebase
-            # uses, every participant therefore evaluates the same set of
-            # flags in the same round and terminates simultaneously.
-            if self._converged_flag and all(m.converged for m in queue):
-                self.converged = True
-                self.iterations = self._k
-                self.finish_callback(self, carrier)
-                self._first_message = True
-                self._message_queue.clear()
-                return
-
-            # Combination: weighted average of own φ̄ and all received φ̄'s,
-            # using W̄ = (I + W)/2 (eq. 31) rather than the raw rule weights —
-            # this is what makes the combine matrix satisfy the PSD condition
-            # Exact Diffusion's convergence proof relies on (the raw rule
-            # matrices have a negative eigenvalue on a complete graph).
-            raw_self_w, raw_neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
-            self_w = (1.0 + raw_self_w) / 2.0
-            neighbor_w = raw_neighbor_w / 2.0
-            lam_new = self_w * self._phi_bar
-            for m in queue:
-                lam_new = lam_new + neighbor_w * m.phi
-            if np.max(np.abs(lam_new - self._lam)) <= self.tol:
-                self._stable_rounds += 1
-            else:
-                self._stable_rounds = 0
-            self._converged_flag = self._stable_rounds >= self.patience
-            self._lam = lam_new
-
-            del self._message_queue[message_data.k]
-
-            # Adapt + correct
-            self._phi_bar = self._adapt_and_correct(message_data.data)
-
-            self._k += 1
-
-            phi_out = self._phi_bar.copy()
-            for addr in neighbours:
-                carrier.send_to_other(
-                    DiffusionMessage(
-                        phi=phi_out,
-                        k=self._k,
-                        data=message_data.data,
-                        degree=len(neighbours),
-                        weight_rule=self.weight_rule,
-                        converged=self._converged_flag,
-                    ),
-                    addr,
-                )
+    def _adapt(self, data: Any) -> None:
+        self._phi_bar = self._adapt_and_correct(data)
 
 
 # ---------------------------------------------------------------------------

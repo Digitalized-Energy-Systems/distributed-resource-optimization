@@ -83,16 +83,22 @@ class _TrackedTimer:
         self._container = container
         self._callback = callback
         self._finished = False
+        self._firing = False
         container._begin()
         self._handle = asyncio.get_running_loop().call_later(delay_s, self._fire)
 
     def _fire(self) -> None:
+        # Stay counted until the callback returned: it typically arms the next
+        # timer, so the in-flight count must not touch zero in between.
+        self._firing = True
         try:
             self._callback()
         finally:
             self._finish()
 
     def cancel(self) -> None:
+        if self._firing:
+            return  # already running; _fire releases it when done
         self._handle.cancel()
         self._finish()
 
@@ -235,6 +241,10 @@ class SimpleCarrier(Carrier):
     def others(self) -> list[int]:
         """Return all 1-indexed carrier IDs except *this* carrier's ID."""
         return [i + 1 for i in range(len(self.container.actors)) if i + 1 != self.aid]
+
+    def address(self) -> int:
+        """This carrier's 1-indexed id."""
+        return self.aid
 
     def schedule_after(self, delay_s: float, callback: Callable[[], Any]) -> Cancellable:
         """Like :meth:`Carrier.schedule_after`, but the pending timer counts as

@@ -119,10 +119,10 @@ async def test_averaging_consensus_leader_follower_merit_order():
 async def test_stale_messages_do_not_rewind_iteration():
     """Out-of-order/lossy delivery must never step the iteration backwards.
 
-    A participant that jumps ahead on a newer-k message (partial queue, the
-    loss-tolerance path) used to reprocess an older iteration once that
-    iteration's stragglers completed its queue — rewinding ``_k`` and
-    re-broadcasting duplicate rounds.
+    A straggler from a round the participant already passed must neither
+    complete that old round again nor re-broadcast it.  (Lost messages are
+    handled by the round deadline, see tests/test_loss_tolerance_p2p.py; a
+    later-round message no longer forces a jump past an incomplete round.)
     """
     algo = create_averaging_consensus_participant(lambda *_: None, max_iter=50)
     carrier = _RecordingCarrier(["n1", "n2"])
@@ -138,18 +138,19 @@ async def test_stale_messages_do_not_rewind_iteration():
     )
     assert algo._k == 0
 
-    # n1's round-0 message: only 1 of 2 neighbours — no advance yet.
+    # n1's round-0 message and a round-1 message: round 0 is incomplete,
+    # so no advance yet.
     await algo.on_exchange_message(carrier, neighbour_msg(0), None)
+    await algo.on_exchange_message(carrier, neighbour_msg(1), None)
     assert algo._k == 0
 
-    # n2 is already at round 1: jump ahead on the partial queue.
-    await algo.on_exchange_message(carrier, neighbour_msg(1), None)
-    assert algo._k == 2
-    assert algo._message_queue == {}  # stale round-0 queue purged
+    # The second round-0 message completes round 0.
+    await algo.on_exchange_message(carrier, neighbour_msg(0), None)
+    assert algo._k == 1
 
-    # n2's round-0 straggler finally arrives: must be dropped, not rewind
-    # the counter to 1 and re-broadcast.
+    # A round-0 straggler must be dropped, not rewind the counter and
+    # re-broadcast.
     ks_sent_before = [msg.k for _, msg in carrier.sent]
     await algo.on_exchange_message(carrier, neighbour_msg(0), None)
-    assert algo._k == 2
+    assert algo._k == 1
     assert [msg.k for _, msg in carrier.sent] == ks_sent_before

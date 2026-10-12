@@ -118,6 +118,14 @@ class Carrier(ABC):
         """Current time on the carrier's clock, in seconds."""
         return asyncio.get_running_loop().time()
 
+    def address(self) -> Any:
+        """This participant's own address (as its neighbours see it in ``others()``).
+
+        ``None`` if the carrier cannot tell; algorithms then skip features
+        that need a global order of participants (edge ownership).
+        """
+        return None
+
     def sender_of(self, meta: Any) -> Any:
         """Address of the participant that sent the message described by *meta*.
 
