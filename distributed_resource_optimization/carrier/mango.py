@@ -98,6 +98,12 @@ class OptimizationFinishedMessage:
     result: Any
 
 
+class RoleLocalMessage:
+    """Base for messages meant for *other* roles of an agent that also hosts a
+    :class:`DistributedOptimizationRole` (e.g. a request for the finished
+    schedule); such messages are never forwarded to the algorithm."""
+
+
 def _is_orphaned_reply(meta: dict) -> bool:
     """A tracked reply that reached ordinary dispatch.
 
@@ -292,10 +298,24 @@ class DistributedOptimizationRole(_CarrierRole):
             lambda c, m: (
                 not isinstance(
                     c,
-                    (StartCoordinatedDistributedOptimization, OptimizationFinishedMessage),
+                    (
+                        StartCoordinatedDistributedOptimization,
+                        OptimizationFinishedMessage,
+                        RoleLocalMessage,
+                    ),
                 )
                 and not _is_orphaned_reply(m)
             ),
+        )
+
+    def start(self, start_message: Any) -> None:
+        """Hand a kick-off message to the local algorithm without the network.
+
+        For callers on the same agent (e.g. a role that received an
+        acknowledged start request), so the kick-off cannot be lost.
+        """
+        self.context.schedule_instant_task(
+            self.algorithm.on_exchange_message(self._carrier, start_message, {})
         )
 
     def _handle_optimization(self, content: Any, meta: dict) -> None:
@@ -341,6 +361,20 @@ class CoordinatorRole(_CarrierRole):
             self._handle_start,
             lambda c, m: isinstance(c, StartCoordinatedDistributedOptimization),
         )
+
+    def start(self, start_input: Any) -> asyncio.Future:
+        """Start a coordinated run from the same agent, without a message.
+
+        Equivalent to receiving ``StartCoordinatedDistributedOptimization``
+        with *start_input*, but cannot be lost in transit.
+
+        :returns: The run's done future (the coordinator's result list, in
+            ``others()`` order).  Use ``add_done_callback`` rather than
+            awaiting it inside a mango task, which a stepped simulation
+            cannot see as waiting.
+        """
+        self._handle_start(StartCoordinatedDistributedOptimization(input=start_input), {})
+        return self._done_future
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
         """Kick off a coordinated run and broadcast the per-participant results.

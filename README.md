@@ -159,6 +159,30 @@ asyncio.run(main())
 
 ---
 
+## Message loss
+
+All algorithms can run over a lossy transport. Pass `round_timeout` (seconds
+on the carrier's clock) to the participants (consensus, diffusion, exact
+diffusion, FDGDM, DEED-ADMM) or to the ADMM coordinator factory:
+
+* a round advances when every neighbour reported or when its deadline
+  passes; a neighbour whose message is missing contributes its last received
+  value (a default if it was never heard);
+* pairwise exchanges whose sum must be conserved (FDGDM power transfers,
+  DEED-ADMM's ξ tracker, exact diffusion's mixing) use a running-sum protocol
+  (`algorithm/_rounds.py: EdgeFlows`), so a lost message delays a transfer
+  instead of losing it;
+* the ADMM coordinator collects answers with `Carrier.request_all` (mango's
+  `gather` on `MangoCarrier`); a participant that did not answer keeps its
+  previous `x`, and convergence is only declared after a complete round.
+
+Without `round_timeout` the algorithms wait for every message, as before.
+`ActorContainer(loss_rate=..., rng=...)` injects loss into `SimpleCarrier`
+for tests. On `MangoCarrier` all timeouts run on the scheduler clock, so they
+work in a stepped `SimulationWorld`.
+
+---
+
 ## Documentation
 
 Full documentation including algorithm background, tutorials, and API reference is available at:
