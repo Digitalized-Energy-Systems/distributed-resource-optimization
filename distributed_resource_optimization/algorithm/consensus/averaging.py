@@ -64,7 +64,9 @@ class ConsensusActor:
 class AveragingConsensusMessage(OptimizationMessage):
     """Message exchanged between averaging-consensus participants.
 
-    :param lam: Current λ estimate of the sender.
+    :param lam: Current λ estimate of the sender.  In the kick-off message
+                (``initial=True``) the values are ignored — every participant
+                starts from its own ``initial_lam``; only the length is read.
     :param k: Current iteration counter.
     :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`.
     :param p: Sender's projected local power for this round (used by the
@@ -100,8 +102,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     graph it would pin λ against a partial, understated imbalance.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when the run
-                            ends (either :attr:`max_iter` reached or all
-                            neighbours signal convergence).
+                            ends.  Runs always last exactly :attr:`max_iter`
+                            rounds; there is no residual-based early stop.
     :param consensus_actor: Optional :class:`ConsensusActor` for the price
                             to power projection (eq. 23).
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
@@ -242,8 +244,14 @@ def create_averaging_consensus_start(
 ) -> AveragingConsensusMessage:
     """Create the initial kick-off message for an averaging consensus run.
 
-    :param initial_lam: Starting scalar broadcast to all λ dimensions.
-    :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`.
+    :param initial_lam: Placeholder λ value for the message.  It does **not**
+                        set the starting price: participants start from the
+                        ``initial_lam`` they were constructed with.  The
+                        message's λ has length 1; for a multi-timestep
+                        ``data`` vector, λ takes on the horizon length via
+                        broadcasting during the first update.
+    :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`
+                 (the leader also reads it as the demand vector for ΔP).
     :returns: An :class:`AveragingConsensusMessage` with ``initial=True``.
     """
     return AveragingConsensusMessage(
