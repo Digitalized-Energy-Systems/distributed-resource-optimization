@@ -36,6 +36,10 @@ class LinearCostEconomicDispatchFDGDMActor(FDGDMActor):
     :param cost: Linear cost coefficient *c* (e.g. ``marginal_cost`` from PyPSA).
     :param p_max: Maximum power output (scalar or per-timestep vector).
     :param epsilon: Quadratic cost coefficient / curvature bound (default 0.1).
+    :param curvature_upper_bound: Optional u ≥ ε used for the weights instead
+                                  of ε (Bai et al. only need an *upper bound*
+                                  of the second derivative; a larger u means
+                                  smaller, safer steps).  ``None`` → ε.
     :param p_min: Minimum power output (default 0).
     :param initial_schedule: Optional per-agent starting schedule; replaces the
                              shared kick-off vector on the first
@@ -47,18 +51,24 @@ class LinearCostEconomicDispatchFDGDMActor(FDGDMActor):
     epsilon: float = 0.1
     p_min: float = 0.0
     initial_schedule: np.ndarray | None = None
+    curvature_upper_bound: float | None = None
 
     P: np.ndarray = field(default_factory=lambda: np.array([0.0]))
 
     def __post_init__(self) -> None:
         self._p_max = np.asarray(self.p_max, dtype=float)
+        if self.curvature_upper_bound is not None and self.curvature_upper_bound < self.epsilon:
+            raise ValueError("curvature_upper_bound must be >= epsilon (an upper bound of F'').")
 
     def gradient(self, P: np.ndarray, data: Any) -> np.ndarray:
         """Return ``ε·P + c`` (gradient of the quadratic cost function)."""
         return self.epsilon * P + self.cost
 
     def curvature_bound(self) -> float:
-        """Return ε — the exact (constant) second derivative of F."""
+        """Return the curvature upper bound u (ε, the exact second derivative,
+        unless a larger ``curvature_upper_bound`` was given)."""
+        if self.curvature_upper_bound is not None:
+            return self.curvature_upper_bound
         return self.epsilon
 
     def project(self, P: np.ndarray) -> np.ndarray:
