@@ -21,12 +21,12 @@ def project_storage_schedule_from_price(
     *actor* must expose ``e_max``, ``p_charge_max``, ``p_discharge_max``,
     ``eta_charge``, ``eta_discharge``, ``e_initial``, ``e_final``,
     ``soc_min``, ``soc_max``, ``charge_cost``, ``discharge_cost``, and
-    ``epsilon`` (all storage actors already carry these as dataclass
-    fields). ``e_initial``/``e_final``/``soc_min``/``soc_max`` are
+    ``epsilon`` (all storage actors already carry these as attributes). ``e_initial``/``e_final``/``soc_min``/``soc_max`` are
     fractions of ``e_max``; ``price`` is a per-timestep price/λ vector.
 
     :returns: ``(p, e_path, e_terminal)`` — the feasible power schedule,
-        the SOC at the start of each timestep, and the final SOC reached.
+        the absolute energy level at the start of each timestep, and the final
+        energy level reached.
     """
     e_max = actor.e_max
     p_charge_max = actor.p_charge_max

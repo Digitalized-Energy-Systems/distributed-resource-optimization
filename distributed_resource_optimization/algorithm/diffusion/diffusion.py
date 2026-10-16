@@ -6,9 +6,10 @@ scheduling horizon.  At every iteration a participant
 1. **adapts** its power iterate via a local gradient step
    ``φ = λ - ε · ∇J(λ, data)``,
 2. broadcasts ``φ`` to its neighbours, and
-3. **combines** its own φ with all received φ's using the Mean-Metropolis
-   weight matrix (Ces et al. 2025, eq. 19 -- the same doubly-stochastic
-   matrix used for consensus) to form the next λ.
+3. **combines** its own φ with all received φ's using the combination
+   weights selected by ``weight_rule`` -- by default the Mean-Metropolis
+   matrix (Ces et al. 2025, eq. 19 -- the same doubly-stochastic matrix used
+   for consensus) -- to form the next λ.
 
 The update rule is:
 
@@ -19,8 +20,9 @@ The update rule is:
     \\qquad
     \\varphi_i^{k+1} = \\lambda_i^{k+1} - \\varepsilon \\, \\nabla J(\\lambda_i^{k+1}, \\text{data}),
 
-with :math:`w_{ij} = 2 / (n_i + n_j + 1)` and :math:`w_{ii} = 1 - \\sum_j w_{ij}`.
-Weights are computed via :func:`~..._weight_rules.regular_graph_weights`,
+with (Mean-Metropolis) :math:`w_{ij} = 2 / (n_i + n_j + 1)` and
+:math:`w_{ii} = 1 - \\sum_j w_{ij}`.
+Weights are computed via :func:`~distributed_resource_optimization.algorithm._weight_rules.regular_graph_weights`,
 which assumes a degree-regular communication graph (true both for this
 codebase's complete-graph topologies and for the paper's own ring network);
 the paper notes this doubly-stochastic requirement is what allows classical
@@ -82,7 +84,8 @@ class DiffusionMessage(OptimizationMessage):
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state.
     :param degree: Sender's own neighbour count.  Used only to verify the
-                   degree-regular-graph assumption :func:`regular_graph_weights`
+                   degree-regular-graph assumption
+                   :func:`~distributed_resource_optimization.algorithm._weight_rules.regular_graph_weights`
                    relies on -- ignored on the ``initial`` kick-off message.
     :param weight_rule: Sender's own combination-weight rule.  Used only to
                         verify every participant agrees on the same rule --
@@ -112,12 +115,15 @@ class DiffusionAlgorithm(DistributedAlgorithm):
     """Distributed adapt-then-combine diffusion over a scheduling horizon.
 
     ``on_exchange_message`` shares its termination/kick-off/message-queueing
-    skeleton with :class:`~.exact_diffusion.ExactDiffusionAlgorithm` -- a fix
+    skeleton with
+    :class:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.ExactDiffusionAlgorithm`
+    -- a fix
     to one (e.g. the stale-message-after-termination guard below) likely
     needs to be applied to the other too.
 
-    :param finish_callback: Called with ``(algorithm, carrier)`` when
-                            :attr:`max_iter` is reached.
+    :param finish_callback: Called with ``(algorithm, carrier)`` when the run
+                            terminates — via the ``tol`` criterion or the
+                            ``max_iter`` failsafe (see :attr:`converged`).
     :param diffusion_actor: Optional :class:`DiffusionActor` supplying the
                             gradient.  ``None`` → the zero-gradient base
                             :class:`DiffusionActor`.
@@ -141,7 +147,8 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                         on any graph; on the degree-regular graphs this
                         codebase always uses, ``"averaging"`` and
                         ``"relative_degree"`` collapse to the same uniform
-                        doubly-stochastic matrix too (see :mod:`.._weight_rules`).
+                        doubly-stochastic matrix too (see
+                        :mod:`~distributed_resource_optimization.algorithm._weight_rules`).
     """
 
     def __init__(
@@ -326,7 +333,9 @@ def create_diffusion_start(
 ) -> DiffusionMessage:
     """Create the initial kick-off message for a diffusion run.
 
-    :param initial_lam: Starting scalar; broadcast to all λ dimensions.
+    :param initial_lam: Placeholder φ value.  Recipients only use the
+                        vector's *length*; each participant (re)starts from
+                        its own ``initial_lam``.
     :param data: Auxiliary payload forwarded to each participant's
                  :meth:`DiffusionActor.gradient_term`.
     :param horizon: Number of time steps; sets the length of the φ vector that

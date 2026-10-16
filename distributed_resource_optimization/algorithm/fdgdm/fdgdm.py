@@ -13,15 +13,16 @@ At every iteration a participant:
 
    .. math::
 
-       P_i[k+1] = \\operatorname{clip}\\!\\left(
+       P_i[k+1] = \\operatorname{proj}_i\\!\\left(
            P_i[k] + \\sum_{j \\in \\mathcal{N}_i}
-           w_{ij}^{\\mathrm{abs}} \\bigl(\\nabla F_j[k] - \\nabla F_i[k]\\bigr),
-           0, P_{i,\\max}\\right)
+           w_{ij}^{\\mathrm{abs}} \\bigl(\\nabla F_j[k] - \\nabla F_i[k]\\bigr)\\right)
 
    where :math:`w_{ij}^{\\mathrm{abs}} = \\min\\!\\left(
    \\tfrac{1}{d_i u_i},\\, \\tfrac{1}{d_j u_j}\\right)` and :math:`d_i`
    is the neighbour count of node *i* **plus one**, :math:`u_i` is the upper
-   bound of the second derivative of :math:`F_i`.
+   bound of the second derivative of :math:`F_i`, and :math:`\\operatorname{proj}_i`
+   is the actor's feasibility projection (:meth:`FDGDMActor.project`, e.g. a
+   box clip to :math:`[P_{i,\\min}, P_{i,\\max}]`).
 
 3. Broadcasts the updated gradient ``∇F_i(P_i[k+1])`` and its own ``d·u``
    product to all neighbours.
@@ -120,8 +121,8 @@ class FDGDMMessage(OptimizationMessage):
     :param data: Auxiliary payload forwarded to :meth:`FDGDMActor.gradient`.
     :param gradient: Current cost gradient ``∇F_i(P_i[k])`` of the sender
                      (unused on the kick-off message).
-    :param d_u_product: ``d_i × u_i`` — out-degree times curvature upper bound
-                        of the sender.  Used by recipients to compute off-diagonal
+    :param d_u_product: ``d_i × u_i`` — the sender's degree
+                        ``d_i = |N_i| + 1`` times its curvature upper bound.  Used by recipients to compute off-diagonal
                         weights (unused on the kick-off message).
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state from ``data``.
@@ -143,10 +144,11 @@ class FDGDMAlgorithm(DistributedAlgorithm):
     """Distributed fast gradient descent over a scheduling horizon.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when
-                            :attr:`max_iter` is reached.
+                            ``max_iter`` is reached.
     :param fdgdm_actor: Optional :class:`FDGDMActor` supplying gradient and
                         projection.  ``None`` → the neutral base :class:`FDGDMActor`.
-    :param max_iter: Maximum number of FDGDM iterations.
+    :param max_iter: Number of FDGDM iterations (the run always executes
+                     exactly this many; there is no residual-based stop).
     """
 
     def __init__(

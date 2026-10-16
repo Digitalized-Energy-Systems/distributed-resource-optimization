@@ -30,7 +30,9 @@ from .averaging import ConsensusActor
 class LinearCostEconomicDispatchConsensusActor(ConsensusActor):
     """Economic dispatch via linearised inverted quadratic cost function.
 
-    :param cost: Marginal cost coefficient *c* in the cost function ``cP + εP²``.
+    :param cost: Marginal cost coefficient *c* in the cost function
+                 ``cP + (ε/2)P²`` (marginal cost ``c + εP``, hence the
+                 response ``P(λ) = (λ - c)/ε``).
     :param p_max: Maximum power output.
     :param epsilon: Sensitivity of power response to price (default 0.1).
     :param p_min: Minimum power output (default 0).
@@ -81,7 +83,8 @@ class ReservoirStorageConsensusActor(ConsensusActor):
     :param soc_min: Minimum state of charge (fraction).
     :param soc_max: Maximum state of charge (fraction).
     :param charge_cost: Marginal cost for charging.
-    :param discharge_cost: Marginal benefit for discharging.
+    :param discharge_cost: Marginal cost of discharging (the price must exceed
+                           ``charge_cost + discharge_cost`` before the unit discharges).
     :param epsilon: Sensitivity of power response to price (default 0.1).
     """
 

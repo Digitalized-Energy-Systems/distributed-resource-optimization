@@ -2,21 +2,26 @@
 
 Provides:
 
-* :class:`MangoCarrier` — a :class:`~.core.Carrier` backed by a mango-agents
-  :class:`~mango.Role`.
+* :class:`MangoCarrier` — a :class:`~distributed_resource_optimization.carrier.core.Carrier`
+  backed by a mango-agents ``Role``.
 * :class:`DistributedOptimizationRole` — a mango Role that hosts a
-  :class:`~..algorithm.core.DistributedAlgorithm`.
+  :class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm`.
 * :class:`CoordinatorRole` — a mango Role that hosts a
-  :class:`~..algorithm.core.Coordinator`.
+  :class:`~distributed_resource_optimization.algorithm.core.Coordinator`.
 * :class:`StartCoordinatedDistributedOptimization` /
   :class:`OptimizationFinishedMessage` — coordination message types.
 
+:meth:`MangoCarrier.others` returns the agent's mango topology neighbours, so a
+topology must be set up before the container is activated.
+
 Usage example::
 
-    from mango import create_tcp_container, agent_composed_of, activate, complete_topology
+    import asyncio
+    from mango import activate, agent_composed_of, auto_assign, complete_topology
+    from mango import create_tcp_container
     from distributed_resource_optimization.carrier.mango import (
         CoordinatorRole, DistributedOptimizationRole,
-        StartCoordinatedDistributedOptimization, OptimizationFinishedMessage,
+        StartCoordinatedDistributedOptimization,
     )
     from distributed_resource_optimization.algorithm.admm.flex_actor import (
         create_admm_flex_actor_one_to_many,
@@ -27,19 +32,18 @@ Usage example::
     )
 
     async def main():
-        container = create_tcp_container("127.0.0.1", 5555)
+        container = create_tcp_container(("127.0.0.1", 5555))
 
         flex_actor = create_admm_flex_actor_one_to_many(10, [0.1, 0.5, -1.0])
         coordinator = create_sharing_target_distance_admm_coordinator()
 
         dor = DistributedOptimizationRole(flex_actor)
-        coord_role = CoordinatorRole(coordinator, include_self=True)
+        coord_role = CoordinatorRole(coordinator)  # not a participant itself
 
         a1 = container.register(agent_composed_of(dor))
         ac = container.register(agent_composed_of(coord_role))
 
-        topo = complete_topology(2)
-        topo.inject()
+        auto_assign(complete_topology(2), [a1, ac])
 
         async with activate(container):
             await a1.send_message(
@@ -48,6 +52,7 @@ Usage example::
                 ),
                 ac.addr,
             )
+            await asyncio.sleep(0.1)  # let the start handler run first
             await coord_role.wait_done()
 """
 
@@ -110,9 +115,9 @@ class _CarrierReply:
 
 
 class MangoCarrier(Carrier):
-    """A :class:`~.core.Carrier` that delegates to a mango-agents Role.
+    """A :class:`~distributed_resource_optimization.carrier.core.Carrier` that delegates to a mango-agents Role.
 
-    :param parent: The mango :class:`~mango.Role` whose context is used for
+    :param parent: The mango ``Role`` whose context is used for
                    message sending, scheduling and address lookup.
     :param include_self: Whether :meth:`others` should include the agent's own
                          address (mirrors ``CoordinatorRole``'s ``include_self``
@@ -142,7 +147,7 @@ class MangoCarrier(Carrier):
 
         If *meta* contains a ``_request_id`` key (set when the message arrived
         via :meth:`send_awaitable`), the reply is wrapped in a
-        :class:`_CarrierReply` so the originating future can be resolved.
+        ``_CarrierReply`` so the originating future can be resolved.
         """
         addr = mango_sender_addr(meta)
         request_id = meta.get("_request_id")
@@ -225,7 +230,7 @@ class _CarrierRole(Role):
 
 
 class DistributedOptimizationRole(_CarrierRole):
-    """Mango Role hosting a :class:`~..algorithm.core.DistributedAlgorithm`.
+    """Mango Role hosting a :class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm`.
 
     :param algorithm: The distributed algorithm instance.
     :param include_self: Passed to :class:`MangoCarrier`.
@@ -278,14 +283,14 @@ class DistributedOptimizationRole(_CarrierRole):
 
 
 class CoordinatorRole(_CarrierRole):
-    """Mango Role hosting a :class:`~..algorithm.core.Coordinator`.
+    """Mango Role hosting a :class:`~distributed_resource_optimization.algorithm.core.Coordinator`.
 
     Listens for :class:`StartCoordinatedDistributedOptimization` messages,
-    runs the coordinator, then broadcasts :class:`OptimizationFinishedMessage`
-    to all topology neighbours.
+    runs the coordinator, then sends each participant (``others()``) its own
+    entry of the result list in an :class:`OptimizationFinishedMessage`.
 
     :param coordinator: The coordinator object (e.g.
-                        :class:`~..admm.core.ADMMGenericCoordinator`).
+                        :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`).
     :param include_self: Whether to include own address when asking for
                          *others* (needed when the coordinator is also one of
                          the ADMM participants).

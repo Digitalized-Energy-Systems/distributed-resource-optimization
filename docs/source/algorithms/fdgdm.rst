@@ -73,6 +73,7 @@ Usage
 The kickoff message carries the same initial vector to every participant. To give
 each agent its own demand-feasible starting point, set the actor's
 ``initial_schedule`` — it replaces the shared kickoff value on the first projection.
+The schedule length is likewise taken from the kickoff vector.
 
 Parameters
 ----------
@@ -89,23 +90,20 @@ Parameters
      - Called with ``(algorithm, carrier)`` when ``max_iter`` is reached
    * - ``fdgdm_actor``
      - ``None``
-     - :class:`~distributed_resource_optimization.FDGDMActor` supplying gradient,
+     - :class:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.FDGDMActor` supplying gradient,
        curvature bound, and feasibility projection
    * - ``max_iter``
      - ``300``
      - Number of iterations (no residual-based stop)
-   * - ``horizon``
-     - ``24``
-     - Placeholder schedule length (resized from the first message)
 
 Actors
 ------
 
-- :class:`~distributed_resource_optimization.LinearCostEconomicDispatchFDGDMActor` —
+- :class:`~distributed_resource_optimization.algorithm.fdgdm.economic_dispatch.LinearCostEconomicDispatchFDGDMActor` —
   quadratic cost :math:`F(P) = (\varepsilon/2)P^2 + cP` with closed-form gradient
   :math:`\varepsilon P + c` and exact curvature bound :math:`\varepsilon`; box
   projection onto :math:`[P_{\min}, P_{\max}]`.
-- :class:`~distributed_resource_optimization.ReservoirStorageFDGDMActor` —
+- :class:`~distributed_resource_optimization.algorithm.fdgdm.economic_dispatch.ReservoirStorageFDGDMActor` —
   storage with piecewise-linear cost and quadratic regularisation. Power limits are
   exact; **SOC coupling across time steps is not modelled** (each step is treated
   independently) — use the Diffusion or ADMM storage actors when SOC dynamics matter.
@@ -120,7 +118,7 @@ Actors
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.create_fdgdm_participant`,
-  :class:`~distributed_resource_optimization.FDGDMAlgorithm`
-- :class:`~distributed_resource_optimization.FDGDMActor`,
-  :class:`~distributed_resource_optimization.NoFDGDMActor`
+- :func:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.create_fdgdm_participant`,
+  :class:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.FDGDMAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.FDGDMActor`,
+  (the base class is the neutral actor: zero gradient, unit curvature, no projection)

@@ -1,7 +1,7 @@
 SimpleCarrier
 =============
 
-:class:`~distributed_resource_optimization.SimpleCarrier` is the built-in lightweight
+:class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` is the built-in lightweight
 carrier. It runs all participants as asyncio tasks within a single process, with no
 network or serialisation overhead. It is the recommended choice for prototyping, testing,
 and single-machine simulations.
@@ -12,8 +12,8 @@ Core Types
 ActorContainer
 ~~~~~~~~~~~~~~
 
-An :class:`~distributed_resource_optimization.ActorContainer` holds all
-:class:`~distributed_resource_optimization.SimpleCarrier` instances and lets them find
+An :class:`~distributed_resource_optimization.carrier.simple.ActorContainer` holds all
+:class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` instances and lets them find
 each other by numeric ID. Create one container per simulation:
 
 .. code-block:: python
@@ -37,7 +37,7 @@ Wraps an algorithm (or coordinator) and registers it with a container:
    c2 = SimpleCarrier(container, create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]]))
 
 Each carrier is automatically assigned a 1-indexed integer ID when it registers. Retrieve
-it with :func:`~distributed_resource_optimization.cid`:
+it with :func:`~distributed_resource_optimization.carrier.simple.cid`:
 
 .. code-block:: python
 
@@ -49,7 +49,7 @@ it with :func:`~distributed_resource_optimization.cid`:
 Sending Messages
 ----------------
 
-Use :meth:`~distributed_resource_optimization.SimpleCarrier.send_to_other` to dispatch a
+Use :meth:`~distributed_resource_optimization.carrier.simple.SimpleCarrier.send_to_other` to dispatch a
 message to another carrier in the same container. The message is delivered asynchronously
 as an asyncio Task:
 
@@ -69,7 +69,7 @@ Express API
 -----------
 
 For quick experiments, skip creating the container and carriers yourself.
-:func:`~distributed_resource_optimization.start_distributed_optimization` wraps everything
+:func:`~distributed_resource_optimization.carrier.simple.start_distributed_optimization` wraps everything
 in a single call:
 
 .. code-block:: python
@@ -90,7 +90,7 @@ in a single call:
    asyncio.run(main())
 
 For coordinated algorithms (e.g. ADMM), use
-:func:`~distributed_resource_optimization.start_coordinated_optimization`:
+:func:`~distributed_resource_optimization.carrier.simple.start_coordinated_optimization`:
 
 .. code-block:: python
 
@@ -116,7 +116,7 @@ Awaitable Messages
 ------------------
 
 When a participant needs a response before continuing (e.g. the ADMM x-update),
-:meth:`~distributed_resource_optimization.SimpleCarrier.send_awaitable` returns an
+:meth:`~distributed_resource_optimization.carrier.simple.SimpleCarrier.send_awaitable` returns an
 ``asyncio.Future`` that resolves to the reply:
 
 .. code-block:: python
@@ -128,16 +128,16 @@ The ADMM coordinator uses this internally to collect all x-updates in parallel.
 
 .. note::
 
-   All message dispatches are asyncio Tasks.  The :attr:`done_event` on the container is
+   All message dispatches are asyncio Tasks.  The ``done_event`` on the container is
    set when the active-task counter reaches zero, signalling that the distributed run has
    finished.
 
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.SimpleCarrier`,
-  :class:`~distributed_resource_optimization.ActorContainer`,
-  :func:`~distributed_resource_optimization.cid`
-- :func:`~distributed_resource_optimization.start_distributed_optimization`,
-  :func:`~distributed_resource_optimization.start_coordinated_optimization`
+- :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier`,
+  :class:`~distributed_resource_optimization.carrier.simple.ActorContainer`,
+  :func:`~distributed_resource_optimization.carrier.simple.cid`
+- :func:`~distributed_resource_optimization.carrier.simple.start_distributed_optimization`,
+  :func:`~distributed_resource_optimization.carrier.simple.start_coordinated_optimization`
 - :doc:`mango` — mango-agents carrier for TCP networking

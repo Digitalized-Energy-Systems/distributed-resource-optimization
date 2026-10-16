@@ -21,8 +21,8 @@ with the first sector weighted five times more heavily (it is a critical load).
 Step 1 — Define the Resources
 -------------------------------
 
-Each resource is an :class:`~distributed_resource_optimization.ADMMFlexActor`.  The
-factory :func:`~distributed_resource_optimization.create_admm_flex_actor_one_to_many`
+Each resource is an :class:`~distributed_resource_optimization.algorithm.admm.flex_actor.ADMMFlexActor`.  The
+factory :func:`~distributed_resource_optimization.algorithm.admm.flex_actor.create_admm_flex_actor_one_to_many`
 takes:
 
 - ``in_capacity`` — maximum input power in kW
@@ -64,7 +64,7 @@ variant, which minimises the weighted distance of the aggregate output to the ta
 Step 3 — Set Up the Problem Data
 ----------------------------------
 
-:func:`~distributed_resource_optimization.create_admm_sharing_data` bundles the target
+:func:`~distributed_resource_optimization.algorithm.admm.sharing_admm.create_admm_sharing_data` bundles the target
 vector and priority weights:
 
 .. code-block:: python

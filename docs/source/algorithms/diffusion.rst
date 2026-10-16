@@ -3,8 +3,9 @@ Diffusion & Exact Diffusion
 
 The Diffusion algorithm coordinates :math:`N` agents on a shared price signal
 :math:`\lambda(t)` over a scheduling horizon via peer-to-peer *adapt-then-combine*
-iterations (Ces et al. 2025, *"Fully distributed economic dispatch with storage via
-diffusion strategies"*). Exact Diffusion (same paper, Sec. 3.4; underlying theory:
+iterations (Ces et al. 2025, *"Comparative analysis of distributed optimization
+algorithms for economic dispatch in microgrids with energy storage systems"*, Journal of
+Energy Storage 132, Sec. 3.3). Exact Diffusion (same paper, Sec. 3.4; underlying theory:
 Yuan, Ling & Sayed 2018, *"Exact Diffusion for Distributed Optimization and
 Learning"*) adds a correction stage that removes classical Diffusion's constant-step-size
 steady-state bias.
@@ -47,9 +48,9 @@ local costs differ. Exact Diffusion inserts a correction between adapt and combi
 using :math:`\bar W = (I + W)/2` — the averaging with :math:`I` keeps the combine
 matrix positive semi-definite, which the convergence proof requires. The per-agent
 step :math:`\varepsilon_i = \varepsilon / p_i` uses the Perron-vector entry
-:math:`p_i` (``perron_scale``, computed centrally via
-:func:`~distributed_resource_optimization.algorithm._weight_rules.perron_vector`);
-on a degree-regular graph :math:`p_i \equiv 1`.
+:math:`p_i` (``perron_scale``) of the weight matrix — computed once, centrally, by
+whoever sets up the scenario and passed to each participant; on a degree-regular graph
+:math:`p_i \equiv 1`, which is the default.
 
 Termination
 -----------
@@ -81,7 +82,6 @@ Usage
    ...     create_diffusion_participant(
    ...         on_finish,
    ...         LinearCostEconomicDispatchDiffusionActor(cost=1.0, p_max=100.0, n_guess=3),
-   ...         horizon=1,
    ...     )
    ...     for _ in range(3)
    ... ]
@@ -100,7 +100,6 @@ Exact Diffusion is a drop-in replacement — swap the factory:
    ...     create_exact_diffusion_participant(
    ...         on_finish,
    ...         LinearCostEconomicDispatchDiffusionActor(cost=1.0, p_max=100.0, n_guess=3),
-   ...         horizon=1,
    ...     )
    ...     for _ in range(3)
    ... ]
@@ -123,7 +122,7 @@ Parameters
      - Called with ``(algorithm, carrier)`` when the run terminates
    * - ``diffusion_actor``
      - ``None``
-     - :class:`~distributed_resource_optimization.DiffusionActor` supplying the gradient
+     - :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor` supplying the gradient
        :math:`\nabla J`; ``None`` means zero gradient
    * - ``initial_lam``
      - ``10.0``
@@ -143,23 +142,25 @@ Parameters
    * - ``patience``
      - ``3``
      - Consecutive sub-``tol`` rounds required before flagging convergence
-   * - ``horizon``
-     - ``24``
-     - Number of schedule time steps
    * - ``weight_rule``
      - ``"mean_metropolis"``
      - Combination-weight rule for the combine step
 
+The schedule length is not a participant parameter: every participant sizes its state
+from the kick-off message, ``create_diffusion_start(initial_lam, data, horizon)``. Only
+the *length* of that message's vector is used — each participant starts from its own
+``initial_lam``.
+
 Economic Dispatch & Storage Actors
 ----------------------------------
 
-Two built-in :class:`~distributed_resource_optimization.DiffusionActor`
+Two built-in :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
 implementations drive the price signal toward an economic dispatch:
 
-- :class:`~distributed_resource_optimization.LinearCostEconomicDispatchDiffusionActor` —
+- :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.LinearCostEconomicDispatchDiffusionActor` —
   responds with :math:`P(\lambda) = \operatorname{clip}((\lambda - c)/\varepsilon,
   P_{\min}, P_{\max})` and returns the gradient :math:`P(\lambda) - P_{\text{target}}/n`.
-- :class:`~distributed_resource_optimization.ReservoirStorageDiffusionActor` — a
+- :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.ReservoirStorageDiffusionActor` — a
   battery/reservoir whose price-driven schedule is projected onto SOC-feasible
   trajectories (power limits, efficiencies, terminal-SOC target) via the shared
   helper in :mod:`~distributed_resource_optimization.misc.util`.
@@ -178,9 +179,9 @@ not ported.
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.create_diffusion_participant`,
-  :class:`~distributed_resource_optimization.DiffusionAlgorithm`
-- :func:`~distributed_resource_optimization.create_exact_diffusion_participant`,
-  :class:`~distributed_resource_optimization.ExactDiffusionAlgorithm`
-- :class:`~distributed_resource_optimization.DiffusionActor`,
-  :class:`~distributed_resource_optimization.NoDiffusionActor`
+- :func:`~distributed_resource_optimization.algorithm.diffusion.diffusion.create_diffusion_participant`,
+  :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionAlgorithm`
+- :func:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.create_exact_diffusion_participant`,
+  :class:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.ExactDiffusionAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`,
+  (the base class is the neutral, zero-gradient actor)

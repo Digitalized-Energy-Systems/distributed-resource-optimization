@@ -104,6 +104,6 @@ Next Steps
 ----------
 
 - See :doc:`../algorithms/cohda` for the algorithm's mathematical background.
-- Use :class:`~distributed_resource_optimization.LocalSearchDecider` for participants
+- Use :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.decider.LocalSearchDecider` for participants
   with continuous feasible corridors instead of discrete schedule lists.
 - See :doc:`../howtos/custom_algorithm` to implement an entirely new algorithm.

@@ -21,10 +21,19 @@ Choosing an Algorithm
      - Continuous allocation whose sum must equal a target (exchange ADMM)
      - Central coordinator
    * - :doc:`COHDA <algorithms/cohda>`
-     - Combinatorial schedule selection, L1 target
+     - Combinatorial schedule selection, weighted L1 target
      - Fully distributed
    * - :doc:`Averaging Consensus <algorithms/consensus>`
-     - Distributed averaging with gradient terms
+     - Leader-follower incremental-cost consensus (economic dispatch)
+     - Fully distributed
+   * - :doc:`Diffusion / Exact Diffusion <algorithms/diffusion>`
+     - Adapt-then-combine price coordination over a scheduling horizon
+     - Fully distributed
+   * - :doc:`FDGDM <algorithms/fdgdm>`
+     - Gradient exchange on power schedules for economic dispatch
+     - Fully distributed
+   * - :doc:`DEED-ADMM <algorithms/deed_admm>`
+     - ADMM with dynamic consensus for economic dispatch (incl. storage)
      - Fully distributed
 
 Use **ADMM** when participants have continuous, bounded decision variables and a convex
@@ -33,8 +42,9 @@ global objective (e.g. match a power target while minimising deviation cost).
 Use **COHDA** when each participant picks one schedule from a discrete set and the goal
 is to minimise the distance of the combined schedule to a target.
 
-Use **Averaging Consensus** when you need distributed parameter averaging, optionally with
-local gradient corrections (e.g. economic dispatch).
+Use **Averaging Consensus**, **Diffusion / Exact Diffusion**, **FDGDM** or **DEED-ADMM**
+for coordinator-free economic dispatch: participants exchange prices, gradients or
+duals with their neighbours until the dispatch balances.
 
 Choosing a Carrier
 ------------------
@@ -50,9 +60,9 @@ regardless of which carrier you choose.
      - When to use
    * - Express API (no setup)
      - Quick experiments and single-process simulation.
-   * - :class:`~distributed_resource_optimization.SimpleCarrier`
+   * - :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier`
      - Full control over message flow within one asyncio process.
-   * - :class:`~distributed_resource_optimization.MangoCarrier`
+   * - :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`
      - Realistic distributed deployments with TCP networking via mango-agents.
 
 
@@ -101,7 +111,7 @@ The simplest way.  Internally wraps everything in a ``SimpleCarrier``.
 Pattern 2 — SimpleCarrier
 --------------------------
 
-Use :class:`~distributed_resource_optimization.SimpleCarrier` when you need direct control:
+Use :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` when you need direct control:
 custom message routing, result inspection, or integration with a larger system.
 
 .. doctest::
@@ -135,8 +145,6 @@ See :doc:`carrier/mango` for full details.
    import mango
    from distributed_resource_optimization import (
        DistributedOptimizationRole,
-       CoordinatorRole,
-       StartCoordinatedDistributedOptimization,
        create_cohda_participant,
        create_cohda_start_message,
    )

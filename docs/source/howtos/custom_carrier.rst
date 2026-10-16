@@ -8,8 +8,8 @@ event bus, a message queue, etc. — without changing any algorithm code.
 The Interface
 -------------
 
-All carriers extend :class:`~distributed_resource_optimization.Carrier` and implement
-five abstract methods:
+All carriers extend :class:`~distributed_resource_optimization.carrier.core.Carrier` and implement
+four abstract methods:
 
 .. code-block:: python
 
@@ -17,7 +17,7 @@ five abstract methods:
 
    class MyCarrier(Carrier):
 
-       def send_to_other(self, content, receiver, meta=None):
+       def send_to_other(self, content, receiver):
            """Dispatch content to receiver (fire-and-forget). Return a Task."""
            ...
 
@@ -25,22 +25,20 @@ five abstract methods:
            """Reply to the sender identified in meta. Return a Task."""
            ...
 
-       def send_awaitable(self, content, receiver, meta=None):
+       def send_awaitable(self, content, receiver):
            """Send content and return a Future that resolves to the reply."""
            ...
 
-       def others(self, participant_id):
-           """Return all participant addresses except participant_id."""
-           ...
-
-       def get_address(self):
-           """Return this carrier's own address."""
+       def others(self):
+           """Return the addresses of every other participant this one talks to."""
            ...
 
 Minimal Example — In-Memory Bus
 ---------------------------------
 
-Here is a minimal custom carrier that stores messages in a dictionary for testing:
+Here is a minimal custom carrier that only records messages in a dictionary — useful for
+unit-testing an algorithm's outgoing messages. It never delivers anything, so its
+``send_awaitable`` future resolves to ``None`` instead of a real reply:
 
 .. code-block:: python
 
@@ -54,7 +52,7 @@ Here is a minimal custom carrier that stores messages in a dictionary for testin
            self.aid = aid
            self.bus = bus  # shared dict: receiver_id -> list[message]
 
-       def send_to_other(self, content, receiver, meta=None):
+       def send_to_other(self, content, receiver):
            self.bus.setdefault(receiver, []).append(content)
            future = asyncio.get_event_loop().create_future()
            future.set_result(None)
@@ -63,17 +61,14 @@ Here is a minimal custom carrier that stores messages in a dictionary for testin
        def reply_to_other(self, content, meta):
            return self.send_to_other(content, meta["sender"])
 
-       def send_awaitable(self, content, receiver, meta=None):
-           self.send_to_other(content, receiver, meta)
+       def send_awaitable(self, content, receiver):
+           self.send_to_other(content, receiver)
            future = asyncio.get_event_loop().create_future()
-           future.set_result(None)
+           future.set_result(None)  # no real transport, so no reply
            return future
 
-       def others(self, participant_id):
+       def others(self):
            return [k for k in self.bus if k != self.aid]
-
-       def get_address(self):
-           return self.aid
 
 Tips
 ----
@@ -81,7 +76,7 @@ Tips
 **Route replies by message ID.**
 The request/reply pattern (used by ADMM) relies on the carrier preserving the
 ``message_id`` from the outgoing meta and routing the reply back to the waiting future.
-See :class:`~distributed_resource_optimization.SimpleCarrier` for a reference
+See :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` for a reference
 implementation.
 
 **Thread safety.**
@@ -95,7 +90,7 @@ when the count drops to zero — exactly as ``ActorContainer`` does.
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.Carrier` — abstract base class
-- :class:`~distributed_resource_optimization.SimpleCarrier` — asyncio reference implementation
-- :class:`~distributed_resource_optimization.MangoCarrier` — mango-agents implementation
+- :class:`~distributed_resource_optimization.carrier.core.Carrier` — abstract base class
+- :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` — asyncio reference implementation
+- :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier` — mango-agents implementation
 - :doc:`custom_algorithm`

@@ -71,14 +71,12 @@ Quick start — ADMM (sharing)
     asyncio.run(main())
 """
 
-# Carrier layer
+# ADMM
 from .algorithm.admm.consensus_admm import (
     ADMMConsensusGlobalActor,
     create_admm_start_consensus,
     create_consensus_target_reach_admm_coordinator,
 )
-
-# ADMM
 from .algorithm.admm.core import (
     ADMMAnswer,
     ADMMGenericCoordinator,
@@ -150,12 +148,12 @@ from .algorithm.diffusion.exact_diffusion import (
     create_exact_diffusion_participant,
     create_exact_diffusion_start,
 )
+
+# FDGDM
 from .algorithm.fdgdm.economic_dispatch import (
     LinearCostEconomicDispatchFDGDMActor,
     ReservoirStorageFDGDMActor,
 )
-
-# FDGDM
 from .algorithm.fdgdm.fdgdm import (
     FDGDMActor,
     FDGDMAlgorithm,
@@ -187,6 +185,8 @@ from .algorithm.heuristic.cohda.core import (
     publish_own_schedule,
 )
 from .algorithm.heuristic.cohda.decider import LocalSearchDecider
+
+# Carrier layer
 from .carrier.core import Carrier
 from .carrier.simple import (
     ActorContainer,

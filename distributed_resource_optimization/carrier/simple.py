@@ -25,8 +25,8 @@ class ActorContainer:
     """Registry of :class:`SimpleCarrier` instances that share a lifecycle.
 
     The container tracks how many asyncio dispatch tasks are currently in
-    flight via :attr:`active_tasks`.  When that counter drops to zero the
-    :attr:`done_event` is set, signalling that the distributed run has
+    flight via ``active_tasks``.  When that counter drops to zero the
+    ``done_event`` is set, signalling that the distributed run has
     finished.
     """
 
@@ -115,7 +115,7 @@ class SimpleCarrier(Carrier):
         """Dispatch *content* to the carrier identified by 1-indexed *receiver*.
 
         The dispatch runs in a fresh asyncio Task so that the caller is not
-        blocked.  The container's :attr:`~ActorContainer.active_tasks` counter
+        blocked.  The container's ``active_tasks`` counter
         is incremented before the task starts and decremented (with possible
         done-event notification) when the task finishes.
         """
@@ -184,7 +184,8 @@ async def start_distributed_optimization(
 
     :param actors: List of algorithm participants.
     :param start_message: The initial message to kick-off the algorithm
-                          (e.g. a :class:`~...cohda.core.WorkingMemory`).
+                          (e.g. a
+                          :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.WorkingMemory`).
     """
     container = ActorContainer()
     carriers = [SimpleCarrier(container, actor) for actor in actors]
@@ -201,13 +202,13 @@ async def start_coordinated_optimization(
 
     Creates a shared :class:`ActorContainer`, registers all actor carriers
     and a coordinator carrier, then delegates to
-    :meth:`~...algorithm.core.Coordinator.start_optimization`.
+    :meth:`~distributed_resource_optimization.algorithm.core.Coordinator.start_optimization`.
 
     :param actors: List of algorithm participants.
     :param coordinator: The coordinator (e.g. an
-                        :class:`~...admm.core.ADMMGenericCoordinator`).
+                        :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`).
     :param start_message: The start payload (e.g.
-                          :class:`~...admm.core.ADMMStart`).
+                          :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMStart`).
     :returns: Whatever the coordinator's ``start_optimization`` returns.
     """
     container = ActorContainer()

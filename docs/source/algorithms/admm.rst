@@ -78,8 +78,13 @@ per-participant tolerance. The check is skipped for ``alpha > 0``.
 The target must be reachable by the participants' feasible sets; otherwise the loop runs
 until ``max_iters`` and logs a warning.
 
-Use :func:`~distributed_resource_optimization.create_consensus_target_reach_admm_coordinator`
-and :func:`~distributed_resource_optimization.create_admm_start_consensus`.
+With ``alpha = 0`` (the default) the :math:`\rho/\alpha` term is dropped and the
+z-update is the exact projection onto :math:`\sum_i z_i = \text{target}`; ``alpha > 0``
+relaxes the sum constraint to a soft quadratic penalty (which biases the converged sum
+when local objectives carry costs).
+
+Use :func:`~distributed_resource_optimization.algorithm.admm.consensus_admm.create_consensus_target_reach_admm_coordinator`
+and :func:`~distributed_resource_optimization.algorithm.admm.consensus_admm.create_admm_start_consensus`.
 
 Local Models
 ------------
@@ -154,7 +159,7 @@ Coordinator Parameters
 
 .. list-table::
    :header-rows: 1
-   :widths: 15 12 53
+   :widths: 22 12 50
 
    * - Parameter
      - Default
