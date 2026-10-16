@@ -27,8 +27,10 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
 
     with ``x = p_d − p_c`` (positive = discharge) and *v* the coordinator's
     correction vector, so it composes with
-    :class:`~.consensus_admm.ADMMConsensusGlobalActor`.  If the terminal SOC
-    ``e_final`` is unreachable within the horizon, that constraint is dropped.
+    :class:`~.consensus_admm.ADMMConsensusGlobalActor`.  The terminal
+    condition is ``E_T >= e_final`` (at least as full as required; decision
+    Q15, same rule as central dispatch and DEED-ADMM); if it is unreachable
+    within the horizon, that constraint is dropped.
 
     ``p_d`` and ``p_c`` have no complementarity constraint, so the QP may
     charge and discharge simultaneously, burning energy through the round-trip
@@ -42,7 +44,8 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
     :param eta_charge: Charging efficiency.
     :param eta_discharge: Discharging efficiency.
     :param e_initial: Initial SOC as a fraction of ``e_max``.
-    :param e_final: Terminal SOC as a fraction of ``e_max`` (default: ``e_initial``).
+    :param e_final: Minimum terminal SOC as a fraction of ``e_max`` (default:
+        ``e_initial``).
     :param soc_min: Minimum SOC fraction.
     :param soc_max: Maximum SOC fraction.
     :param charge_cost: Linear cost per unit of charging power.
@@ -115,7 +118,7 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
             E[1:] == E[:-1] - p_d / self.eta_discharge + p_c * self.eta_charge,
             E >= e_min_abs,
             E <= e_max_abs,
-            E[-1] == e_end,
+            E[-1] >= e_end,
         ]
         prob = cp.Problem(objective, constraints)
         prob.solve(solver=cp.OSQP, verbose=False)
