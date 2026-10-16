@@ -36,6 +36,8 @@ class ADMMFlexActor(DistributedAlgorithm):
     :param C: Coupling constraint matrix (rows: constraints, cols: variables).
     :param d: Coupling RHS vector.
     :param S: Priority/penalty vector (negative values act as rewards).
+    :param Q: Optional per-variable quadratic cost coefficients (``Σ Q_j x_j²``,
+              non-negative); ``None`` = linear cost only.
     """
 
     def __init__(
@@ -45,12 +47,16 @@ class ADMMFlexActor(DistributedAlgorithm):
         C: np.ndarray,
         d: np.ndarray,
         S: np.ndarray,
+        Q: np.ndarray | None = None,
     ) -> None:
         self.lb = lb
         self.u = u
         self.C = C
         self.d = d
         self.S = S
+        self.Q = None if Q is None or not np.any(Q) else np.asarray(Q, dtype=float)
+        if self.Q is not None and np.any(self.Q < 0):
+            raise ValueError("Q must be non-negative (convex cost).")
         self.x: np.ndarray = np.array([])
 
     async def on_exchange_message(
@@ -73,13 +79,21 @@ def _local_update(actor: ADMMFlexActor, v: np.ndarray, rho: float) -> np.ndarray
         # Box-only case: the QP is separable with closed-form solution
         #   min (rho/2)||x||^2 + (rho*v + S)^T x  s.t.  lb <= x <= u
         #   =>  x* = clip(-v - S/rho, lb, u)
-        center = -np.asarray(v, dtype=float) - np.asarray(actor.S, dtype=float) / rho
+        # and with a quadratic cost Σ Q_j x_j² added:
+        #   =>  x* = clip(-(rho*v + S) / (rho + 2Q), lb, u)
+        if actor.Q is None:
+            center = -np.asarray(v, dtype=float) - np.asarray(actor.S, dtype=float) / rho
+        else:
+            center = -(rho * np.asarray(v, dtype=float) + np.asarray(actor.S, dtype=float)) / (
+                rho + 2.0 * actor.Q
+            )
         return np.clip(center, actor.lb, actor.u)
 
     x_var = cp.Variable(m)
 
     h = rho * np.asarray(v, dtype=float) + np.asarray(actor.S, dtype=float)
-    objective = cp.Minimize((rho / 2) * cp.sum_squares(x_var) + h @ x_var)
+    quad = 0 if actor.Q is None else cp.sum(cp.multiply(actor.Q, cp.square(x_var)))
+    objective = cp.Minimize((rho / 2) * cp.sum_squares(x_var) + h @ x_var + quad)
 
     constraints = [
         x_var >= actor.lb,
@@ -132,6 +146,7 @@ def create_admm_flex_actor_box_bounded(
     lb: list[float] | np.ndarray,
     u: list[float] | np.ndarray,
     S: list[float] | np.ndarray | None = None,
+    Q: list[float] | np.ndarray | float | None = None,
 ) -> ADMMFlexActor:
     """Create a box-bounded :class:`ADMMFlexActor` with one variable per timestep.
 
@@ -139,6 +154,8 @@ def create_admm_flex_actor_box_bounded(
     :param u: Upper bounds per decision variable.
     :param S: Linear cost per decision variable (positive = penalised,
               negative = rewarded).
+    :param Q: Optional quadratic cost coefficient per decision variable (or one
+              scalar for all), cost ``Q·x²``; ``None`` = linear only.
     :returns: Configured :class:`ADMMFlexActor`.
     """
     lb_arr = np.asarray(lb, dtype=float)
@@ -155,6 +172,7 @@ def create_admm_flex_actor_box_bounded(
         C=np.zeros((0, m)),
         d=np.zeros(0),
         S=s_arr,
+        Q=None if Q is None else np.broadcast_to(np.asarray(Q, dtype=float), (m,)).copy(),
     )
 
 
