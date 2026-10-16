@@ -161,9 +161,9 @@ implementations drive the price signal toward an economic dispatch:
   responds with :math:`P(\lambda) = \operatorname{clip}((\lambda - c)/\varepsilon,
   P_{\min}, P_{\max})` and returns the gradient :math:`P(\lambda) - P_{\text{target}}/n`.
 - :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.ReservoirStorageDiffusionActor` — a
-  battery/reservoir whose price-driven schedule is projected onto SOC-feasible
-  trajectories (power limits, efficiencies, terminal-SOC target) via the shared
-  helper in :mod:`~distributed_resource_optimization.misc.util`.
+  battery/reservoir answering λ with the exact SOC-feasible best response of the
+  shared storage model (power limits, efficiencies, ``E_T ≥ e_final·e_max``,
+  discharge-only cost) in :mod:`~distributed_resource_optimization.misc.storage`.
 
 Both clip their power response *inside* the gradient, so respecting limits is part of
 the converged fixed point — the paper's outer saturation-flag loop is deliberately

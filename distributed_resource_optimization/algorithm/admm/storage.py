@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import cvxpy as cp
 import numpy as np
 
+from ...misc.storage import StorageModel
 from ..core import DistributedAlgorithm
 from .core import ADMMAnswer, ADMMMessage
 
@@ -29,13 +29,11 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
     correction vector, so it composes with
     :class:`~.consensus_admm.ADMMConsensusGlobalActor`.  The terminal
     condition is ``E_T >= e_final`` (at least as full as required; decision
-    Q15, same rule as central dispatch and DEED-ADMM); if it is unreachable
-    within the horizon, that constraint is dropped.
-
-    ``p_d`` and ``p_c`` have no complementarity constraint, so the QP may
-    charge and discharge simultaneously, burning energy through the round-trip
-    losses without moving the SOC.  This only pays off when surplus cannot be
-    shed otherwise; a positive ``charge_cost`` makes it less attractive.
+    Q15, same rule as central dispatch and DEED-ADMM), capped at what the
+    horizon can reach.  The model and the QP are the shared
+    :class:`~distributed_resource_optimization.misc.storage.StorageModel`
+    (:meth:`~distributed_resource_optimization.misc.storage.StorageModel.prox`
+    at center ``−v``), compiled once and re-solved with warm starts.
 
     :param horizon: Number of timesteps.
     :param e_max: Energy capacity.
@@ -69,18 +67,22 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
         discharge_cost: float = 0.0,
     ) -> None:
         self.horizon = horizon
-        self.e_max = e_max
-        self.p_charge_max = p_charge_max
-        self.p_discharge_max = p_discharge_max
-        self.eta_charge = eta_charge
-        self.eta_discharge = eta_discharge
-        self.e_initial = e_initial
-        self.e_final = e_initial if e_final is None else e_final
-        self.soc_min = soc_min
-        self.soc_max = soc_max
-        self.charge_cost = charge_cost
-        self.discharge_cost = discharge_cost
+        self.model = StorageModel(
+            e_max=e_max,
+            p_charge_max=p_charge_max,
+            p_discharge_max=p_discharge_max,
+            eta_charge=eta_charge,
+            eta_discharge=eta_discharge,
+            e_initial=e_initial,
+            e_final=e_final,
+            soc_min=soc_min,
+            soc_max=soc_max,
+            discharge_cost=discharge_cost,
+            charge_cost=charge_cost,
+        )
         self.x: np.ndarray = np.array([])
+        #: Energy path ``E[0..T]`` of the last answer.
+        self.E: np.ndarray = np.array([])
 
     async def on_exchange_message(
         self,
@@ -95,45 +97,9 @@ class ProximalStorageADMMActor(DistributedAlgorithm):
         carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
 
     def _solve_prox(self, v: np.ndarray, rho: float) -> np.ndarray:
-        T = self.horizon
-        e_min_abs = self.soc_min * self.e_max
-        e_max_abs = self.soc_max * self.e_max
-        e_init = float(np.clip(self.e_initial * self.e_max, e_min_abs, e_max_abs))
-        e_end = float(np.clip(self.e_final * self.e_max, e_min_abs, e_max_abs))
-
-        p_d = cp.Variable(T, nonneg=True)
-        p_c = cp.Variable(T, nonneg=True)
-        E = cp.Variable(T + 1)
-        x = p_d - p_c
-
-        objective = cp.Minimize(
-            self.discharge_cost * cp.sum(p_d)
-            + self.charge_cost * cp.sum(p_c)
-            + (rho / 2.0) * cp.sum_squares(x + v)
-        )
-        constraints = [
-            p_d <= self.p_discharge_max,
-            p_c <= self.p_charge_max,
-            E[0] == e_init,
-            E[1:] == E[:-1] - p_d / self.eta_discharge + p_c * self.eta_charge,
-            E >= e_min_abs,
-            E <= e_max_abs,
-            E[-1] >= e_end,
-        ]
-        prob = cp.Problem(objective, constraints)
-        prob.solve(solver=cp.OSQP, verbose=False)
-
-        if x.value is None:
-            # Terminal SOC infeasible for this horizon — relax it.
-            prob2 = cp.Problem(objective, constraints[:-1])
-            prob2.solve(solver=cp.OSQP, verbose=False)
-            if x.value is None:
-                raise RuntimeError(
-                    f"Storage prox QP infeasible (status={prob2.status}). "
-                    "Check capacity parameters."
-                )
-
-        return np.asarray(x.value, dtype=float)
+        # min cost(p) + (rho/2)||p + v||² = prox at center −v (shared model, Q15).
+        p, self.E = self.model.prox(-np.asarray(v, dtype=float), rho)
+        return p
 
 
 def create_admm_proximal_storage_actor(

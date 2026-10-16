@@ -399,7 +399,8 @@ class TestReservoirStorageDiffusionActor:
         lam = np.zeros(horizon)
         actor.gradient_term(lam, None)
         assert actor.P.shape == (horizon,), f"P shape wrong: {actor.P.shape}"
-        assert actor.E.shape == (horizon,), f"E shape wrong: {actor.E.shape}"
+        # Energy path E[0..T] of the shared storage model (incl. the end state).
+        assert actor.E.shape == (horizon + 1,), f"E shape wrong: {actor.E.shape}"
 
     def test_terminal_energy_target_approx_met(self):
         """Bisection should bring the final SOC within 5% of e_final."""

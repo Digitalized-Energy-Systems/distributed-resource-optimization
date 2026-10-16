@@ -91,5 +91,5 @@ Algorithm Core
 Utilities
 ---------
 
-.. automodule:: distributed_resource_optimization.misc.util
+.. automodule:: distributed_resource_optimization.misc.storage
    :members:

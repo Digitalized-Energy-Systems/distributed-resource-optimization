@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from ...misc.util import project_storage_schedule_from_price
+from ...misc.storage import StorageModel
 from .averaging import ConsensusActor
 
 
@@ -69,9 +69,12 @@ class LinearCostEconomicDispatchConsensusActor(ConsensusActor):
 class ReservoirStorageConsensusActor(ConsensusActor):
     """Reservoir/battery storage actor for consensus-based dispatch.
 
-    The storage actor responds to price signals λ(t) across the full time horizon,
-    charging when prices are low and discharging when prices are high,
-    while respecting energy capacity and power limits.
+    The storage actor responds to price signals λ(t) across the full time
+    horizon with the exact SOC-feasible best response of the shared storage
+    model (:class:`~distributed_resource_optimization.misc.storage.StorageModel`,
+    decision Q15): it minimises ``Σ c_d·p_d + c_c·p_c − λ·p + (ε/2)(p_d² + p_c²)``
+    under the SOC dynamics, power and energy bounds and ``E_T ≥ e_final·e_max`` —
+    the storage counterpart of a generator's ``clip((λ − c)/ε)``.
 
     :param e_max: Maximum energy capacity (MWh).
     :param p_charge_max: Maximum charging power (MW).
@@ -79,13 +82,12 @@ class ReservoirStorageConsensusActor(ConsensusActor):
     :param eta_charge: Charging efficiency (default 0.95).
     :param eta_discharge: Discharging efficiency (default 0.95).
     :param e_initial: Initial energy level as a fraction of ``e_max``.
-    :param e_final: Target final energy level as a fraction of ``e_max``.
+    :param e_final: Minimum final energy level as a fraction of ``e_max``.
     :param soc_min: Minimum state of charge (fraction).
     :param soc_max: Maximum state of charge (fraction).
-    :param charge_cost: Marginal cost for charging.
-    :param discharge_cost: Marginal cost of discharging (the price must exceed
-                           ``charge_cost + discharge_cost`` before the unit discharges).
-    :param epsilon: Sensitivity of power response to price (default 0.1).
+    :param charge_cost: Cost per MWh charged (0 by convention, Q15).
+    :param discharge_cost: Cost per MWh discharged.
+    :param epsilon: Proximal weight ε of the response (default 0.1).
     """
 
     e_max: float
@@ -104,13 +106,27 @@ class ReservoirStorageConsensusActor(ConsensusActor):
     P: np.ndarray = field(default_factory=lambda: np.array([0.0]))
     E: np.ndarray = field(default_factory=lambda: np.array([0.0]))
 
+    def __post_init__(self) -> None:
+        self._model = StorageModel(
+            e_max=self.e_max,
+            p_charge_max=self.p_charge_max,
+            p_discharge_max=self.p_discharge_max,
+            eta_charge=self.eta_charge,
+            eta_discharge=self.eta_discharge,
+            e_initial=self.e_initial,
+            e_final=self.e_final,
+            soc_min=self.soc_min,
+            soc_max=self.soc_max,
+            discharge_cost=self.discharge_cost,
+            charge_cost=self.charge_cost,
+        )
+
     def project_power(self, lam: np.ndarray, data: Any) -> np.ndarray:
-        """Project the price-driven desired schedule onto a feasible one.
+        """Exact SOC-feasible response to the price vector *lam*.
 
         :param lam: Current price/λ vector.
         :param data: Unused (total demand is only needed by the leader).
-        :returns: Projected local power, biased toward the target final SOC.
+        :returns: Net power (positive = discharge); :attr:`E` holds the energy path.
         """
-        lam = np.asarray(lam, dtype=float)
-        self.P, self.E, _ = project_storage_schedule_from_price(self, lam)
+        self.P, self.E = self._model.price_response(np.asarray(lam, dtype=float), self.epsilon)
         return self.P
