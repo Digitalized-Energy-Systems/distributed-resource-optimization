@@ -48,9 +48,16 @@ Deviations from the paper (by design):
 
 * The paper's ramp-rate constraints (16)-(17) are not modelled — none of
   the benchmark networks specify ramp limits.
-* Iterations run for a fixed ``max_iter`` instead of the paper's
-  "while not converged"; the final schedule is read from the box-projected
-  p̂ so the power limits hold even when cut off early.
+* The paper's Algorithm 1 runs "while not converged" without defining a
+  criterion.  With ``tol`` set, an agent is *converged* when its reported
+  schedule moved less than ``tol`` in every hour (``max_t |ΔP_t|``) and its
+  tracker is below it (``max_t |ξ_t| < tol``; ξ → 0 at the optimum,
+  Theorem 2); a run stops when the agent's own flag and every neighbour's
+  flag of one complete round are true — the same rule as FDGDM's Eq. 24
+  stop (decision 2026-10-16).  ``tol=None`` runs a fixed ``max_iter``.  The
+  schedule is read from the box-projected p̂, so the power limits hold
+  either way.  Under loss a recent flag also counts and a stopping agent
+  notifies its neighbours (k > max_iter).
 
 Communication pattern: synchronous peer-to-peer rounds.  Each agent
 broadcasts its (λ, ξ) for round k and advances once it holds round-k state
@@ -121,6 +128,7 @@ class DEEDADMMMessage(OptimizationMessage):
     flow_sum: np.ndarray | None = None
     flow_round: int = -1
     flow_ack: bool = False
+    converged: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +158,8 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     :param round_timeout: Seconds (carrier clock) to wait for a round's state
         before advancing with the last received values; ``None`` (default)
         waits for every neighbour, which stalls if a message is lost.
+    :param tol: Convergence tolerance (MW) on this agent's per-hour schedule
+        step and on its tracker ξ; ``None`` (default) runs ``max_iter`` rounds.
     """
 
     def __init__(
@@ -165,10 +175,17 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         n_agents: int = 1,
         beta: float | None = None,
         round_timeout: float | None = None,
+        tol: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.gamma = float(gamma)
         self.max_iter = max_iter
+        self.tol = tol
+        #: How the last run ended: ``True`` on the convergence stop, ``False``
+        #: at ``max_iter`` with ``tol`` set, ``None`` without ``tol``.
+        self.converged: bool | None = None
+        #: Rounds completed when the last run ended.
+        self.iterations: int = 0
         self.n_agents = n_agents
         self.beta = float(beta) if beta is not None else 1.0 / max(n_agents, 1)
 
@@ -238,10 +255,12 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._flows.reset()
         self._settlement.cancel()
         self._reset_storage_state()
+        self._converged_flag = False
+        self.converged = None
 
     def _mix(self, carrier: "Carrier", neighbours: list) -> tuple[np.ndarray, np.ndarray]:
         """W-weighted neighbour state, W = I − βL, for round ``self._k``."""
-        own = (self._lam, self._xi)
+        own = (self._lam, self._xi, self._converged_flag)
         lam_tilde = self._lam.copy()
         xi_tilde = self._xi.copy()
         me = address_of(carrier)
@@ -249,13 +268,13 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
             # Plain mixing, as in the paper (Algorithm 1): lossless runs (no
             # round deadline) or a carrier that cannot name this participant.
             # The running-sum flows below only matter under message loss.
-            for lam, xi in self._rounds.values(self._k, neighbours, default=lambda _n: own):
+            for lam, xi, _ in self._rounds.values(self._k, neighbours, default=lambda _n: own):
                 lam_tilde += self.beta * (lam - self._lam)
                 xi_tilde += self.beta * (xi - self._xi)
             return lam_tilde, xi_tilde
         values = self._rounds.value_map(self._k, neighbours, default=lambda _n: own)
         for n in neighbours:
-            lam, xi = values[n]
+            lam, xi, _ = values[n]
             lam_tilde += self.beta * (lam - self._lam)
             xi_tilde += self._flows.flow(me, n, self._k, self._xi, xi, self.beta)
             xi_tilde += self._flows.correction(me, n)
@@ -319,11 +338,26 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                     data=self._data,
                     flow_sum=None if owned is None else np.copy(owned[1]),
                     flow_round=-1 if owned is None else owned[0],
+                    converged=self._converged_flag,
                 ),
                 addr,
             )
         k = self._k
         self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
+
+    def _notify_finished(self, carrier: "Carrier", neighbours: list) -> None:
+        """Tell neighbours this agent stopped on convergence (k > max_iter)."""
+        for addr in neighbours:
+            carrier.send_to_other(
+                DEEDADMMMessage(
+                    lam=self._lam.copy(),
+                    xi=self._xi.copy(),
+                    k=self.max_iter + 1,
+                    data=None,
+                    converged=True,
+                ),
+                addr,
+            )
 
     def _finish(self, carrier: "Carrier") -> None:
         self._deadline.cancel()
@@ -336,10 +370,34 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     def _advance(self, carrier: "Carrier", neighbours: list) -> None:
         """Run round ``self._k``; broadcast the next one or finish."""
         self._deadline.cancel()
+        # --- Convergence stop: own flag and every neighbour's flag of a
+        # complete round (all describe step k−1); under loss a neighbour's
+        # last flag may also be one round old.
+        if self.tol is not None and self._converged_flag:
+            complete_and_converged = self._rounds.complete(self._k, len(neighbours)) and all(
+                v[2] for v in self._rounds.round_values(self._k)
+            )
+            recently_converged = self._deadline.enabled and self._rounds.all_recent(
+                neighbours, self._k, 1, lambda v: v[2]
+            )
+            if complete_and_converged or recently_converged:
+                self.converged = True
+                self.iterations = self._k
+                if self._deadline.enabled:
+                    self._notify_finished(carrier, neighbours)
+                self._finish(carrier)
+                return
+        schedule_before = self._extract_schedule()
         self._step(*self._mix(carrier, neighbours))
+        if self.tol is not None:
+            step = np.max(np.abs(self._extract_schedule() - schedule_before))
+            self._converged_flag = bool(step < self.tol and np.max(np.abs(self._xi)) < self.tol)
         self._k += 1
         self._rounds.discard_before(self._k)
         if self._k >= self.max_iter:
+            self.iterations = self._k
+            if self.tol is not None:
+                self.converged = False
             me = address_of(carrier)
             if self._settlement.enabled and me is not None:
                 # The last broadcast (round max_iter − 1) carried the owner sums
@@ -431,6 +489,15 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                 self._settlement.offer_arrived(sender, message_data.flow_round)
             return
 
+        # Notice of a neighbour that stopped on convergence (k > max_iter,
+        # only with a round deadline): stop too.
+        if message_data.k > self.max_iter:
+            if self._running:
+                self.converged = True
+                self.iterations = self._k
+                self._finish(carrier)
+            return
+
         # After a finished run, late messages of that run (rounds > 0) are
         # ignored; a kick-off or a new run's round-0 message restarts it.
         if not self._running and self._has_run and not message_data.initial and message_data.k > 0:
@@ -464,7 +531,11 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
             self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
         if message_data.k >= self.max_iter:
             return  # an owner's final sum, ahead of this participant: offer kept
-        value = (np.asarray(message_data.lam), np.asarray(message_data.xi))
+        value = (
+            np.asarray(message_data.lam),
+            np.asarray(message_data.xi),
+            bool(message_data.converged),
+        )
         if message_data.k < self._k:
             self._rounds.remember(message_data.k, sender, value)
             return
@@ -537,6 +608,7 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         soc_max: float = 1.0,
         discharge_cost: float = 0.0,
         dt: float = 1.0,
+        tol: float | None = None,
     ) -> None:
         self._e_max = float(e_max)
         self._p_charge_max = float(p_charge_max)
@@ -560,6 +632,7 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
             n_agents=n_agents,
             beta=beta,
             round_timeout=round_timeout,
+            tol=tol,
         )
         tau = self._tau
         g = self.gamma
