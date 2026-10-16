@@ -13,8 +13,8 @@ def project_storage_schedule_from_price(
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Project a price signal onto an SOC-feasible battery/reservoir schedule.
 
-    Shared by the ADMM, averaging-consensus, and diffusion storage actors,
-    which all price-drive a desired power request and then search (via
+    Shared by the averaging-consensus and diffusion (incl. exact diffusion)
+    storage actors, which both price-drive a desired power request and then search (via
     bisection over an additive bias) for the schedule whose projected
     trajectory ends closest to the target terminal SOC ``actor.e_final``.
 
