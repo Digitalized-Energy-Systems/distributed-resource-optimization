@@ -299,3 +299,28 @@ async def test_without_leader_run_hits_max_iter_failsafe():
 
     assert finished
     assert all(not converged for converged, _ in finished)
+
+
+@pytest.mark.asyncio
+async def test_neighbours_last_round_message_does_not_end_run():
+    """Every participant stops by its own counter (loss plan rule 4): a
+    neighbour's round-max_iter message must not end a run that is behind."""
+    results: list = []
+    algo = create_averaging_consensus_participant(
+        lambda a, c: results.append((a.converged, a.iterations)),
+        initial_lam=1.0,
+        alpha=0.5,
+        max_iter=3,
+    )
+    carrier = _RecordingCarrier(["a", "b"])
+
+    def msg(k: int) -> AveragingConsensusMessage:
+        return AveragingConsensusMessage(lam=np.array([1.0]), k=k, data=None, p=np.array([0.0]))
+
+    await algo.on_exchange_message(carrier, create_averaging_consensus_start(1.0), None)
+    await algo.on_exchange_message(carrier, msg(3), None)  # a neighbour already finished
+    assert results == []
+    for k in range(3):  # both neighbours report rounds 0..2
+        await algo.on_exchange_message(carrier, msg(k), None)
+        await algo.on_exchange_message(carrier, msg(k), None)
+    assert results == [(False, 3)]

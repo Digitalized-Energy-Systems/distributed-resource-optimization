@@ -210,13 +210,12 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._finish(carrier, converged=True)
             return
 
-        # --- Termination path (max_iter failsafe): a neighbour already
-        # finished its last round ---
-        if message_data.k >= self.max_iter:
-            if self._first_message:
-                # Negotiation already finished; ignore stale terminal messages
-                return
-            self._finish(carrier, converged=False)
+        # A neighbour's last-round message (k = max_iter) does not end this
+        # run: every participant stops by its own counter (max_iter failsafe
+        # in _advance), so one that is behind under loss still applies its
+        # remaining rounds. The message is kept as that neighbour's freshest
+        # value. Outside a run it is stale and ignored.
+        if message_data.k >= self.max_iter and self._first_message:
             return
 
         # After termination, ignore stale messages from the previous round.

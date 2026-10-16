@@ -494,12 +494,21 @@ async def test_exact_diffusion_ignores_stale_message_after_termination():
     start = create_exact_diffusion_start(initial_lam=1.0, horizon=1)
     await algo.on_exchange_message(carrier, start, {})  # k=0 initialisation
 
-    # Both neighbours report k=1 (>= max_iter): terminates and fires the callback.
+    # Both neighbours report round 0: the round completes, the counter reaches
+    # max_iter and the run ends by its own counter, firing the callback.
     await algo.on_exchange_message(
-        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
     )
     await algo.on_exchange_message(
-        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
     )
     assert len(finished) == 1
 

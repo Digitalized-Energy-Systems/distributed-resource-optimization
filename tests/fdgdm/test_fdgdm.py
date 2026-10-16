@@ -504,13 +504,15 @@ async def test_stale_message_after_termination_does_not_restart():
     )
     carrier = StubCarrier(test_neighbors={2})
 
-    # Kick off, then terminate via a k >= max_iter message.
+    # Kick off, then run rounds 0..4 with the single neighbour: the run ends
+    # by its own counter at max_iter.
     await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
-    await algo.on_exchange_message(
-        carrier,
-        FDGDMMessage(gradient=np.zeros(1), d_u_product=1.0, k=5, data=np.array([1.0])),
-        {},
-    )
+    for k in range(5):
+        await algo.on_exchange_message(
+            carrier,
+            FDGDMMessage(gradient=np.zeros(1), d_u_product=1.0, k=k, data=np.array([1.0])),
+            {},
+        )
     assert finished == [1]
     sent_before = sum(len(msgs) for msgs in carrier.test_neighbor_messages.values())
 
@@ -528,3 +530,27 @@ async def test_stale_message_after_termination_does_not_restart():
     await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
     sent_restarted = sum(len(msgs) for msgs in carrier.test_neighbor_messages.values())
     assert sent_restarted > sent_after
+
+
+@pytest.mark.asyncio
+async def test_neighbours_last_round_message_does_not_end_run():
+    """Every participant stops by its own counter (loss plan rule 4): a
+    neighbour's round-max_iter message must not end a run that is behind."""
+    from distributed_resource_optimization import FDGDMMessage
+    from tests.carrier import StubCarrier
+
+    finished: list[int] = []
+    algo = create_fdgdm_participant(
+        lambda a, c: finished.append(1), fdgdm_actor=FDGDMActor(), max_iter=3
+    )
+    carrier = StubCarrier(test_neighbors={2})
+
+    def msg(k: int) -> FDGDMMessage:
+        return FDGDMMessage(gradient=np.zeros(1), d_u_product=1.0, k=k, data=np.array([1.0]))
+
+    await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
+    await algo.on_exchange_message(carrier, msg(3), {})  # the neighbour already finished
+    assert finished == []
+    for k in range(3):
+        await algo.on_exchange_message(carrier, msg(k), {})
+    assert finished == [1]

@@ -541,12 +541,21 @@ async def test_diffusion_ignores_stale_message_after_termination():
     start = create_diffusion_start(initial_lam=1.0, horizon=1)
     await algo.on_exchange_message(carrier, start, {})  # k=0 initialisation
 
-    # Both neighbours report k=1 (>= max_iter): terminates and fires the callback.
+    # Both neighbours report round 0: the round completes, the counter reaches
+    # max_iter and the run ends by its own counter, firing the callback.
     await algo.on_exchange_message(
-        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
     )
     await algo.on_exchange_message(
-        carrier, DiffusionMessage(phi=np.array([1.0]), k=1, data=None, degree=2), {}
+        carrier,
+        DiffusionMessage(
+            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
+        ),
+        {},
     )
     assert len(finished) == 1
 
@@ -556,3 +565,30 @@ async def test_diffusion_ignores_stale_message_after_termination():
         carrier, DiffusionMessage(phi=np.array([99.0]), k=0, data=None, degree=2), {}
     )
     assert len(finished) == 1, "Stale pre-termination message must not restart the algorithm"
+
+
+@pytest.mark.asyncio
+async def test_neighbours_last_round_message_does_not_end_run():
+    """Every participant stops by its own counter (loss plan rule 4): a
+    neighbour's round-max_iter message must not end a run that is behind."""
+    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+        DiffusionAlgorithm,
+        DiffusionMessage,
+    )
+
+    finished = []
+    algo = DiffusionAlgorithm(finish_callback=lambda a, c: finished.append(1), max_iter=2)
+    carrier = _MuteCarrier()
+
+    def msg(k: int) -> DiffusionMessage:
+        return DiffusionMessage(
+            phi=np.array([1.0]), k=k, data=None, degree=2, weight_rule="mean_metropolis"
+        )
+
+    await algo.on_exchange_message(carrier, create_diffusion_start(initial_lam=1.0, horizon=1), {})
+    await algo.on_exchange_message(carrier, msg(2), {})  # a neighbour already finished
+    assert finished == []
+    for k in range(2):  # both neighbours report rounds 0 and 1
+        await algo.on_exchange_message(carrier, msg(k), {})
+        await algo.on_exchange_message(carrier, msg(k), {})
+    assert finished == [1]

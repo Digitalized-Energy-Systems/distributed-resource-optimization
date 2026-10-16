@@ -187,14 +187,15 @@ class _DiffusionRounds(DistributedAlgorithm):
         """Process one incoming diffusion message."""
         neighbours = carrier.others()
 
-        # --- Termination path: a neighbour already finished (max_iter, or
-        # its "finished" notice after stopping on convergence) ---
-        if message_data.k >= self.max_iter:
-            if self._first_message:
-                return
-            # k > max_iter is the notice of a neighbour that stopped on the
-            # all-converged criterion (sent only with a round_timeout).
-            self.converged = message_data.k > self.max_iter and self._converged_flag
+        if message_data.k >= self.max_iter and self._first_message:
+            return  # stale: this participant's run is already over
+        # --- Termination path: notice of a neighbour that stopped on the
+        # all-converged criterion (k > max_iter, sent only with a
+        # round_timeout). A neighbour's ordinary last-round message
+        # (k = max_iter) does not end this run: every participant stops by its
+        # own counter and keeps that message as the neighbour's freshest value.
+        if message_data.k > self.max_iter:
+            self.converged = self._converged_flag
             self.iterations = self._k
             self._finish(carrier)
             return

@@ -43,11 +43,9 @@ Deliberate deviations from the paper
 * **The Eq. 24 stopping criterion (‖P[k+1] − P[k]‖ < ε) is not implemented.**
   Every run executes a fixed ``max_iter`` iterations instead; converged runs
   simply stop changing until the counter runs out.
-* **Termination assumes lockstep rounds** (every agent completes iteration k
-  before any agent completes k+1).  This holds on the complete graphs with
-  constant-delay lossless transport this codebase uses; with heterogeneous
-  delays an agent could terminate one iteration early on receiving a
-  neighbour's ``k ≥ max_iter`` message.
+* **Every agent stops by its own counter** at ``max_iter``; a neighbour's
+  last-round message never ends a run early, so an agent that is behind
+  (heterogeneous delays, message loss) still applies its remaining rounds.
 
 Message loss
 ------------
@@ -207,11 +205,12 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         neighbours = carrier.others()
         n_neighbours = len(neighbours)
 
-        # --- Termination path: a neighbour already finished its last round ---
-        if message_data.k >= self.max_iter:
-            if self._first_message:
-                return
-            self._finish(carrier)
+        # A neighbour's last-round message (k = max_iter) does not end this
+        # run: every participant stops by its own counter, so one that is
+        # behind under loss still applies its remaining flow corrections. The
+        # message is kept as that neighbour's freshest value. Outside a run it
+        # is stale and ignored.
+        if message_data.k >= self.max_iter and self._first_message:
             return
 
         # After termination, ignore stale messages from the previous round.
