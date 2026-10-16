@@ -554,3 +554,59 @@ async def test_neighbours_last_round_message_does_not_end_run():
     for k in range(3):
         await algo.on_exchange_message(carrier, msg(k), {})
     assert finished == [1]
+
+
+async def _run_three_generators(tol=None, max_iter=300):
+    """Three linear-cost generators, interior optimum, total 150 MW."""
+    from distributed_resource_optimization import (
+        LinearCostEconomicDispatchFDGDMActor,
+        create_fdgdm_start,
+        start_distributed_optimization,
+    )
+
+    specs = [(2.0, 100.0, 60.0), (5.0, 100.0, 50.0), (8.0, 100.0, 40.0)]
+    algos = {}
+
+    def make_finish(idx):
+        def finish(algo, carrier):
+            algos[idx] = algo
+
+        return finish
+
+    actors = [
+        create_fdgdm_participant(
+            make_finish(i),
+            fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
+                cost=c, p_max=pm, epsilon=0.1, initial_schedule=np.array([p0])
+            ),
+            max_iter=max_iter,
+            tol=tol,
+        )
+        for i, (c, pm, p0) in enumerate(specs)
+    ]
+    await start_distributed_optimization(actors, create_fdgdm_start(data=np.zeros(1)))
+    return algos
+
+
+@pytest.mark.asyncio
+async def test_eq24_stops_early_on_the_same_dispatch():
+    """Bai et al. Eq. 24: with a tolerance the run stops once every agent's
+    step is below it, well before max_iter, on (nearly) the full-run result."""
+    full = await _run_three_generators(tol=None)
+    early = await _run_three_generators(tol=1e-6)
+
+    assert all(a.converged is None and a.iterations == 300 for a in full.values())
+    iterations = {a.iterations for a in early.values()}
+    assert len(iterations) == 1  # complete graph, lossless: all stop together
+    assert iterations.pop() < 300
+    assert all(a.converged is True for a in early.values())
+    assert float(sum(a._P[0] for a in early.values())) == pytest.approx(150.0, abs=1e-9)
+    for i in full:
+        assert early[i]._P[0] == pytest.approx(full[i]._P[0], abs=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_eq24_not_converged_at_max_iter():
+    # One round: no agent has a step below tol yet when the backstop hits.
+    algos = await _run_three_generators(tol=1e-12, max_iter=1)
+    assert all(a.converged is False and a.iterations == 1 for a in algos.values())
