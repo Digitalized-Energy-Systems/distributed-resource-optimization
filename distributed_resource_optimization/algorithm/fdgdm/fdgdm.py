@@ -70,7 +70,14 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
+from .._rounds import (
+    EdgeFlows,
+    FlowSettlement,
+    RoundBuffer,
+    RoundDeadline,
+    address_of,
+    sender_key,
+)
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -140,6 +147,8 @@ class FDGDMMessage(OptimizationMessage):
     :param flow_sum: If the sender owns the edge to the receiver: its
                      cumulative power flow along that edge through round
                      ``flow_round`` (see :class:`~.._rounds.EdgeFlows`).
+    :param flow_ack: Acknowledges the sender's final running sum (end-of-run
+                     settlement under loss, see :class:`~.._rounds.FlowSettlement`).
     :param flow_round: Last round included in ``flow_sum``.
     """
 
@@ -150,6 +159,7 @@ class FDGDMMessage(OptimizationMessage):
     initial: bool = False
     flow_sum: np.ndarray | None = None
     flow_round: int = -1
+    flow_ack: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +196,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         self._rounds = RoundBuffer()  # (gradient, d·u) per round and sender
         self._flows = EdgeFlows()  # power flows, kept equal on both ends
         self._deadline = RoundDeadline(round_timeout)
+        self._settlement = FlowSettlement(round_timeout)
         self._data: Any = None
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
@@ -204,6 +215,29 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         """Process one incoming FDGDM message."""
         neighbours = carrier.others()
         n_neighbours = len(neighbours)
+
+        # --- End-of-run settlement of the running sums (loss only) ---
+        sender = sender_key(carrier, meta)
+        if message_data.flow_ack:
+            self._settlement.acked(sender)
+            return
+        has_sum = sender is not None and message_data.flow_sum is not None
+        if has_sum and self._settlement.ack_needed(message_data.flow_round, self.max_iter - 1):
+            # The owner's final sum: confirm it (also after finishing), so the
+            # owner stops resending it.
+            carrier.send_to_other(
+                FDGDMMessage(
+                    gradient=np.zeros(1), d_u_product=0.0, k=self.max_iter, data=None, flow_ack=True
+                ),
+                sender,
+            )
+        if self._settlement.active:
+            if has_sum:
+                self._flows.offer(
+                    sender, message_data.flow_round, np.asarray(message_data.flow_sum)
+                )
+                self._settlement.offer_arrived(sender, message_data.flow_round)
+            return
 
         # A neighbour's last-round message (k = max_iter) does not end this
         # run: every participant stops by its own counter, so one that is
@@ -225,6 +259,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._k = 0
             self._rounds.reset()
             self._flows.reset()
+            self._settlement.cancel()
             self._data = message_data.data
 
             # Bootstrap power schedule from data (initial power allocation).
@@ -246,8 +281,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             if message_data.initial:
                 return  # kickoff is not a real neighbour gradient; do not queue
 
-        sender = sender_key(carrier, meta)
-        if sender is not None and message_data.flow_sum is not None:
+        if has_sum:
             self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
         value = (np.asarray(message_data.gradient, dtype=float), float(message_data.d_u_product))
         if message_data.k < self._k:
@@ -255,8 +289,12 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._rounds.remember(message_data.k, sender, value)
             return
         self._rounds.add(message_data.k, sender, value)
-        while not self._first_message and self._rounds.complete(self._k, n_neighbours):
+        while self._running() and self._rounds.complete(self._k, n_neighbours):
             self._advance(carrier, neighbours)
+
+    def _running(self) -> bool:
+        """A run is in progress and has rounds left (not finished or settling)."""
+        return not self._first_message and self._k < self.max_iter
 
     def _advance(self, carrier: "Carrier", neighbours: list) -> None:
         """Weighted gradient update (Eq. 9, Bai et al. 2022) for round ``self._k``."""
@@ -286,35 +324,60 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         self._rounds.discard_before(self._k)
         self._broadcast(carrier, neighbours)
         if self._k >= self.max_iter:
-            self._finish(carrier)
+            if self._settlement.enabled and me is not None:
+                self._settlement.start(
+                    carrier,
+                    me,
+                    neighbours,
+                    self._flows,
+                    final_round=self.max_iter - 1,
+                    resend=lambda addr: self._send_round(carrier, me, addr),
+                    on_settled=lambda: self._settled(carrier, neighbours),
+                )
+            else:
+                self._finish(carrier)
+
+    def _settled(self, carrier: "Carrier", neighbours: list) -> None:
+        """Apply the flows still owed by edge owners, then finish."""
+        me = address_of(carrier)
+        delta_P = np.zeros_like(self._P)
+        for n in neighbours:
+            delta_P += self._flows.correction(me, n)
+        if np.any(delta_P):
+            self._P = self.actor.project(self._P + delta_P)
+        self._finish(carrier)
+
+    def _send_round(self, carrier: "Carrier", me: Any, addr: Any) -> None:
+        """Send this round's gradient (and, as edge owner, the running sum) to *addr*."""
+        owned = self._flows.owner_sum(me, addr) if me is not None else None
+        carrier.send_to_other(
+            FDGDMMessage(
+                gradient=self._last_grad.copy(),
+                d_u_product=self._last_du,
+                k=self._k,
+                data=self._data,
+                flow_sum=None if owned is None else np.copy(owned[1]),
+                flow_round=-1 if owned is None else owned[0],
+            ),
+            addr,
+        )
 
     def _broadcast(self, carrier: "Carrier", neighbours: list) -> None:
         """Send this round's gradient and arm the round deadline."""
         me = address_of(carrier)
         for addr in neighbours:
-            owned = self._flows.owner_sum(me, addr) if me is not None else None
-            carrier.send_to_other(
-                FDGDMMessage(
-                    gradient=self._last_grad.copy(),
-                    d_u_product=self._last_du,
-                    k=self._k,
-                    data=self._data,
-                    flow_sum=None if owned is None else np.copy(owned[1]),
-                    flow_round=-1 if owned is None else owned[0],
-                ),
-                addr,
-            )
+            self._send_round(carrier, me, addr)
         if self._k < self.max_iter:
             k = self._k
             self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
 
     def _on_deadline(self, carrier: "Carrier", k: int) -> None:
         """Round *k* timed out: advance with what arrived, plus last values."""
-        if self._first_message or self._k != k:
+        if not self._running() or self._k != k:
             return
         neighbours = carrier.others()
         self._advance(carrier, neighbours)
-        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+        while self._running() and self._rounds.complete(self._k, len(neighbours)):
             self._advance(carrier, neighbours)
 
     def _finish(self, carrier: "Carrier") -> None:

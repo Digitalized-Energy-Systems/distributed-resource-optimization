@@ -279,6 +279,11 @@ class EdgeFlows:
             return None
         return self._last_round[other], self._total[other]
 
+    def offered_round(self, other: Any) -> int:
+        """Round of the newest owner sum received from *other* (``-1``: none)."""
+        offer = self._offers.get(other)
+        return -1 if offer is None else offer[0]
+
     def offer(self, other: Any, r: int, owner_total: Any) -> None:
         """Store the owner's ``(r, S)`` received from *other* (newest wins)."""
         current = self._offers.get(other)
@@ -305,3 +310,131 @@ class EdgeFlows:
         self._corrected[other] = self._corrected.get(other, 0) + extra
         self._reconciled[other] = r
         return -extra
+
+
+class FlowSettlement:
+    """End-of-run confirmation of :class:`EdgeFlows` sums under message loss.
+
+    Without it, the flows of the last rounds are lost when the owner's final
+    running sum (sent with its round-``max_iter`` message) does not arrive
+    before the other end finishes — the conserved sum then drifts by those
+    flows (noticeable when a run is cut off by ``max_iter`` before it
+    converged).
+
+    When a participant reaches ``max_iter``:
+
+    * **as owner** of an edge it keeps resending its final sum (via
+      *resend*) every *timeout_s* until the other end acknowledges it, at most
+      *retries* times;
+    * **as non-owner** it waits until every owner neighbour's final sum
+      arrived (or *retries* × *timeout_s* passed), then calls *on_settled* —
+      the algorithm applies the outstanding :meth:`EdgeFlows.correction`\\ s
+      and finishes.
+
+    Owners never wait for non-owners, so the protocol cannot deadlock. A
+    participant acknowledges every final sum it receives (also after it
+    finished) via :meth:`ack_needed`.
+    """
+
+    def __init__(self, timeout_s: float | None, retries: int = 20) -> None:
+        self.timeout_s = timeout_s
+        self.retries = retries
+        self.reset()
+
+    def reset(self) -> None:
+        self.active = False  # waiting for owners' final sums
+        self.final_round = -1
+        self._unacked: set[Any] = set()
+        self._awaiting: set[Any] = set()
+        self._on_settled: Callable[[], None] | None = None
+        self._repeat_handle: Any = None
+        self._wait_handle: Any = None
+
+    @property
+    def enabled(self) -> bool:
+        return self.timeout_s is not None
+
+    def start(
+        self,
+        carrier: Any,
+        me: Any,
+        neighbours: Iterable[Any],
+        flows: EdgeFlows,
+        final_round: int,
+        resend: Callable[[Any], None],
+        on_settled: Callable[[], None],
+    ) -> None:
+        """Begin settling after the last round (*final_round* = ``max_iter − 1``).
+
+        *resend(addr)* sends this participant's final message (carrying its
+        owner sum) to *addr* again; *on_settled()* is called exactly once.
+        """
+        self.cancel()
+        self.final_round = final_round
+        neighbours = list(neighbours)
+        self._unacked = {
+            n for n in neighbours if flows.owns(me, n) and flows.owner_sum(me, n) is not None
+        }
+        self._awaiting = {
+            n for n in neighbours if not flows.owns(me, n) and flows.offered_round(n) < final_round
+        }
+        if self._unacked and self.retries > 0:
+            self._schedule_repeat(carrier, resend, self.retries)
+        if not self._awaiting:
+            on_settled()
+            return
+        self.active = True
+        self._on_settled = on_settled
+        self._wait_handle = carrier.schedule_after(
+            self.timeout_s * max(self.retries, 1), self._give_up
+        )
+
+    def _schedule_repeat(self, carrier: Any, resend: Callable[[Any], None], left: int) -> None:
+        def repeat() -> None:
+            self._repeat_handle = None
+            for addr in list(self._unacked):
+                resend(addr)
+            if self._unacked and left > 1:
+                self._schedule_repeat(carrier, resend, left - 1)
+
+        self._repeat_handle = carrier.schedule_after(self.timeout_s, repeat)
+
+    def ack_needed(self, flow_round: int, final_round: int) -> bool:
+        """Whether a received owner sum for *flow_round* is a final one to acknowledge."""
+        return self.enabled and flow_round >= final_round >= 0
+
+    def acked(self, sender: Any) -> None:
+        """*sender* confirmed it holds this participant's final owner sum."""
+        self._unacked.discard(sender)
+        if not self._unacked and self._repeat_handle is not None:
+            self._repeat_handle.cancel()
+            self._repeat_handle = None
+
+    def offer_arrived(self, sender: Any, flow_round: int) -> None:
+        """An owner sum from *sender* arrived (already passed to :meth:`EdgeFlows.offer`)."""
+        if not self.active or flow_round < self.final_round:
+            return
+        self._awaiting.discard(sender)
+        if not self._awaiting:
+            self._settle()
+
+    def _give_up(self) -> None:
+        self._wait_handle = None
+        if self.active:
+            self._settle()
+
+    def _settle(self) -> None:
+        self.active = False
+        if self._wait_handle is not None:
+            self._wait_handle.cancel()
+            self._wait_handle = None
+        on_settled, self._on_settled = self._on_settled, None
+        if on_settled is not None:
+            on_settled()
+
+    def cancel(self) -> None:
+        """Stop all timers (new run)."""
+        for handle in (self._repeat_handle, self._wait_handle):
+            if handle is not None:
+                handle.cancel()
+        self.reset()

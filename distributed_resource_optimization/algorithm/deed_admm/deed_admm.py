@@ -76,7 +76,14 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
+from .._rounds import (
+    EdgeFlows,
+    FlowSettlement,
+    RoundBuffer,
+    RoundDeadline,
+    address_of,
+    sender_key,
+)
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -101,6 +108,8 @@ class DEEDADMMMessage(OptimizationMessage):
     :param flow_sum: If the sender owns the edge to the receiver: its
                      cumulative ξ mixing flow along that edge through round
                      ``flow_round`` (see :class:`~.._rounds.EdgeFlows`).
+    :param flow_ack: Acknowledges the sender's final running sum (end-of-run
+                     settlement under loss, see :class:`~.._rounds.FlowSettlement`).
     :param flow_round: Last round included in ``flow_sum``.
     """
 
@@ -111,6 +120,7 @@ class DEEDADMMMessage(OptimizationMessage):
     initial: bool = False
     flow_sum: np.ndarray | None = None
     flow_round: int = -1
+    flow_ack: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +196,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._rounds = RoundBuffer()  # (λ, ξ) per round and sender
         self._flows = EdgeFlows()  # ξ mixing flows, kept equal on both ends
         self._deadline = RoundDeadline(round_timeout)
+        self._settlement = FlowSettlement(round_timeout)
         self._data: Any = None
         self._running: bool = False
         self._has_run: bool = False  # a finished run ignores late messages
@@ -225,6 +236,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._k = 0
         self._rounds.reset()
         self._flows.reset()
+        self._settlement.cancel()
         self._reset_storage_state()
 
     def _mix(self, carrier: "Carrier", neighbours: list) -> tuple[np.ndarray, np.ndarray]:
@@ -328,17 +340,63 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._k += 1
         self._rounds.discard_before(self._k)
         if self._k >= self.max_iter:
-            self._finish(carrier)
+            me = address_of(carrier)
+            if self._settlement.enabled and me is not None:
+                # The last broadcast (round max_iter − 1) carried the owner sums
+                # only through round max_iter − 2: send the final ones now and
+                # settle the edges this participant does not own.
+                for addr in neighbours:
+                    if self._flows.owns(me, addr):
+                        self._send_final(carrier, me, addr)
+                self._settlement.start(
+                    carrier,
+                    me,
+                    neighbours,
+                    self._flows,
+                    final_round=self.max_iter - 1,
+                    resend=lambda addr: self._send_final(carrier, me, addr),
+                    on_settled=lambda: self._settled(carrier, neighbours),
+                )
+            else:
+                self._finish(carrier)
             return
         self._broadcast(carrier, neighbours)
 
+    def _send_final(self, carrier: "Carrier", me: Any, addr: Any) -> None:
+        """Send this edge owner's final running sum to *addr*."""
+        owned = self._flows.owner_sum(me, addr)
+        if owned is None:
+            return
+        carrier.send_to_other(
+            DEEDADMMMessage(
+                lam=self._lam.copy(),
+                xi=self._xi.copy(),
+                k=self.max_iter,
+                data=None,
+                flow_sum=np.copy(owned[1]),
+                flow_round=owned[0],
+            ),
+            addr,
+        )
+
+    def _settled(self, carrier: "Carrier", neighbours: list) -> None:
+        """Apply the ξ flows still owed by edge owners, then finish."""
+        me = address_of(carrier)
+        for n in neighbours:
+            self._xi = self._xi + self._flows.correction(me, n)
+        self._finish(carrier)
+
+    def _in_rounds(self) -> bool:
+        """A run is in progress and has rounds left (not finished or settling)."""
+        return self._running and self._k < self.max_iter
+
     def _on_deadline(self, carrier: "Carrier", k: int) -> None:
         """Round *k* timed out: advance with what arrived, plus last values."""
-        if not self._running or self._k != k:
+        if not self._in_rounds() or self._k != k:
             return
         neighbours = carrier.others()
         self._advance(carrier, neighbours)
-        while self._running and self._rounds.complete(self._k, len(neighbours)):
+        while self._in_rounds() and self._rounds.complete(self._k, len(neighbours)):
             self._advance(carrier, neighbours)
 
     async def on_exchange_message(
@@ -349,6 +407,29 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     ) -> None:
         """Handle one incoming DEED-ADMM message."""
         neighbours = carrier.others()
+
+        # --- End-of-run settlement of the running sums (loss only) ---
+        sender = sender_key(carrier, meta)
+        if message_data.flow_ack:
+            self._settlement.acked(sender)
+            return
+        has_sum = sender is not None and message_data.flow_sum is not None
+        if has_sum and self._settlement.ack_needed(message_data.flow_round, self.max_iter - 1):
+            # The owner's final sum: confirm it (also after finishing), so the
+            # owner stops resending it.
+            carrier.send_to_other(
+                DEEDADMMMessage(
+                    lam=np.zeros(1), xi=np.zeros(1), k=self.max_iter, data=None, flow_ack=True
+                ),
+                sender,
+            )
+        if self._settlement.active:
+            if has_sum:
+                self._flows.offer(
+                    sender, message_data.flow_round, np.asarray(message_data.flow_sum)
+                )
+                self._settlement.offer_arrived(sender, message_data.flow_round)
+            return
 
         # After a finished run, late messages of that run (rounds > 0) are
         # ignored; a kick-off or a new run's round-0 message restarts it.
@@ -379,15 +460,16 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
 
         # --- Synchronous rounds: advance on complete round-k state (or at
         # the round deadline); state from rounds ahead is buffered ---
-        sender = sender_key(carrier, meta)
-        if sender is not None and message_data.flow_sum is not None:
+        if has_sum:
             self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
+        if message_data.k >= self.max_iter:
+            return  # an owner's final sum, ahead of this participant: offer kept
         value = (np.asarray(message_data.lam), np.asarray(message_data.xi))
         if message_data.k < self._k:
             self._rounds.remember(message_data.k, sender, value)
             return
         self._rounds.add(message_data.k, sender, value)
-        while self._running and self._rounds.complete(self._k, len(neighbours)):
+        while self._in_rounds() and self._rounds.complete(self._k, len(neighbours)):
             self._advance(carrier, neighbours)
 
 

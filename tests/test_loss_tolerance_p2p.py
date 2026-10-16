@@ -174,7 +174,7 @@ async def test_participant_finishes_when_every_message_is_lost():
 # ---------------------------------------------------------------------------
 
 
-async def _run_fdgdm(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
+async def _run_fdgdm(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT, max_iter=300):
     """Three generators, interior optimum, total 150 MW (Σ P is conserved)."""
     from distributed_resource_optimization import (
         LinearCostEconomicDispatchFDGDMActor,
@@ -197,7 +197,7 @@ async def _run_fdgdm(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
             fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(
                 cost=cost, p_max=p_max, epsilon=0.1, initial_schedule=np.array([p0])
             ),
-            max_iter=300,
+            max_iter=max_iter,
             round_timeout=round_timeout,
         )
         for i, (cost, p_max, p0) in enumerate(specs)
@@ -209,7 +209,7 @@ async def _run_fdgdm(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
     return results, container
 
 
-async def _run_deed(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
+async def _run_deed(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT, max_iter=300, algos=None):
     """Four thermal hubs, 4-step horizon (see tests/deed_admm)."""
     from distributed_resource_optimization import create_deed_admm_thermal_participant
     from distributed_resource_optimization.algorithm.deed_admm.deed_admm import DEEDADMMMessage
@@ -221,6 +221,8 @@ async def _run_deed(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
     def make_finish(idx):
         def finish(algo, carrier):
             results[idx] = algo.P.copy()
+            if algos is not None:
+                algos[idx] = algo
 
         return finish
 
@@ -233,7 +235,7 @@ async def _run_deed(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT):
             cost_quad=0.01,
             d_i=demand / n,
             gamma=0.05,
-            max_iter=300,
+            max_iter=max_iter,
             n_agents=n,
             round_timeout=round_timeout,
         )
@@ -269,7 +271,7 @@ class TestRunningSums:
 
         assert container.dropped > 0
         assert sorted(results) == [0, 1, 2]
-        assert sum(results.values())[0] == pytest.approx(150.0, abs=0.5)
+        assert sum(results.values())[0] == pytest.approx(150.0, abs=1e-9)
         for i in reference:
             assert results[i] == pytest.approx(reference[i], abs=1.0)
 
@@ -284,3 +286,25 @@ class TestRunningSums:
         np.testing.assert_allclose(sum(results.values()), demand, atol=1.0)
         for i in reference:
             np.testing.assert_allclose(results[i], reference[i], atol=2.0)
+
+    # End-of-run settlement (FlowSettlement): a run cut off by max_iter before
+    # it converged still has large flows in its last rounds; without settling,
+    # a lost final running sum leaves the conserved sum off for good.
+    @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
+    async def test_fdgdm_cut_off_run_conserves_total_power(self, seed):
+        results, container = await _run_fdgdm(
+            loss_rate=0.2, seed=seed, round_timeout=0.05, max_iter=15
+        )
+        assert container.dropped > 0
+        assert sum(results.values())[0] == pytest.approx(150.0, abs=1e-9)
+
+    @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
+    async def test_deed_cut_off_run_conserves_xi(self, seed):
+        algos: dict = {}
+        _, container, _ = await _run_deed(
+            loss_rate=0.2, seed=seed, round_timeout=0.05, max_iter=15, algos=algos
+        )
+        assert container.dropped > 0
+        xi = sum(a._xi for a in algos.values())
+        x_minus_y = sum(a._x - a._y for a in algos.values())
+        np.testing.assert_allclose(xi, x_minus_y, atol=1e-9)
