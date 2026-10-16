@@ -34,6 +34,10 @@ async def test_averaging_consensus_with_simple_carrier():
         max_iter=100,
         is_leader=True,
         leader_gain=0.02,
+        # This test checks λ agreement, which the default 1 % power-balance
+        # stop does not guarantee (it stops at λ spread ≈ 0.04 here), so
+        # effectively disable the stop and run all max_iter rounds.
+        balance_tol=1e-9,
     )
     actor_two = create_averaging_consensus_participant(
         lambda *_: None,

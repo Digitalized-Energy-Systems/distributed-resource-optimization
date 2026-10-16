@@ -69,10 +69,15 @@ class AveragingConsensusMessage(OptimizationMessage):
                 starts from its own ``initial_lam``; only the length is read.
     :param k: Current iteration counter.
     :param data: Auxiliary payload forwarded to :meth:`ConsensusActor.project_power`.
+                 Only carried by the kick-off and round-0 messages; recipients
+                 cache it, so later rounds send ``None``.
     :param p: Sender's projected local power for this round (used by the
               leader to recover the real system-wide power imbalance).
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state.
+    :param stop: Sent by the leader once the power balance holds; ``k`` is
+                 the round whose schedules the leader verified. Recipients
+                 finish on that round's schedule.
     """
 
     lam: np.ndarray
@@ -80,6 +85,7 @@ class AveragingConsensusMessage(OptimizationMessage):
     data: Any
     p: np.ndarray | None = None
     initial: bool = False
+    stop: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -101,17 +107,28 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     other participant (complete or leader-star topology) — on a sparser
     graph it would pin λ against a partial, understated imbalance.
 
+    Termination follows Jian et al. 2020 (p. 1428, after eq. 23): iterate
+    "until the system satisfies the power balance, that is, ΔP = 0". As
+    ΔP = 0 is never hit exactly, the leader stops once every timestep
+    satisfies ``|ΔP_t| ≤ balance_tol · |P_D,t|`` and sends a ``stop``
+    message; :attr:`max_iter` remains as a failsafe.
+
     :param finish_callback: Called with ``(algorithm, carrier)`` when the run
-                            ends.  Runs always last exactly :attr:`max_iter`
-                            rounds; there is no residual-based early stop.
+                            ends (power balance reached, or the
+                            :attr:`max_iter` failsafe).
     :param consensus_actor: Optional :class:`ConsensusActor` for the price
                             to power projection (eq. 23).
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).
     :param alpha: Averaging step size (0 < α ≤ 1).
-    :param max_iter: Maximum number of consensus iterations.
+    :param max_iter: Maximum number of consensus iterations (failsafe).
     :param is_leader: Whether this participant is the leader (eq. 22).
     :param leader_gain: Leader's power-imbalance pinning gain (ε in eq. 22).
+                        Must be positive for the leader; ignored for followers.
+    :param balance_tol: Relative power-balance tolerance for the leader's
+                        stop criterion (default 1 % of demand per timestep).
                         Ignored for followers.
+    :raises ValueError: If ``is_leader`` is set without a positive ``leader_gain``
+                        (the leader would never correct the power imbalance).
     """
 
     def __init__(
@@ -123,7 +140,13 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         max_iter: int = 50,
         is_leader: bool = False,
         leader_gain: float = 0.0,
+        balance_tol: float = 0.01,
     ) -> None:
+        if is_leader and leader_gain <= 0:
+            raise ValueError(
+                f"The leader needs a positive leader_gain to correct the power "
+                f"imbalance (eq. 22), got leader_gain={leader_gain}."
+            )
         self.finish_callback = finish_callback
         self.actor: ConsensusActor = (
             consensus_actor if consensus_actor is not None else ConsensusActor()
@@ -133,6 +156,13 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self.max_iter = max_iter
         self.is_leader = is_leader
         self.leader_gain = leader_gain
+        self.balance_tol = balance_tol
+
+        #: How the last run ended: ``True`` if the leader reached the power
+        #: balance, ``False`` if it hit the max_iter failsafe.
+        self.converged: bool = False
+        #: Iterations completed when the last run terminated.
+        self.iterations: int = 0
 
         # Mutable iteration state (reset at the start of each consensus run)
         self._message_queue: dict[int, list[AveragingConsensusMessage]] = {}
@@ -140,7 +170,16 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
         self._lam: np.ndarray = np.array([initial_lam])
+        self._prev_lam: np.ndarray = self._lam.copy()  # λ before the last update
         self._P: np.ndarray = np.array([0.0])  # own last-projected power
+        self._data: Any = None  # run payload, cached from the round-0 message
+
+    def _finish(self, carrier: "Carrier", converged: bool) -> None:
+        self.converged = converged
+        self.iterations = self._k
+        self.finish_callback(self, carrier)
+        self._first_message = True
+        self._message_queue.clear()
 
     async def on_exchange_message(
         self,
@@ -151,14 +190,27 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         """Process one incoming averaging consensus message."""
         neighbours = carrier.others()
 
-        # --- Termination path ---
+        # --- Termination path (leader's power-balance stop) ---
+        if message_data.stop:
+            if self._first_message:
+                return
+            if message_data.k < self._k:
+                # We already applied the next round's update before the stop
+                # arrived (we can be at most one round ahead: advancing again
+                # needs the leader's next message). Roll back so we finish on
+                # the schedule the leader verified.
+                self._lam = self._prev_lam
+                self._P = np.asarray(self.actor.project_power(self._lam, self._data))
+                self._k = message_data.k
+            self._finish(carrier, converged=True)
+            return
+
+        # --- Termination path (max_iter failsafe) ---
         if message_data.k >= self.max_iter:
             if self._first_message:
                 # Negotiation already finished; ignore stale terminal messages
                 return
-            self.finish_callback(self, carrier)
-            self._first_message = True
-            self._message_queue.clear()
+            self._finish(carrier, converged=False)
             return
 
         # After termination, ignore stale messages from the previous round.
@@ -172,12 +224,18 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._started = True
             self._k = 0
             self._message_queue.clear()
+            self.converged = False
+            # ``data`` is constant for the whole run, so it only travels with
+            # the kick-off and round-0 messages. Under packet loss a follower
+            # that misses every round-0 message never receives it; that is
+            # harmless as only the leader (which gets the kick-off) needs it.
+            self._data = message_data.data
             self._lam = np.ones(len(message_data.lam)) * self.initial_lam
-            self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
+            self._P = np.asarray(self.actor.project_power(self._lam, self._data))
             for addr in neighbours:
                 carrier.send_to_other(
                     AveragingConsensusMessage(
-                        lam=self._lam.copy(), k=0, data=message_data.data, p=self._P.copy()
+                        lam=self._lam.copy(), k=0, data=self._data, p=self._P.copy()
                     ),
                     addr,
                 )
@@ -200,16 +258,31 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         # --- Advance if we have all neighbours' messages for this iteration ---
         if len(queue) == len(neighbours) or self._k < message_data.k:
             avg_lam = sum(m.lam for m in queue) / len(queue)
+            self._prev_lam = self._lam
             if self.is_leader:
-                pd = np.asarray(message_data.data, dtype=float)
+                pd = np.asarray(self._data, dtype=float)
                 sigma_p = self._P + sum(np.asarray(m.p) for m in queue)
                 delta_p = pd - sigma_p
+                # Stop criterion: power balance ΔP ≈ 0 (see class docstring).
+                # This round's schedules are the ones checked, so stop before
+                # updating λ.
+                rel_gap = np.abs(delta_p) / np.maximum(np.abs(pd), 1e-9)
+                if np.max(rel_gap) <= self.balance_tol:
+                    for addr in neighbours:
+                        carrier.send_to_other(
+                            AveragingConsensusMessage(
+                                lam=self._lam.copy(), k=self._k, data=None, stop=True
+                            ),
+                            addr,
+                        )
+                    self._finish(carrier, converged=True)
+                    return
                 self._lam = (
                     self._lam + self.alpha * (avg_lam - self._lam) + self.leader_gain * delta_p
                 )
             else:
                 self._lam = self._lam + self.alpha * (avg_lam - self._lam)
-            self._P = np.asarray(self.actor.project_power(self._lam, message_data.data))
+            self._P = np.asarray(self.actor.project_power(self._lam, self._data))
             self._k = message_data.k + 1
 
             # Purge this and any older iteration's queue: after jumping past
@@ -222,7 +295,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                     AveragingConsensusMessage(
                         lam=self._lam.copy(),
                         k=self._k,
-                        data=message_data.data,
+                        data=None,
                         p=self._P.copy(),
                     ),
                     addr,
