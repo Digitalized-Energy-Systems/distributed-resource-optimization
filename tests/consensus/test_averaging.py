@@ -324,3 +324,114 @@ async def test_neighbours_last_round_message_does_not_end_run():
         await algo.on_exchange_message(carrier, msg(k), None)
         await algo.on_exchange_message(carrier, msg(k), None)
     assert results == [(False, 3)]
+
+
+class _Timer:
+    def __init__(self, callback) -> None:
+        self.callback = callback
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def fire(self) -> None:
+        if not self.cancelled:
+            self.cancelled = True
+            self.callback()
+
+
+class _LossCarrier(_RecordingCarrier):
+    """Recording carrier that names senders (meta["sender"]) and hands out
+    timers the test fires by hand, as a carrier with round deadlines would."""
+
+    def __init__(self, neighbours: list[str]) -> None:
+        super().__init__(neighbours)
+        self.timers: list[_Timer] = []
+
+    def sender_of(self, meta):
+        return meta["sender"]
+
+    def schedule_after(self, delay_s, callback):
+        timer = _Timer(callback)
+        self.timers.append(timer)
+        return timer
+
+
+@pytest.mark.asyncio
+async def test_late_stop_rolls_back_several_rounds_and_is_acknowledged():
+    """Under loss a repeated stop can arrive several rounds late: the follower
+    rolls back to the verified round's λ and acknowledges the stop."""
+    results: list = []
+    algo = create_averaging_consensus_participant(
+        lambda a, c: results.append((a.converged, a.iterations, a._lam.copy())),
+        initial_lam=1.0,
+        alpha=0.5,
+        round_timeout=1.0,
+    )
+    carrier = _LossCarrier(["leader"])
+
+    def leader_msg(k: int) -> AveragingConsensusMessage:
+        return AveragingConsensusMessage(lam=np.array([3.0 + k]), k=k, data=None, p=np.array([0.0]))
+
+    await algo.on_exchange_message(carrier, create_averaging_consensus_start(1.0), None)
+    await algo.on_exchange_message(carrier, leader_msg(0), {"sender": "leader"})
+    lam_round_1 = algo._lam.copy()  # λ entering round 1
+    for k in (1, 2):
+        await algo.on_exchange_message(carrier, leader_msg(k), {"sender": "leader"})
+    assert algo._k == 3  # three rounds past the start
+
+    stop = AveragingConsensusMessage(lam=np.array([0.0]), k=1, data=None, stop=True)
+    await algo.on_exchange_message(carrier, stop, {"sender": "leader"})
+    assert len(results) == 1
+    converged, iterations, lam = results[0]
+    assert converged and iterations == 1
+    np.testing.assert_array_equal(lam, lam_round_1)
+    acks = [m for r, m in carrier.sent if r == "leader" and m.stop_ack]
+    assert len(acks) == 1
+
+    # A repeated copy after finishing is acknowledged again but changes nothing.
+    await algo.on_exchange_message(carrier, stop, {"sender": "leader"})
+    assert len(results) == 1
+    assert len([m for r, m in carrier.sent if r == "leader" and m.stop_ack]) == 2
+
+
+@pytest.mark.asyncio
+async def test_leader_repeats_stop_until_every_neighbour_acknowledged():
+    results: list = []
+    leader = create_averaging_consensus_participant(
+        lambda a, c: results.append(a.converged),
+        initial_lam=1.0,
+        is_leader=True,
+        leader_gain=0.1,
+        round_timeout=1.0,
+        stop_retries=5,
+    )
+    carrier = _LossCarrier(["a", "b"])
+    demand = np.zeros(1)  # zero demand, zero projected power: balanced at once
+
+    await leader.on_exchange_message(
+        carrier, create_averaging_consensus_start(1.0, data=demand), None
+    )
+    for sender in ("a", "b"):
+        await leader.on_exchange_message(
+            carrier,
+            AveragingConsensusMessage(lam=np.array([1.0]), k=0, data=None, p=np.array([0.0])),
+            {"sender": sender},
+        )
+    assert results == [True]
+
+    def stops_to(receiver: str) -> int:
+        return len([m for r, m in carrier.sent if r == receiver and m.stop])
+
+    assert stops_to("a") == 1 and stops_to("b") == 1
+    ack = AveragingConsensusMessage(lam=np.array([1.0]), k=0, data=None, stop_ack=True)
+    await leader.on_exchange_message(carrier, ack, {"sender": "a"})
+
+    carrier.timers[-1].fire()  # one round timeout later: repeat to "b" only
+    assert stops_to("a") == 1 and stops_to("b") == 2
+
+    await leader.on_exchange_message(carrier, ack, {"sender": "b"})
+    assert carrier.timers[-1].cancelled  # everyone acked: no more repeats
+    for timer in carrier.timers:
+        timer.fire()
+    assert stops_to("a") == 1 and stops_to("b") == 2

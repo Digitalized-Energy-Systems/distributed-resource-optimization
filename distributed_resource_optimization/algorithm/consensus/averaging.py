@@ -79,6 +79,9 @@ class AveragingConsensusMessage(OptimizationMessage):
     :param stop: Sent by the leader once the power balance holds; ``k`` is
                  the round whose schedules the leader verified. Recipients
                  finish on that round's schedule.
+    :param stop_ack: Under message loss (with a round deadline), a recipient's
+                     acknowledgement of a ``stop``; the leader repeats the stop
+                     to every neighbour that has not acknowledged it yet.
     """
 
     lam: np.ndarray
@@ -87,6 +90,7 @@ class AveragingConsensusMessage(OptimizationMessage):
     p: np.ndarray | None = None
     initial: bool = False
     stop: bool = False
+    stop_ack: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +141,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                           balance only on rounds where every neighbour's value
                           arrived.  ``None`` (default) waits for every
                           neighbour, which stalls if a message is lost.
+    :param stop_retries: With a ``round_timeout``, how often the leader repeats
+                         its power-balance ``stop`` (every ``round_timeout``)
+                         to neighbours that have not acknowledged it, so a lost
+                         stop cannot leave a follower iterating on an
+                         unverified schedule.
     :raises ValueError: If ``is_leader`` is set without a positive ``leader_gain``
                         (the leader would never correct the power imbalance).
     """
@@ -152,6 +161,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         leader_gain: float = 0.0,
         balance_tol: float = 0.01,
         round_timeout: float | None = None,
+        stop_retries: int = 20,
     ) -> None:
         if is_leader and leader_gain <= 0:
             raise ValueError(
@@ -168,6 +178,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self.is_leader = is_leader
         self.leader_gain = leader_gain
         self.balance_tol = balance_tol
+        self.stop_retries = stop_retries
 
         #: How the last run ended: ``True`` if the leader reached the power
         #: balance, ``False`` if it hit the max_iter failsafe.
@@ -184,7 +195,15 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._k: int = 0
         self._lam: np.ndarray = np.array([initial_lam])
         self._prev_lam: np.ndarray = self._lam.copy()  # λ before the last update
+        # λ at the start of each round, so a stop that arrives several rounds
+        # late (lost and repeated) can roll back to the verified round.
+        self._lam_history: dict[int, np.ndarray] = {}
         self._P: np.ndarray = np.array([0.0])  # own last-projected power
+        # Leader, under loss: the stop being repeated and who has not acked it.
+        self._stop_msg: AveragingConsensusMessage | None = None
+        self._stop_unacked: set[Any] = set()
+        self._stop_handle: Any = None
+        self._stop_repeats_left: int = 0
 
     async def on_exchange_message(
         self,
@@ -195,16 +214,35 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         """Process one incoming averaging consensus message."""
         neighbours = carrier.others()
 
+        # --- Leader: a neighbour acknowledged the stop (loss only) ---
+        if message_data.stop_ack:
+            self._stop_unacked.discard(sender_key(carrier, meta))
+            if not self._stop_unacked:
+                self._cancel_stop_repeats()
+            return
+
         # --- Termination path (leader's power-balance stop) ---
         if message_data.stop:
+            if self._deadline.enabled:
+                # Acknowledge every copy (also after finishing), so the leader
+                # stops repeating it.
+                leader = sender_key(carrier, meta)
+                if leader is not None:
+                    carrier.send_to_other(
+                        AveragingConsensusMessage(
+                            lam=self._lam.copy(), k=message_data.k, data=None, stop_ack=True
+                        ),
+                        leader,
+                    )
             if self._first_message:
                 return
             if message_data.k < self._k:
-                # We already applied the next round's update before the stop
-                # arrived (we can be at most one round ahead: advancing again
-                # needs the leader's next message). Roll back so we finish on
-                # the schedule the leader verified.
-                self._lam = self._prev_lam
+                # We already applied later rounds before the stop arrived:
+                # without loss at most one (advancing needs the leader's next
+                # message); under loss a repeated stop can be several rounds
+                # late. Roll back so we finish on the schedule the leader
+                # verified.
+                self._lam = self._lam_history.get(message_data.k, self._prev_lam)
                 self._P = np.asarray(self.actor.project_power(self._lam, self._data))
                 self._k = message_data.k
             self._finish(carrier, converged=True)
@@ -229,6 +267,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._started = True
             self._k = 0
             self._rounds.reset()
+            self._lam_history.clear()
+            self._cancel_stop_repeats()
             self.converged = False
             # ``data`` is constant for the whole run, so it only travels with
             # the kick-off and round-0 messages. Under packet loss a follower
@@ -265,6 +305,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         )
         avg_lam = sum(lam for lam, _ in values) / len(values)
         self._prev_lam = self._lam
+        self._lam_history[self._k] = self._lam
         # The ΔP term needs every participant's power; until each neighbour
         # has been heard once, the default p = 0 would fake a huge deficit.
         round_complete = self._rounds.complete(self._k, len(neighbours))
@@ -278,13 +319,16 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             # last-known fallbacks.
             rel_gap = np.abs(delta_p) / np.maximum(np.abs(pd), 1e-9)
             if round_complete and np.max(rel_gap) <= self.balance_tol:
+                stop = AveragingConsensusMessage(
+                    lam=self._lam.copy(), k=self._k, data=None, stop=True
+                )
                 for addr in neighbours:
-                    carrier.send_to_other(
-                        AveragingConsensusMessage(
-                            lam=self._lam.copy(), k=self._k, data=None, stop=True
-                        ),
-                        addr,
-                    )
+                    carrier.send_to_other(stop, addr)
+                if self._deadline.enabled and self.stop_retries > 0:
+                    self._stop_msg = stop
+                    self._stop_unacked = set(neighbours)
+                    self._stop_repeats_left = self.stop_retries
+                    self._schedule_stop_repeat(carrier)
                 self._finish(carrier, converged=True)
                 return
             self._lam = self._lam + self.alpha * (avg_lam - self._lam) + self.leader_gain * delta_p
@@ -321,6 +365,28 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._advance(carrier, neighbours)
         while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
             self._advance(carrier, neighbours)
+
+    def _schedule_stop_repeat(self, carrier: "Carrier") -> None:
+        """Repeat the stop to unacknowledged neighbours after one round timeout."""
+
+        def repeat() -> None:
+            self._stop_handle = None
+            if self._stop_msg is None or not self._stop_unacked:
+                return
+            for addr in list(self._stop_unacked):
+                carrier.send_to_other(self._stop_msg, addr)
+            self._stop_repeats_left -= 1
+            if self._stop_repeats_left > 0:
+                self._schedule_stop_repeat(carrier)
+
+        self._stop_handle = carrier.schedule_after(self._deadline.timeout_s, repeat)
+
+    def _cancel_stop_repeats(self) -> None:
+        if self._stop_handle is not None:
+            self._stop_handle.cancel()
+            self._stop_handle = None
+        self._stop_msg = None
+        self._stop_unacked = set()
 
     def _finish(self, carrier: "Carrier", converged: bool) -> None:
         self._deadline.cancel()
