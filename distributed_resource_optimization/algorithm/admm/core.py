@@ -9,7 +9,6 @@ global-actor implementations live in :mod:`.consensus_admm` and
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -189,10 +188,23 @@ class ADMMGenericCoordinator(Coordinator):
     :param feas_tol: Tolerance on the aggregate coupling-constraint violation,
         relative to the constraint's scale (default: 1e-4, i.e. ``Σxᵢ`` must
         be within 0.01 % of the peak target for exchange ADMM).
+    :param round_timeout: Seconds (on the carrier's clock) to wait for the
+        participants' answers each round; a participant that does not answer
+        in time keeps its previous ``x``.  ``None`` (default) waits for every
+        answer, which blocks forever if a message is lost.
+    :param max_missing_rounds: Stop the run (with :attr:`converged` ``False``)
+        once a participant has missed this many consecutive rounds.  ``None``
+        (default) never stops for that reason.
 
     At least one participant must be registered with the coordinator; with
     none, the variant's global update fails (``IndexError`` /
     ``ZeroDivisionError``) instead of returning an empty result.
+
+    Under message loss this is partially asynchronous ADMM: rounds use the
+    latest answer of every participant.  Convergence is only declared after
+    a round in which every participant answered, because a round with stale
+    answers can leave *z* unchanged and fake a zero dual residual.
+    :attr:`missed_answers` counts the missing answers of the last run.
     """
 
     def __init__(
@@ -203,6 +215,8 @@ class ADMMGenericCoordinator(Coordinator):
         abs_tol: float = 1e-4,
         rel_tol: float = 1e-3,
         feas_tol: float = 1e-4,
+        round_timeout: float | None = None,
+        max_missing_rounds: int | None = None,
     ) -> None:
         self.global_actor = global_actor
         self.rho = rho
@@ -210,8 +224,11 @@ class ADMMGenericCoordinator(Coordinator):
         self.abs_tol = abs_tol
         self.rel_tol = rel_tol
         self.feas_tol = feas_tol
+        self.round_timeout = round_timeout
+        self.max_missing_rounds = max_missing_rounds
         self.iterations = 0
         self.converged = False
+        self.missed_answers = 0
 
     async def start_optimization(
         self,
@@ -228,15 +245,28 @@ class ADMMGenericCoordinator(Coordinator):
         x: list[np.ndarray],
         z: Any,
         u: Any,
-    ) -> None:
-        """Send each participant its correction in parallel; store replies in *x*."""
-        futures: list[asyncio.Future] = []
+    ) -> list[bool]:
+        """Send each participant its correction in parallel; store replies in *x*.
+
+        A participant whose request or answer was lost within
+        :attr:`round_timeout` keeps its previous ``x[i]`` (initially zeros).
+
+        :returns: Per participant, whether it answered in this round.
+        """
+        requests = {
+            addr: ADMMMessage(v=self.global_actor.actor_correction(x, z, u, i), rho=self.rho)
+            for i, addr in enumerate(participant_addrs)
+        }
+        replies = await carrier.request_all(
+            requests, timeout=self.round_timeout, reply_type=ADMMAnswer
+        )
+        fresh: list[bool] = []
         for i, addr in enumerate(participant_addrs):
-            correction = self.global_actor.actor_correction(x, z, u, i)
-            futures.append(carrier.send_awaitable(ADMMMessage(v=correction, rho=self.rho), addr))
-        replies = await asyncio.gather(*futures)
-        for i, reply in enumerate(replies):
-            x[i] = np.asarray(reply.x, dtype=float)
+            reply = replies.get(addr)
+            if reply is not None:
+                x[i] = np.asarray(reply.x, dtype=float)
+            fresh.append(reply is not None)
+        return fresh
 
     async def _run(
         self,
@@ -261,10 +291,16 @@ class ADMMGenericCoordinator(Coordinator):
         z = actor.init_z(n, m)
         self.iterations = 0
         self.converged = False
+        self.missed_answers = 0
+        missed_in_a_row = [0] * n
 
         for k in range(1, self.max_iters + 1):
-            # 1. x-update round (all participants in parallel)
-            await self._x_update_round(carrier, participant_addrs, x, z, u)
+            # 1. x-update round (all participants in parallel); a participant
+            #    that did not answer keeps its previous x.
+            fresh = await self._x_update_round(carrier, participant_addrs, x, z, u)
+            missed_in_a_row = [0 if ok else m_ + 1 for ok, m_ in zip(fresh, missed_in_a_row)]
+            self.missed_answers += fresh.count(False)
+            round_complete = all(fresh)
 
             # 2. z-update
             z_old = _deepcopy_z(z)
@@ -289,9 +325,28 @@ class ADMMGenericCoordinator(Coordinator):
                 gap, scale = violation
                 feasible = gap <= self.abs_tol + self.feas_tol * scale
 
-            if r_norm < eps_pri and s_norm < eps_dual and feasible:
+            if round_complete and r_norm < eps_pri and s_norm < eps_dual and feasible:
                 self.converged = True
                 logger.debug("ADMM converged in %d iterations.", k)
+                break
+
+            if (
+                self.max_missing_rounds is not None
+                and max(missed_in_a_row, default=0) >= self.max_missing_rounds
+            ):
+                silent = [
+                    participant_addrs[i]
+                    for i, missed in enumerate(missed_in_a_row)
+                    if missed >= self.max_missing_rounds
+                ]
+                logger.warning(
+                    "ADMM stopped after %d iterations: %d participant(s) missed %d "
+                    "consecutive rounds (%s).",
+                    k,
+                    len(silent),
+                    self.max_missing_rounds,
+                    silent,
+                )
                 break
 
             if k == self.max_iters:

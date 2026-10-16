@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
 from .._weight_rules import WeightRule, regular_graph_weights
 from ..core import DistributedAlgorithm, OptimizationMessage
 
@@ -95,6 +96,12 @@ class DiffusionMessage(OptimizationMessage):
                       which every participant's flag is ``True`` terminates
                       the run (Ces et al. 2025 stop when the largest per-agent
                       incremental-cost change falls below their tolerance).
+    :param flow_sum: If the sender owns the edge to the receiver: its
+                     cumulative combine flow along that edge through round
+                     ``flow_round`` (see :class:`~.._rounds.EdgeFlows`); the
+                     receiver uses it to keep both ends' flows equal under
+                     message loss.  ``None`` otherwise.
+    :param flow_round: Last round included in ``flow_sum``.
     """
 
     phi: np.ndarray
@@ -104,6 +111,258 @@ class DiffusionMessage(OptimizationMessage):
     degree: int = 0
     weight_rule: str = ""
     converged: bool = False
+    flow_sum: np.ndarray | None = None
+    flow_round: int = -1
+
+
+# ---------------------------------------------------------------------------
+# Shared round handling
+# ---------------------------------------------------------------------------
+
+
+class _DiffusionRounds(DistributedAlgorithm):
+    """Round handling shared by :class:`DiffusionAlgorithm` and
+    :class:`~.exact_diffusion.ExactDiffusionAlgorithm`.
+
+    Every round a participant broadcasts its outgoing iterate, waits for each
+    neighbour's round-k iterate, combines them and adapts.  With a
+    ``round_timeout`` a round also advances when its deadline passes; a
+    neighbour whose round-k message is missing then contributes its last
+    received iterate (this participant's own outgoing iterate if never
+    heard).  The all-converged stop only fires on a complete round, so a stale
+    flag can never end a run; :attr:`max_iter` stays the backstop.
+
+    Subclasses provide :meth:`_start_state`, :meth:`_outgoing`,
+    :meth:`_combine_weights` and :meth:`_adapt`.
+    """
+
+    _label = "Diffusion"
+
+    finish_callback: Callable
+    max_iter: int
+    tol: float
+    patience: int
+    weight_rule: WeightRule
+    converged: bool
+    iterations: int
+    _lam: np.ndarray
+
+    def _init_rounds(self, round_timeout: float | None) -> None:
+        self._rounds = RoundBuffer()  # (φ, converged) per round and sender
+        self._flows = EdgeFlows()  # combine flows, kept equal on both ends
+        self._deadline = RoundDeadline(round_timeout)
+        self._data: Any = None
+        self._first_message: bool = True
+        self._started: bool = False  # True once any round has begun
+        self._k: int = 0
+        self._converged_flag: bool = False  # own flag from the last combine
+        self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
+
+    # -- hooks ---------------------------------------------------------------
+
+    def _start_state(self, horizon: int, data: Any) -> None:
+        """(Re-)initialise λ and the outgoing iterate for a new run."""
+        raise NotImplementedError
+
+    def _outgoing(self) -> np.ndarray:
+        """The iterate this participant broadcasts and combines with."""
+        raise NotImplementedError
+
+    def _combine_weights(self, n_neighbours: int) -> tuple[float, float]:
+        """``(self weight, weight per neighbour)`` of the combine step."""
+        raise NotImplementedError
+
+    def _adapt(self, data: Any) -> None:
+        """Adapt step after the combine (updates the outgoing iterate)."""
+        raise NotImplementedError
+
+    # -- message handling ------------------------------------------------------
+
+    async def on_exchange_message(
+        self,
+        carrier: "Carrier",
+        message_data: DiffusionMessage,
+        meta: Any,
+    ) -> None:
+        """Process one incoming diffusion message."""
+        neighbours = carrier.others()
+
+        # --- Termination path: a neighbour already finished (max_iter, or
+        # its "finished" notice after stopping on convergence) ---
+        if message_data.k >= self.max_iter:
+            if self._first_message:
+                return
+            # k > max_iter is the notice of a neighbour that stopped on the
+            # all-converged criterion (sent only with a round_timeout).
+            self.converged = message_data.k > self.max_iter and self._converged_flag
+            self.iterations = self._k
+            self._finish(carrier)
+            return
+
+        # After termination, ignore stale messages from the previous round.
+        # Only an explicit initial=True message may start a new round.
+        if self._first_message and self._started and not message_data.initial:
+            return
+
+        # --- Initialisation path ---
+        if self._first_message or message_data.initial:
+            self._first_message = False
+            self._started = True
+            self._k = 0
+            self._converged_flag = False
+            self._stable_rounds = 0
+            self.converged = False
+            self._rounds.reset()
+            self._flows.reset()
+            self._data = message_data.data
+            self._start_state(len(message_data.phi), message_data.data)
+            self._broadcast(carrier, neighbours)
+            if message_data.initial:
+                return  # kick-off is not a topology neighbour; do not queue
+
+        self._check_neighbour(message_data, len(neighbours))
+        sender = sender_key(carrier, meta)
+        if sender is not None and message_data.flow_sum is not None:
+            self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
+        value = (np.asarray(message_data.phi), bool(message_data.converged))
+        if message_data.k < self._k:
+            # Too late for its round, but the freshest value of that neighbour.
+            self._rounds.remember(message_data.k, sender, value)
+            return
+        self._rounds.add(message_data.k, sender, value)
+        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
+
+    def _check_neighbour(self, message: DiffusionMessage, own_degree: int) -> None:
+        """regular_graph_weights() assumes every neighbour has the same degree
+        and weight_rule as this node -- verify that rather than silently
+        computing a wrong (non-stochastic, or inconsistent-across-nodes)
+        weight matrix if it doesn't."""
+        if message.degree != own_degree:
+            raise ValueError(
+                f"{self._label} requires a degree-regular communication graph: "
+                f"this node has {own_degree} neighbours but received a message "
+                f"from a node with {message.degree} neighbours."
+            )
+        if message.weight_rule != self.weight_rule:
+            raise ValueError(
+                f"All {self._label} participants must share the same weight_rule: "
+                f"this node uses {self.weight_rule!r} but received a message "
+                f"from a node using {message.weight_rule!r}."
+            )
+
+    def _advance(self, carrier: "Carrier", neighbours: list) -> None:
+        """Run round ``self._k`` with the best values available and broadcast."""
+        self._deadline.cancel()
+        # --- Termination path (tol criterion) ---
+        # Own flag and every round-k message reflect the λ change of round
+        # k−1.  Normally only a complete round counts.  Under loss a
+        # neighbour may already have stopped (and its notice been lost), so a
+        # round can never complete again; then every neighbour's last flag
+        # must say converged and be at most `patience` rounds old.
+        complete_and_converged = self._rounds.complete(self._k, len(neighbours)) and all(
+            converged for _, converged in self._rounds.round_values(self._k)
+        )
+        recently_converged = self._deadline.enabled and self._rounds.all_recent(
+            neighbours, self._k, self.patience, lambda value: value[1]
+        )
+        if self._converged_flag and (complete_and_converged or recently_converged):
+            self.converged = True
+            self.iterations = self._k
+            if self._deadline.enabled:
+                self._notify_finished(carrier, neighbours)
+            self._finish(carrier)
+            return
+
+        own = self._outgoing()
+        self_w, neighbor_w = self._combine_weights(len(neighbours))
+        me = address_of(carrier)
+        if me is None:
+            # Carrier cannot name this participant: plain weighted combine.
+            phis = [
+                phi for phi, _ in self._rounds.values(self._k, neighbours, default=lambda _n: own)
+            ]
+            lam_new = self_w * own
+            for phi in phis:
+                lam_new = lam_new + neighbor_w * phi
+        else:
+            # Same combine written as own + Σ w·(φ_j − φ_own) (the self
+            # weight is 1 − Σ w), so each pairwise flow can be kept equal on
+            # both ends of its edge under message loss (EdgeFlows).
+            values = self._rounds.value_map(self._k, neighbours, default=lambda _n: (own, False))
+            lam_new = own.copy()
+            for n in neighbours:
+                lam_new = lam_new + self._flows.flow(me, n, self._k, own, values[n][0], neighbor_w)
+                lam_new = lam_new + self._flows.correction(me, n)
+        if np.max(np.abs(lam_new - self._lam)) <= self.tol:
+            self._stable_rounds += 1
+        else:
+            self._stable_rounds = 0
+        self._converged_flag = self._stable_rounds >= self.patience
+        self._lam = lam_new
+
+        self._adapt(self._data)
+        self._k += 1
+        self._rounds.discard_before(self._k)
+        self._broadcast(carrier, neighbours)
+        if self._k >= self.max_iter:
+            self.converged = False
+            self.iterations = self._k
+            self._finish(carrier)
+
+    def _broadcast(self, carrier: "Carrier", neighbours: list) -> None:
+        """Send this round's iterate and arm the round deadline."""
+        phi_out = self._outgoing().copy()
+        me = address_of(carrier)
+        for addr in neighbours:
+            owned = self._flows.owner_sum(me, addr) if me is not None else None
+            carrier.send_to_other(
+                DiffusionMessage(
+                    phi=phi_out,
+                    k=self._k,
+                    data=self._data,
+                    degree=len(neighbours),
+                    weight_rule=self.weight_rule,
+                    converged=self._converged_flag,
+                    flow_sum=None if owned is None else np.copy(owned[1]),
+                    flow_round=-1 if owned is None else owned[0],
+                ),
+                addr,
+            )
+        if self._k < self.max_iter:
+            k = self._k
+            self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
+
+    def _notify_finished(self, carrier: "Carrier", neighbours: list) -> None:
+        """Tell neighbours this participant stopped on convergence (k > max_iter),
+        so none keeps iterating against its frozen iterate."""
+        for addr in neighbours:
+            carrier.send_to_other(
+                DiffusionMessage(
+                    phi=self._outgoing().copy(),
+                    k=self.max_iter + 1,
+                    data=self._data,
+                    degree=len(neighbours),
+                    weight_rule=self.weight_rule,
+                    converged=True,
+                ),
+                addr,
+            )
+
+    def _on_deadline(self, carrier: "Carrier", k: int) -> None:
+        """Round *k* timed out: advance with what arrived, plus last values."""
+        if self._first_message or self._k != k:
+            return
+        neighbours = carrier.others()
+        self._advance(carrier, neighbours)
+        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
+
+    def _finish(self, carrier: "Carrier") -> None:
+        self._deadline.cancel()
+        self.finish_callback(self, carrier)
+        self._first_message = True
+        self._rounds.reset()
 
 
 # ---------------------------------------------------------------------------
@@ -111,15 +370,12 @@ class DiffusionMessage(OptimizationMessage):
 # ---------------------------------------------------------------------------
 
 
-class DiffusionAlgorithm(DistributedAlgorithm):
+class DiffusionAlgorithm(_DiffusionRounds):
     """Distributed adapt-then-combine diffusion over a scheduling horizon.
 
-    ``on_exchange_message`` shares its termination/kick-off/message-queueing
-    skeleton with
-    :class:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.ExactDiffusionAlgorithm`
-    -- a fix
-    to one (e.g. the stale-message-after-termination guard below) likely
-    needs to be applied to the other too.
+    The round handling (kick-off, termination, round deadline, last-value
+    fallback) is shared with :class:`~.exact_diffusion.ExactDiffusionAlgorithm`
+    via :class:`_DiffusionRounds`.
 
     :param finish_callback: Called with ``(algorithm, carrier)`` when the run
                             terminates — via the ``tol`` criterion or the
@@ -149,6 +405,10 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                         ``"relative_degree"`` collapse to the same uniform
                         doubly-stochastic matrix too (see
                         :mod:`~distributed_resource_optimization.algorithm._weight_rules`).
+    :param round_timeout: Seconds (carrier clock) to wait for a round's
+                          messages before advancing with the last received
+                          iterates; ``None`` (default) waits for every
+                          neighbour, which stalls if a message is lost.
     """
 
     def __init__(
@@ -161,6 +421,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         tol: float = 1e-4,
         patience: int = 3,
         weight_rule: WeightRule = "mean_metropolis",
+        round_timeout: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
@@ -179,142 +440,26 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         #: Iterations completed when the last run terminated.
         self.iterations: int = 0
 
-        self._message_queue: dict[int, list[DiffusionMessage]] = {}
-        self._first_message: bool = True
-        self._started: bool = False  # True once any round has begun
-        self._k: int = 0
+        self._init_rounds(round_timeout)
         # λ / φ state is sized from the kick-off message on (re-)initialisation.
         self._lam: np.ndarray = np.array([initial_lam])
         self._phi: np.ndarray = np.array([initial_lam])
-        self._converged_flag: bool = False  # own flag from the last combine
-        self._stable_rounds: int = 0  # consecutive rounds with λ change ≤ tol
 
-    async def on_exchange_message(
-        self,
-        carrier: "Carrier",
-        message_data: DiffusionMessage,
-        meta: Any,
-    ) -> None:
-        """Process one incoming diffusion message."""
-        neighbours = carrier.others()
+    def _start_state(self, horizon: int, data: Any) -> None:
+        self._lam = np.ones(horizon) * self.initial_lam
+        self._adapt(data)
 
-        # --- Termination path (max_iter failsafe) ---
-        if message_data.k >= self.max_iter:
-            if self._first_message:
-                return
-            self.converged = False
-            self.iterations = self._k
-            self.finish_callback(self, carrier)
-            self._first_message = True
-            self._message_queue.clear()
-            return
+    def _outgoing(self) -> np.ndarray:
+        return self._phi
 
-        # After termination, ignore stale messages from the previous round.
-        # Only an explicit initial=True message may start a new round.
-        if self._first_message and self._started and not message_data.initial:
-            return
+    def _combine_weights(self, n_neighbours: int) -> tuple[float, float]:
+        # Mean-Metropolis weighted average of own φ and all received φ's
+        # (eq. 19; doubly stochastic).
+        return regular_graph_weights(n_neighbours, self.weight_rule)
 
-        # --- Initialisation path ---
-        if self._first_message or message_data.initial:
-            self._first_message = False
-            self._started = True
-            self._k = 0
-            self._converged_flag = False
-            self._stable_rounds = 0
-            self.converged = False
-            self._lam = np.ones(len(message_data.phi)) * self.initial_lam
-
-            grad_J = self.actor.gradient_term(self._lam, message_data.data)
-            self._phi = self._lam - self.epsilon * np.asarray(grad_J)
-
-            phi_out = self._phi.copy()
-            for addr in neighbours:
-                carrier.send_to_other(
-                    DiffusionMessage(
-                        phi=phi_out,
-                        k=0,
-                        data=message_data.data,
-                        degree=len(neighbours),
-                        weight_rule=self.weight_rule,
-                    ),
-                    addr,
-                )
-
-            if message_data.initial:
-                return  # kick-off is not a topology neighbour; do not queue
-
-        # --- Queue the message ---
-        queue = self._message_queue.setdefault(message_data.k, [])
-        queue.append(message_data)
-
-        # --- Advance if all neighbours have reported for this iteration ---
-        if len(queue) == len(neighbours):
-            # regular_graph_weights() assumes every neighbour has the same
-            # degree and the same weight_rule as this node -- verify that
-            # rather than silently computing a wrong (non-stochastic, or
-            # inconsistent-across-nodes) weight matrix if it doesn't.
-            own_degree = len(neighbours)
-            for m in queue:
-                if m.degree != own_degree:
-                    raise ValueError(
-                        f"Diffusion requires a degree-regular communication graph: "
-                        f"this node has {own_degree} neighbours but received a message "
-                        f"from a node with {m.degree} neighbours."
-                    )
-                if m.weight_rule != self.weight_rule:
-                    raise ValueError(
-                        f"All Diffusion participants must share the same weight_rule: "
-                        f"this node uses {self.weight_rule!r} but received a message "
-                        f"from a node using {m.weight_rule!r}."
-                    )
-
-            # --- Termination path (tol criterion) ---
-            # Own flag and every message in this round's queue reflect the
-            # λ change of round k−1.  On the complete graphs this codebase
-            # uses, every participant therefore evaluates the same set of
-            # flags in the same round and terminates simultaneously.
-            if self._converged_flag and all(m.converged for m in queue):
-                self.converged = True
-                self.iterations = self._k
-                self.finish_callback(self, carrier)
-                self._first_message = True
-                self._message_queue.clear()
-                return
-
-            # Combination: Mean-Metropolis weighted average of own φ and all
-            # received φ's (eq. 19; doubly stochastic).
-            self_w, neighbor_w = regular_graph_weights(len(neighbours), self.weight_rule)
-            lam_new = self_w * self._phi
-            for m in queue:
-                lam_new = lam_new + neighbor_w * m.phi
-            if np.max(np.abs(lam_new - self._lam)) <= self.tol:
-                self._stable_rounds += 1
-            else:
-                self._stable_rounds = 0
-            self._converged_flag = self._stable_rounds >= self.patience
-            self._lam = lam_new
-
-            del self._message_queue[message_data.k]
-
-            # Adaptation
-            grad_J = self.actor.gradient_term(self._lam, message_data.data)
-            self._phi = self._lam - self.epsilon * np.asarray(grad_J)
-
-            self._k += 1
-
-            phi_out = self._phi.copy()
-            for addr in neighbours:
-                carrier.send_to_other(
-                    DiffusionMessage(
-                        phi=phi_out,
-                        k=self._k,
-                        data=message_data.data,
-                        degree=len(neighbours),
-                        weight_rule=self.weight_rule,
-                        converged=self._converged_flag,
-                    ),
-                    addr,
-                )
+    def _adapt(self, data: Any) -> None:
+        grad_J = self.actor.gradient_term(self._lam, data)
+        self._phi = self._lam - self.epsilon * np.asarray(grad_J)
 
 
 # ---------------------------------------------------------------------------

@@ -154,12 +154,20 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
 def create_sharing_target_distance_admm_coordinator(
     rho: float = 1.0,
     max_iters: int = 1000,
+    round_timeout: float | None = None,
+    max_missing_rounds: int | None = None,
 ) -> ADMMGenericCoordinator:
     """Create an :class:`~.core.ADMMGenericCoordinator` for target-distance sharing.
 
     :param rho: ADMM penalty parameter.
     :param max_iters: Maximum number of iterations.
+    :param round_timeout: Per-round answer timeout; see :class:`~.core.ADMMGenericCoordinator`.
+    :param max_missing_rounds: See :class:`~.core.ADMMGenericCoordinator`.
     """
     return ADMMGenericCoordinator(
-        global_actor=ADMMSharingGlobalActor(), rho=rho, max_iters=max_iters
+        global_actor=ADMMSharingGlobalActor(),
+        rho=rho,
+        max_iters=max_iters,
+        round_timeout=round_timeout,
+        max_missing_rounds=max_missing_rounds,
     )

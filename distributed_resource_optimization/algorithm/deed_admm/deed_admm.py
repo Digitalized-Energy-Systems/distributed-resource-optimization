@@ -57,7 +57,16 @@ broadcasts its (λ, ξ) for round k and advances once it holds round-k state
 from every neighbour (state from a neighbour one round ahead is buffered).
 An agent stops by itself after ``max_iter`` rounds; its last broadcast is
 round ``max_iter − 1``, which every neighbour consumes in its own last step,
-so no protocol message outlives a run.
+so no protocol message outlives a lossless run.
+
+Message loss: with ``round_timeout`` set, a round also advances when its
+deadline passes.  A neighbour whose round-k state is missing contributes its
+last received λ (λ needs no exact mixing: at a fixed point all λᵢ agree and
+ξ = 0).  The ξ mixing ``β(ξⱼ − ξᵢ)`` is kept equal on both ends of every edge
+by the running-sum protocol of :class:`~.._rounds.EdgeFlows`, which preserves
+the tracking invariant ``Σᵢ ξᵢ = Σᵢ (xᵢ − yᵢ)`` that the dual update relies
+on.  A finished agent ignores late messages of its run (rounds > 0); a
+kick-off or a new run's round-0 message restarts it.
 """
 
 from __future__ import annotations
@@ -67,6 +76,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -88,6 +98,10 @@ class DEEDADMMMessage(OptimizationMessage):
     :param data: Auxiliary payload forwarded on the initial kick-off.
     :param initial: ``True`` for the external kick-off message, which carries
                     no neighbour state and (re-)starts the recipient's run.
+    :param flow_sum: If the sender owns the edge to the receiver: its
+                     cumulative ξ mixing flow along that edge through round
+                     ``flow_round`` (see :class:`~.._rounds.EdgeFlows`).
+    :param flow_round: Last round included in ``flow_sum``.
     """
 
     lam: np.ndarray
@@ -95,6 +109,8 @@ class DEEDADMMMessage(OptimizationMessage):
     k: int
     data: Any
     initial: bool = False
+    flow_sum: np.ndarray | None = None
+    flow_round: int = -1
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +137,9 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     :param n_agents: Total number of agents n; only used for the default
         ``beta = 1/n``.
     :param beta: Laplacian step of W = I − βL.  Must satisfy β·|Nᵢ| < 1.
+    :param round_timeout: Seconds (carrier clock) to wait for a round's state
+        before advancing with the last received values; ``None`` (default)
+        waits for every neighbour, which stalls if a message is lost.
     """
 
     def __init__(
@@ -135,6 +154,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         max_iter: int = 500,
         n_agents: int = 1,
         beta: float | None = None,
+        round_timeout: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.gamma = float(gamma)
@@ -163,8 +183,12 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         # Hᵧ = (γI)⁻¹ (no hub power limit, so no Y block).
         self._H_y = 1.0 / self.gamma
 
-        self._msg_queue: dict[int, list[DEEDADMMMessage]] = {}
+        self._rounds = RoundBuffer()  # (λ, ξ) per round and sender
+        self._flows = EdgeFlows()  # ξ mixing flows, kept equal on both ends
+        self._deadline = RoundDeadline(round_timeout)
+        self._data: Any = None
         self._running: bool = False
+        self._has_run: bool = False  # a finished run ignores late messages
         self._reset_state()
 
         # Public result — written at termination.
@@ -199,19 +223,37 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self._xi = np.zeros(tau)
         self._lam = np.zeros(tau)
         self._k = 0
-        self._msg_queue.clear()
+        self._rounds.reset()
+        self._flows.reset()
         self._reset_storage_state()
 
-    def _step(self, neighbour_messages: list[DEEDADMMMessage]) -> None:
-        """Run one DEED-ADMM primal/dual update (Algorithm 1, lines 3-14)."""
-        g = self.gamma
-
-        # --- 1. W-weighted neighbour state, W = I − βL ---
+    def _mix(self, carrier: "Carrier", neighbours: list) -> tuple[np.ndarray, np.ndarray]:
+        """W-weighted neighbour state, W = I − βL, for round ``self._k``."""
+        own = (self._lam, self._xi)
         lam_tilde = self._lam.copy()
         xi_tilde = self._xi.copy()
-        for msg in neighbour_messages:
-            lam_tilde += self.beta * (msg.lam - self._lam)
-            xi_tilde += self.beta * (msg.xi - self._xi)
+        me = address_of(carrier)
+        if me is None:
+            # Carrier cannot name this participant: plain mixing.
+            for lam, xi in self._rounds.values(self._k, neighbours, default=lambda _n: own):
+                lam_tilde += self.beta * (lam - self._lam)
+                xi_tilde += self.beta * (xi - self._xi)
+            return lam_tilde, xi_tilde
+        values = self._rounds.value_map(self._k, neighbours, default=lambda _n: own)
+        for n in neighbours:
+            lam, xi = values[n]
+            lam_tilde += self.beta * (lam - self._lam)
+            xi_tilde += self._flows.flow(me, n, self._k, self._xi, xi, self.beta)
+            xi_tilde += self._flows.correction(me, n)
+        return lam_tilde, xi_tilde
+
+    def _step(self, lam_tilde: np.ndarray, xi_tilde: np.ndarray) -> None:
+        """Run one DEED-ADMM primal/dual update (Algorithm 1, lines 3-14).
+
+        :param lam_tilde: W-weighted neighbour λ (line 3).
+        :param xi_tilde: W-weighted neighbour ξ (line 3).
+        """
+        g = self.gamma
 
         # --- 2. x-update (supplier) and its box projection ---
         if self._x_fixed:
@@ -250,23 +292,52 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     # DistributedAlgorithm interface
     # ------------------------------------------------------------------
 
-    def _broadcast(self, carrier: "Carrier", neighbours: list, data: Any) -> None:
+    def _broadcast(self, carrier: "Carrier", neighbours: list) -> None:
+        """Send this round's (λ, ξ) and arm the round deadline."""
+        me = address_of(carrier)
         for addr in neighbours:
+            owned = self._flows.owner_sum(me, addr) if me is not None else None
             carrier.send_to_other(
                 DEEDADMMMessage(
                     lam=self._lam.copy(),
                     xi=self._xi.copy(),
                     k=self._k,
-                    data=data,
+                    data=self._data,
+                    flow_sum=None if owned is None else np.copy(owned[1]),
+                    flow_round=-1 if owned is None else owned[0],
                 ),
                 addr,
             )
+        k = self._k
+        self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
 
     def _finish(self, carrier: "Carrier") -> None:
+        self._deadline.cancel()
         self._running = False
-        self._msg_queue.clear()
+        self._has_run = True
+        self._rounds.reset()
         self.P = self._extract_schedule()
         self.finish_callback(self, carrier)
+
+    def _advance(self, carrier: "Carrier", neighbours: list) -> None:
+        """Run round ``self._k``; broadcast the next one or finish."""
+        self._deadline.cancel()
+        self._step(*self._mix(carrier, neighbours))
+        self._k += 1
+        self._rounds.discard_before(self._k)
+        if self._k >= self.max_iter:
+            self._finish(carrier)
+            return
+        self._broadcast(carrier, neighbours)
+
+    def _on_deadline(self, carrier: "Carrier", k: int) -> None:
+        """Round *k* timed out: advance with what arrived, plus last values."""
+        if not self._running or self._k != k:
+            return
+        neighbours = carrier.others()
+        self._advance(carrier, neighbours)
+        while self._running and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
 
     async def on_exchange_message(
         self,
@@ -276,6 +347,11 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
     ) -> None:
         """Handle one incoming DEED-ADMM message."""
         neighbours = carrier.others()
+
+        # After a finished run, late messages of that run (rounds > 0) are
+        # ignored; a kick-off or a new run's round-0 message restarts it.
+        if not self._running and self._has_run and not message_data.initial and message_data.k > 0:
+            return
 
         # --- Start of a run: external kick-off or first neighbour message ---
         if message_data.initial or not self._running:
@@ -287,31 +363,30 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                 )
             self._running = True
             self._reset_state()
+            self._data = message_data.data
             if not neighbours:
                 # Single agent: W = [1], no one to wait for.
                 for _ in range(self.max_iter):
-                    self._step([])
+                    self._step(self._lam.copy(), self._xi.copy())
                     self._k += 1
                 self._finish(carrier)
                 return
-            self._broadcast(carrier, neighbours, message_data.data)
+            self._broadcast(carrier, neighbours)
             if message_data.initial:
                 return
 
-        # --- Synchronous rounds: advance only on complete current-round state ---
+        # --- Synchronous rounds: advance on complete round-k state (or at
+        # the round deadline); state from rounds ahead is buffered ---
+        sender = sender_key(carrier, meta)
+        if sender is not None and message_data.flow_sum is not None:
+            self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
+        value = (np.asarray(message_data.lam), np.asarray(message_data.xi))
         if message_data.k < self._k:
+            self._rounds.remember(message_data.k, sender, value)
             return
-        self._msg_queue.setdefault(message_data.k, []).append(message_data)
-
-        # Neighbours are at most one round ahead, so at most one extra round
-        # can already be complete once the current one is processed.
-        while len(self._msg_queue.get(self._k, ())) >= len(neighbours):
-            self._step(self._msg_queue.pop(self._k))
-            self._k += 1
-            if self._k >= self.max_iter:
-                self._finish(carrier)
-                return
-            self._broadcast(carrier, neighbours, message_data.data)
+        self._rounds.add(message_data.k, sender, value)
+        while self._running and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +440,7 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
         max_iter: int = 500,
         n_agents: int = 1,
         beta: float | None = None,
+        round_timeout: float | None = None,
         *,
         e_max: float,
         p_charge_max: float,
@@ -399,6 +475,7 @@ class DEEDADMMStorageAlgorithm(DEEDADMMAlgorithm):
             max_iter=max_iter,
             n_agents=n_agents,
             beta=beta,
+            round_timeout=round_timeout,
         )
         tau = self._tau
         g = self.gamma

@@ -123,6 +123,8 @@ def create_consensus_target_reach_admm_coordinator(
     max_iters: int = 1000,
     alpha: float = 0.0,
     feas_tol: float = 1e-4,
+    round_timeout: float | None = None,
+    max_missing_rounds: int | None = None,
 ) -> ADMMGenericCoordinator:
     """Create an :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator` for the consensus variant.
 
@@ -131,12 +133,16 @@ def create_consensus_target_reach_admm_coordinator(
     :param alpha: Sum-constraint softness (``0`` = exact exchange ADMM).
     :param feas_tol: Max ``|Σxᵢ − target|`` at convergence, relative to
                      ``max |target|`` (ignored when ``alpha > 0``).
+    :param round_timeout: Per-round answer timeout; see :class:`ADMMGenericCoordinator`.
+    :param max_missing_rounds: See :class:`ADMMGenericCoordinator`.
     """
     return ADMMGenericCoordinator(
         global_actor=ADMMConsensusGlobalActor(alpha=alpha),
         rho=rho,
         max_iters=max_iters,
         feas_tol=feas_tol,
+        round_timeout=round_timeout,
+        max_missing_rounds=max_missing_rounds,
     )
 
 

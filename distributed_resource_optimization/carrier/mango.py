@@ -14,6 +14,14 @@ Provides:
 :meth:`MangoCarrier.others` returns the agent's mango topology neighbours, so a
 topology must be set up before the container is activated.
 
+All work runs as mango scheduler tasks and all timeouts run on the agent's
+scheduler clock, so the carrier behaves the same in real time and in a
+stepped :class:`~mango.SimulationWorld` (where the world only waits for
+scheduler-tracked tasks before advancing time).  Requests are mango tracked
+messages: :meth:`MangoCarrier.request_all` is mango's ``gather`` with a
+different message per receiver, and participants answer with mango's
+``reply_to``.
+
 Usage example::
 
     import asyncio
@@ -59,14 +67,16 @@ Usage example::
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from mango import Role
 from mango import sender_addr as mango_sender_addr
+from mango.util.scheduling import sleeping_wait
 
-from .core import Carrier
+from .core import Cancellable, Carrier
 
 if TYPE_CHECKING:
     from mango import AgentAddress
@@ -93,20 +103,32 @@ class OptimizationFinishedMessage:
     result: Any
 
 
-@dataclass
-class _CarrierRequest:
-    """Internal wrapper that adds request-tracking to any optimization message."""
-
-    content: Any
-    request_id: str
+class RoleLocalMessage:
+    """Base for messages meant for *other* roles of an agent that also hosts a
+    :class:`DistributedOptimizationRole` (e.g. a request for the finished
+    schedule); such messages are never forwarded to the algorithm."""
 
 
-@dataclass
-class _CarrierReply:
-    """Internal reply wrapper matched to a :class:`_CarrierRequest` by ID."""
+def _is_orphaned_reply(meta: dict) -> bool:
+    """A tracked reply that reached ordinary dispatch.
 
-    content: Any
-    request_id: str
+    mango consumes a reply whose ``tracking_id`` has an open collector before
+    any role sees it; one that still arrives here answers a request whose
+    :meth:`MangoCarrier.request_all` already timed out (or was duplicated), so
+    it must not be handed to the algorithm as a fresh message.
+    """
+    return bool(meta.get("reply")) and bool(meta.get("tracking_id"))
+
+
+async def _first_completed(*awaitables: Any) -> None:
+    """Return when the first awaitable finishes; cancel the others."""
+    tasks = [asyncio.ensure_future(a) for a in awaitables]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +149,10 @@ class MangoCarrier(Carrier):
     def __init__(self, parent: Role, include_self: bool = False) -> None:
         self._parent = parent
         self._include_self = include_self
-        # Pending request futures keyed by request_id
-        self._pending: dict[str, asyncio.Future] = {}
+
+    @property
+    def _context(self) -> Any:
+        return self._parent.context
 
     # ------------------------------------------------------------------
     # Carrier interface
@@ -136,61 +160,93 @@ class MangoCarrier(Carrier):
 
     def send_to_other(self, content: Any, receiver: "AgentAddress") -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
-
-        async def _send() -> None:
-            await self._parent.context.send_message(content, receiver)
-
-        return asyncio.create_task(_send())
+        return self._context.schedule_instant_message(content, receiver)
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         """Reply to the sender stored in *meta*.
 
-        If *meta* contains a ``_request_id`` key (set when the message arrived
-        via :meth:`send_awaitable`), the reply is wrapped in a
-        ``_CarrierReply`` so the originating future can be resolved.
+        Uses mango's ``reply_to``, which echoes the request's ``tracking_id``
+        so a waiting :meth:`request_all` / :meth:`send_awaitable` collects it.
         """
-        addr = mango_sender_addr(meta)
-        request_id = meta.get("_request_id")
-
-        async def _send() -> None:
-            if request_id:
-                reply = _CarrierReply(content=content, request_id=request_id)
-                await self._parent.context.send_message(reply, addr)
-            else:
-                await self._parent.context.send_message(content, addr)
-
-        return asyncio.create_task(_send())
+        return self._context.schedule_instant_task(self._context.reply_to(content, meta))
 
     def send_awaitable(self, content: Any, receiver: "AgentAddress") -> asyncio.Future:
-        """Send *content* and return a Future that resolves when the reply arrives."""
-        request_id = str(uuid4())
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-        self._pending[request_id] = future
+        """Send *content* and return a Future that resolves when the reply arrives.
 
-        async def _send() -> None:
-            await self._parent.context.send_message(
-                _CarrierRequest(content=content, request_id=request_id),
-                receiver,
-            )
+        Never resolves if the request or reply is lost; prefer
+        :meth:`request_all` with a timeout.
+        """
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
 
-        asyncio.create_task(_send())
+        async def _request() -> None:
+            replies = await self.request_all({receiver: content})
+            if not future.done() and receiver in replies:
+                future.set_result(replies[receiver])
+
+        self._context.schedule_instant_task(_request())
         return future
-
-    def _resolve_reply(self, reply: _CarrierReply) -> bool:
-        """Resolve the future for *reply.request_id*. Returns True on match."""
-        future = self._pending.pop(reply.request_id, None)
-        if future is not None and not future.done():
-            future.set_result(reply.content)
-            return True
-        return False
 
     def others(self) -> list["AgentAddress"]:
         """Return topology neighbours; optionally include own address."""
-        neighbors = list(self._parent.context.neighbors())
+        neighbors = list(self._context.neighbors())
         if self._include_self:
-            neighbors.append(self._parent.context.addr)
+            neighbors.append(self._context.addr)
         return neighbors
+
+    # ------------------------------------------------------------------
+    # Loss-tolerance helpers
+    # ------------------------------------------------------------------
+
+    async def request_all(
+        self,
+        requests: Mapping[Any, Any],
+        *,
+        timeout: float | None = None,
+        reply_type: type | tuple[type, ...] | None = None,
+    ) -> dict[Any, Any]:
+        """mango ``gather`` with a different message per receiver.
+
+        The timeout runs on the agent's scheduler clock and the wait is
+        marked as sleeping, so a stepped simulation jumps to the deadline
+        instead of blocking on it.  Replies that arrive after it are dropped
+        by :func:`_is_orphaned_reply`.
+        """
+        if not requests:
+            return {}
+        context = self._context
+        tracking_id = str(uuid4())
+        collector = context.open_gather(tracking_id, expected=len(requests), reply_type=reply_type)
+        try:
+            for addr, content in requests.items():
+                await context.send_message(content, addr, tracking_id=tracking_id)
+            with sleeping_wait():
+                if timeout is None:
+                    await collector.wait()
+                else:
+                    await _first_completed(collector.wait(), context.context.clock.sleep(timeout))
+        finally:
+            context.close_gather(tracking_id)
+        return dict(collector.responses)
+
+    def schedule_after(self, delay_s: float, callback: Callable[[], Any]) -> Cancellable:
+        """Run *callback* after *delay_s* seconds of scheduler-clock time."""
+
+        async def _call() -> None:
+            callback()
+
+        return self._context.schedule_timestamp_task(_call(), self.now() + delay_s)
+
+    def now(self) -> float:
+        """Current scheduler-clock time (simulation time in a SimulationWorld)."""
+        return self._context.current_timestamp
+
+    def address(self) -> "AgentAddress":
+        """This agent's mango address."""
+        return self._context.addr
+
+    def sender_of(self, meta: Any) -> "AgentAddress":
+        """mango address of the agent that sent the message described by *meta*."""
+        return mango_sender_addr(meta)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +255,7 @@ class MangoCarrier(Carrier):
 
 
 class _CarrierRole(Role):
-    """Base for roles that own a :class:`MangoCarrier` and resolve its replies.
+    """Base for roles that own a :class:`MangoCarrier`.
 
     :param include_self: Passed to :class:`MangoCarrier`.
     """
@@ -210,18 +266,8 @@ class _CarrierRole(Role):
         self._carrier: MangoCarrier | None = None
 
     def setup(self) -> None:
-        """Create the carrier and subscribe the reply handler."""
+        """Create the carrier."""
         self._carrier = MangoCarrier(self, self._include_self)
-        self.context.subscribe_message(
-            self,
-            self._handle_reply,
-            lambda c, m: isinstance(c, _CarrierReply),
-        )
-
-    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
-        """Resolve the pending request future matching this reply."""
-        if self._carrier is not None:
-            self._carrier._resolve_reply(content)
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +277,10 @@ class _CarrierRole(Role):
 
 class DistributedOptimizationRole(_CarrierRole):
     """Mango Role hosting a :class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm`.
+
+    Each message is handled in its own scheduler task.  Algorithms must not
+    ``await`` between reading and writing their own state, so concurrent
+    handler tasks cannot interleave inside one update.
 
     :param algorithm: The distributed algorithm instance.
     :param include_self: Passed to :class:`MangoCarrier`.
@@ -245,7 +295,7 @@ class DistributedOptimizationRole(_CarrierRole):
         self.algorithm = algorithm
 
     def setup(self) -> None:
-        """Create the carrier and subscribe the optimization/reply handlers."""
+        """Create the carrier and subscribe the optimization handler."""
         super().setup()
         self.context.subscribe_message(
             self,
@@ -254,26 +304,29 @@ class DistributedOptimizationRole(_CarrierRole):
                 not isinstance(
                     c,
                     (
-                        _CarrierReply,
                         StartCoordinatedDistributedOptimization,
                         OptimizationFinishedMessage,
+                        RoleLocalMessage,
                     ),
                 )
+                and not _is_orphaned_reply(m)
             ),
         )
 
-    def _handle_optimization(self, content: Any, meta: dict) -> None:
-        """Unwrap carrier requests and forward the payload to the algorithm."""
-        # Unwrap request if needed (from send_awaitable on other side)
-        if isinstance(content, _CarrierRequest):
-            actual_meta = {**meta, "_request_id": content.request_id}
-            actual_content = content.content
-        else:
-            actual_meta = meta
-            actual_content = content
+    def start(self, start_message: Any) -> None:
+        """Hand a kick-off message to the local algorithm without the network.
 
-        asyncio.create_task(
-            self.algorithm.on_exchange_message(self._carrier, actual_content, actual_meta)
+        For callers on the same agent (e.g. a role that received an
+        acknowledged start request), so the kick-off cannot be lost.
+        """
+        self.context.schedule_instant_task(
+            self.algorithm.on_exchange_message(self._carrier, start_message, {})
+        )
+
+    def _handle_optimization(self, content: Any, meta: dict) -> None:
+        """Forward the payload to the algorithm in a scheduler task."""
+        self.context.schedule_instant_task(
+            self.algorithm.on_exchange_message(self._carrier, content, meta)
         )
 
 
@@ -306,13 +359,27 @@ class CoordinatorRole(_CarrierRole):
         self._done_future: asyncio.Future | None = None
 
     def setup(self) -> None:
-        """Create the carrier and subscribe the start/reply handlers."""
+        """Create the carrier and subscribe the start handler."""
         super().setup()
         self.context.subscribe_message(
             self,
             self._handle_start,
             lambda c, m: isinstance(c, StartCoordinatedDistributedOptimization),
         )
+
+    def start(self, start_input: Any) -> asyncio.Future:
+        """Start a coordinated run from the same agent, without a message.
+
+        Equivalent to receiving ``StartCoordinatedDistributedOptimization``
+        with *start_input*, but cannot be lost in transit.
+
+        :returns: The run's done future (the coordinator's result list, in
+            ``others()`` order).  Use ``add_done_callback`` rather than
+            awaiting it inside a mango task, which a stepped simulation
+            cannot see as waiting.
+        """
+        self._handle_start(StartCoordinatedDistributedOptimization(input=start_input), {})
+        return self._done_future
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
         """Kick off a coordinated run and broadcast the per-participant results.
@@ -343,7 +410,7 @@ class CoordinatorRole(_CarrierRole):
             if not done_future.done():
                 done_future.set_result(results)
 
-        asyncio.create_task(_run())
+        self.context.schedule_instant_task(_run())
 
     async def wait_done(self) -> Any:
         """Await the completion of the optimization run."""

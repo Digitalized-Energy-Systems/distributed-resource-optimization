@@ -7,10 +7,12 @@ optimizations without any network stack.
 from __future__ import annotations
 
 import asyncio
+import random
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from .core import Carrier
+from .core import Cancellable, Carrier
 
 if TYPE_CHECKING:
     from ..algorithm.core import Coordinator, DistributedAlgorithm
@@ -24,20 +26,93 @@ if TYPE_CHECKING:
 class ActorContainer:
     """Registry of :class:`SimpleCarrier` instances that share a lifecycle.
 
-    The container tracks how many asyncio dispatch tasks are currently in
-    flight via ``active_tasks``.  When that counter drops to zero the
-    ``done_event`` is set, signalling that the distributed run has
+    The container tracks how many asyncio dispatch tasks and pending
+    :meth:`SimpleCarrier.schedule_after` timers are currently in flight via
+    :attr:`active_tasks`.  When that counter drops to zero the
+    :attr:`done_event` is set, signalling that the distributed run has
     finished.
+
+    :param loss_rate: Probability in ``[0, 1]`` that a message between
+        participants is dropped (default ``0``), for testing loss tolerance
+        without mango.  The kick-off message of
+        :func:`start_distributed_optimization` is never dropped.
+    :param rng: Random generator for the loss draws (default: a fresh
+        ``random.Random(0)``, so runs are reproducible).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, loss_rate: float = 0.0, rng: random.Random | None = None) -> None:
+        if not 0.0 <= loss_rate <= 1.0:
+            raise ValueError(f"loss_rate must be in [0, 1], got {loss_rate!r}")
         self.actors: list[SimpleCarrier] = []
         self.active_tasks: int = 0
         self.done_event: asyncio.Event = asyncio.Event()
+        self.loss_rate = loss_rate
+        self._rng = rng if rng is not None else random.Random(0)
+        #: Number of messages dropped so far.
+        self.dropped: int = 0
 
     def _register(self, carrier: SimpleCarrier) -> int:
         self.actors.append(carrier)
         return len(self.actors)  # 1-indexed aid
+
+    def _drop(self) -> bool:
+        """Draw whether the next message is lost."""
+        if self.loss_rate and self._rng.random() < self.loss_rate:
+            self.dropped += 1
+            return True
+        return False
+
+    def _begin(self) -> None:
+        self.active_tasks += 1
+        # Reset done_event if it was previously set
+        if self.done_event.is_set():
+            self.done_event.clear()
+
+    def _end(self) -> None:
+        self.active_tasks -= 1
+        if self.active_tasks == 0:
+            self.done_event.set()
+
+
+class _TrackedTimer:
+    """:meth:`SimpleCarrier.schedule_after` handle that keeps the run alive while pending."""
+
+    def __init__(
+        self, container: ActorContainer, delay_s: float, callback: Callable[[], Any]
+    ) -> None:
+        self._container = container
+        self._callback = callback
+        self._finished = False
+        self._firing = False
+        container._begin()
+        self._handle = asyncio.get_running_loop().call_later(delay_s, self._fire)
+
+    def _fire(self) -> None:
+        # Stay counted until the callback returned: it typically arms the next
+        # timer, so the in-flight count must not touch zero in between.
+        self._firing = True
+        try:
+            self._callback()
+        finally:
+            self._finish()
+
+    def cancel(self) -> None:
+        if self._firing:
+            return  # already running; _fire releases it when done
+        self._handle.cancel()
+        self._finish()
+
+    def _finish(self) -> None:
+        if not self._finished:
+            self._finished = True
+            self._container._end()
+
+
+def _completed_task() -> asyncio.Future:
+    """Stand-in for the dispatch task of a dropped message."""
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    future.set_result(None)
+    return future
 
 
 # ---------------------------------------------------------------------------
@@ -85,18 +160,13 @@ class SimpleCarrier(Carrier):
 
     def _track_dispatch(self, coro: Any) -> asyncio.Task:
         """Run *coro* as a task tracked by the container's active-task counter."""
-        self.container.active_tasks += 1
-        # Reset done_event if it was previously set
-        if self.container.done_event.is_set():
-            self.container.done_event.clear()
+        self.container._begin()
 
         async def _run() -> None:
             try:
                 await coro
             finally:
-                self.container.active_tasks -= 1
-                if self.container.active_tasks == 0:
-                    self.container.done_event.set()
+                self.container._end()
 
         return asyncio.create_task(_run())
 
@@ -104,8 +174,17 @@ class SimpleCarrier(Carrier):
     # Carrier interface
     # ------------------------------------------------------------------
 
-    def _send(self, content: Any, receiver: int, extra_meta: dict | None = None) -> asyncio.Task:
+    def _send(
+        self,
+        content: Any,
+        receiver: int,
+        extra_meta: dict | None = None,
+        *,
+        lossy: bool = True,
+    ) -> asyncio.Task:
         """Dispatch *content* to 1-indexed *receiver* with optional extra meta."""
+        if lossy and self.container._drop():
+            return _completed_task()  # type: ignore[return-value]
         other = self.container.actors[receiver - 1]
         full_meta: dict = {"sender": self.aid, "message_id": uuid4()}
         full_meta.update(extra_meta or {})
@@ -154,12 +233,24 @@ class SimpleCarrier(Carrier):
 
         self._uuid_to_handler[msg_id] = _handler
 
+        if self.container._drop():
+            return future  # request lost: the future never resolves
         self._track_dispatch(self._dispatch_to(other, content, full_meta))
         return future
 
     def others(self) -> list[int]:
         """Return all 1-indexed carrier IDs except *this* carrier's ID."""
         return [i + 1 for i in range(len(self.container.actors)) if i + 1 != self.aid]
+
+    def address(self) -> int:
+        """This carrier's 1-indexed id."""
+        return self.aid
+
+    def schedule_after(self, delay_s: float, callback: Callable[[], Any]) -> Cancellable:
+        """Like :meth:`Carrier.schedule_after`, but the pending timer counts as
+        in-flight work, so :attr:`ActorContainer.done_event` does not fire while
+        a round deadline is still pending."""
+        return _TrackedTimer(self.container, delay_s, callback)
 
 
 def cid(carrier: SimpleCarrier) -> int:
@@ -175,6 +266,7 @@ def cid(carrier: SimpleCarrier) -> int:
 async def start_distributed_optimization(
     actors: list["DistributedAlgorithm"],
     start_message: Any,
+    container: ActorContainer | None = None,
 ) -> None:
     """Run a fully distributed optimization (e.g. COHDA) and wait until done.
 
@@ -186,10 +278,12 @@ async def start_distributed_optimization(
     :param start_message: The initial message to kick-off the algorithm
                           (e.g. a
                           :class:`~distributed_resource_optimization.algorithm.heuristic.cohda.core.WorkingMemory`).
+    :param container: Optional pre-built :class:`ActorContainer`, e.g. one
+                      with ``loss_rate`` set; it must not have actors yet.
     """
-    container = ActorContainer()
+    container = container if container is not None else ActorContainer()
     carriers = [SimpleCarrier(container, actor) for actor in actors]
-    carriers[0].send_to_other(start_message, cid(carriers[1]))
+    carriers[0]._send(start_message, cid(carriers[1]), lossy=False)
     await container.done_event.wait()
 
 
@@ -197,6 +291,7 @@ async def start_coordinated_optimization(
     actors: list["DistributedAlgorithm"],
     coordinator: "Coordinator",
     start_message: Any,
+    container: ActorContainer | None = None,
 ) -> list[Any]:
     """Run a coordinator-driven optimization (e.g. ADMM) and return results.
 
@@ -209,9 +304,11 @@ async def start_coordinated_optimization(
                         :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`).
     :param start_message: The start payload (e.g.
                           :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMStart`).
+    :param container: Optional pre-built :class:`ActorContainer`, e.g. one
+                      with ``loss_rate`` set; it must not have actors yet.
     :returns: Whatever the coordinator's ``start_optimization`` returns.
     """
-    container = ActorContainer()
+    container = container if container is not None else ActorContainer()
     for actor in actors:
         SimpleCarrier(container, actor)  # registers itself with the container
     coordinator_carrier = SimpleCarrier(container, coordinator)

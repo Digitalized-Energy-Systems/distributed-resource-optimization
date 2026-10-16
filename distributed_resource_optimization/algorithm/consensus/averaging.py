@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from .._rounds import RoundBuffer, RoundDeadline, sender_key
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -127,6 +128,15 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     :param balance_tol: Relative power-balance tolerance for the leader's
                         stop criterion (default 1 % of demand per timestep).
                         Ignored for followers.
+    :param round_timeout: Seconds (carrier clock) to wait for a round's
+                          messages before advancing anyway.  A neighbour whose
+                          message is missing contributes its last known λ and
+                          power (λ = ``initial_lam`` and power 0 if never
+                          heard); the leader applies its ΔP term only once it
+                          has heard from every neighbour, and checks the power
+                          balance only on rounds where every neighbour's value
+                          arrived.  ``None`` (default) waits for every
+                          neighbour, which stalls if a message is lost.
     :raises ValueError: If ``is_leader`` is set without a positive ``leader_gain``
                         (the leader would never correct the power imbalance).
     """
@@ -141,6 +151,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         is_leader: bool = False,
         leader_gain: float = 0.0,
         balance_tol: float = 0.01,
+        round_timeout: float | None = None,
     ) -> None:
         if is_leader and leader_gain <= 0:
             raise ValueError(
@@ -165,21 +176,15 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self.iterations: int = 0
 
         # Mutable iteration state (reset at the start of each consensus run)
-        self._message_queue: dict[int, list[AveragingConsensusMessage]] = {}
+        self._rounds = RoundBuffer()  # (λ, p) per round and sender
+        self._deadline = RoundDeadline(round_timeout)
+        self._data: Any = None  # run payload, cached from the round-0 message
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
         self._k: int = 0
         self._lam: np.ndarray = np.array([initial_lam])
         self._prev_lam: np.ndarray = self._lam.copy()  # λ before the last update
         self._P: np.ndarray = np.array([0.0])  # own last-projected power
-        self._data: Any = None  # run payload, cached from the round-0 message
-
-    def _finish(self, carrier: "Carrier", converged: bool) -> None:
-        self.converged = converged
-        self.iterations = self._k
-        self.finish_callback(self, carrier)
-        self._first_message = True
-        self._message_queue.clear()
 
     async def on_exchange_message(
         self,
@@ -205,7 +210,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._finish(carrier, converged=True)
             return
 
-        # --- Termination path (max_iter failsafe) ---
+        # --- Termination path (max_iter failsafe): a neighbour already
+        # finished its last round ---
         if message_data.k >= self.max_iter:
             if self._first_message:
                 # Negotiation already finished; ignore stale terminal messages
@@ -223,7 +229,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._first_message = False
             self._started = True
             self._k = 0
-            self._message_queue.clear()
+            self._rounds.reset()
             self.converged = False
             # ``data`` is constant for the whole run, so it only travels with
             # the kick-off and round-0 messages. Under packet loss a follower
@@ -232,74 +238,98 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._data = message_data.data
             self._lam = np.ones(len(message_data.lam)) * self.initial_lam
             self._P = np.asarray(self.actor.project_power(self._lam, self._data))
-            for addr in neighbours:
-                carrier.send_to_other(
-                    AveragingConsensusMessage(
-                        lam=self._lam.copy(), k=0, data=self._data, p=self._P.copy()
-                    ),
-                    addr,
-                )
+            self._broadcast(carrier, neighbours)
             if message_data.initial:
                 # This is the external kick-off trigger, not a neighbour's
                 # round-0 contribution — don't queue it for averaging/ΔP.
                 return
 
-        # Drop stragglers from iterations we have already advanced past.
-        # Under packet loss / reordering, a late message could otherwise
-        # complete an old iteration's queue, stepping ``self._k`` backwards
-        # and re-broadcasting duplicate rounds.
+        sender = sender_key(carrier, meta)
+        value = (np.asarray(message_data.lam), np.asarray(message_data.p))
         if message_data.k < self._k:
+            # Too late for its round (never rewinds the counter), but still
+            # the freshest value of that neighbour for later fallbacks.
+            self._rounds.remember(message_data.k, sender, value)
             return
+        self._rounds.add(message_data.k, sender, value)
+        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
 
-        # --- Queue the message ---
-        queue = self._message_queue.setdefault(message_data.k, [])
-        queue.append(message_data)
+    def _advance(self, carrier: "Carrier", neighbours: list) -> None:
+        """Run round ``self._k`` with the best values available and broadcast."""
+        self._deadline.cancel()
+        size = len(self._lam)
+        values = self._rounds.values(
+            self._k,
+            neighbours,
+            default=lambda _n: (np.full(size, self.initial_lam), np.zeros(size)),
+        )
+        avg_lam = sum(lam for lam, _ in values) / len(values)
+        self._prev_lam = self._lam
+        # The ΔP term needs every participant's power; until each neighbour
+        # has been heard once, the default p = 0 would fake a huge deficit.
+        round_complete = self._rounds.complete(self._k, len(neighbours))
+        if self.is_leader and (self._rounds.heard_from_all(neighbours) or round_complete):
+            pd = np.asarray(self._data, dtype=float)
+            sigma_p = self._P + sum(p for _, p in values)
+            delta_p = pd - sigma_p
+            # Stop criterion: power balance ΔP ≈ 0 (see class docstring).
+            # This round's schedules are the ones checked, so stop before
+            # updating λ. Only judged on real round-k values, never on
+            # last-known fallbacks.
+            rel_gap = np.abs(delta_p) / np.maximum(np.abs(pd), 1e-9)
+            if round_complete and np.max(rel_gap) <= self.balance_tol:
+                for addr in neighbours:
+                    carrier.send_to_other(
+                        AveragingConsensusMessage(
+                            lam=self._lam.copy(), k=self._k, data=None, stop=True
+                        ),
+                        addr,
+                    )
+                self._finish(carrier, converged=True)
+                return
+            self._lam = self._lam + self.alpha * (avg_lam - self._lam) + self.leader_gain * delta_p
+        else:
+            self._lam = self._lam + self.alpha * (avg_lam - self._lam)
+        self._P = np.asarray(self.actor.project_power(self._lam, self._data))
+        self._k += 1
+        self._rounds.discard_before(self._k)
+        self._broadcast(carrier, neighbours)
+        if self._k >= self.max_iter:
+            self._finish(carrier, converged=False)
 
-        # --- Advance if we have all neighbours' messages for this iteration ---
-        if len(queue) == len(neighbours) or self._k < message_data.k:
-            avg_lam = sum(m.lam for m in queue) / len(queue)
-            self._prev_lam = self._lam
-            if self.is_leader:
-                pd = np.asarray(self._data, dtype=float)
-                sigma_p = self._P + sum(np.asarray(m.p) for m in queue)
-                delta_p = pd - sigma_p
-                # Stop criterion: power balance ΔP ≈ 0 (see class docstring).
-                # This round's schedules are the ones checked, so stop before
-                # updating λ.
-                rel_gap = np.abs(delta_p) / np.maximum(np.abs(pd), 1e-9)
-                if np.max(rel_gap) <= self.balance_tol:
-                    for addr in neighbours:
-                        carrier.send_to_other(
-                            AveragingConsensusMessage(
-                                lam=self._lam.copy(), k=self._k, data=None, stop=True
-                            ),
-                            addr,
-                        )
-                    self._finish(carrier, converged=True)
-                    return
-                self._lam = (
-                    self._lam + self.alpha * (avg_lam - self._lam) + self.leader_gain * delta_p
-                )
-            else:
-                self._lam = self._lam + self.alpha * (avg_lam - self._lam)
-            self._P = np.asarray(self.actor.project_power(self._lam, self._data))
-            self._k = message_data.k + 1
+    def _broadcast(self, carrier: "Carrier", neighbours: list) -> None:
+        """Send this round's state and arm the round deadline."""
+        for addr in neighbours:
+            carrier.send_to_other(
+                AveragingConsensusMessage(
+                    lam=self._lam.copy(),
+                    k=self._k,
+                    data=self._data if self._k == 0 else None,
+                    p=self._P.copy(),
+                ),
+                addr,
+            )
+        if self._k < self.max_iter:
+            k = self._k
+            self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
 
-            # Purge this and any older iteration's queue: after jumping past
-            # a lossy iteration, its partial queue must not linger.
-            for k in [k for k in self._message_queue if k < self._k]:
-                del self._message_queue[k]
+    def _on_deadline(self, carrier: "Carrier", k: int) -> None:
+        """Round *k* timed out: advance with what arrived, plus last values."""
+        if self._first_message or self._k != k:
+            return
+        neighbours = carrier.others()
+        self._advance(carrier, neighbours)
+        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+            self._advance(carrier, neighbours)
 
-            for addr in neighbours:
-                carrier.send_to_other(
-                    AveragingConsensusMessage(
-                        lam=self._lam.copy(),
-                        k=self._k,
-                        data=None,
-                        p=self._P.copy(),
-                    ),
-                    addr,
-                )
+    def _finish(self, carrier: "Carrier", converged: bool) -> None:
+        self._deadline.cancel()
+        self.converged = converged
+        self.iterations = self._k
+        self.finish_callback(self, carrier)
+        self._first_message = True
+        self._rounds.reset()
 
 
 # ---------------------------------------------------------------------------
