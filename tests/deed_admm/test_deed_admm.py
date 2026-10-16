@@ -745,3 +745,61 @@ async def test_storage_matches_central_optimum():
     assert np.all(np.minimum(z[:tau], z[tau:]) < 0.5), "simultaneous charge and discharge"
     assert np.all(alg.E >= -0.5) and np.all(alg.E <= e_max + 0.5)
     assert alg.E[-1] >= 0.5 * e_max - 0.5
+
+
+async def _run_four_hubs(tol=None, max_iter=300):
+    from distributed_resource_optimization import (
+        create_deed_admm_thermal_participant,
+        start_distributed_optimization,
+    )
+    from distributed_resource_optimization.algorithm.deed_admm.deed_admm import DEEDADMMMessage
+
+    demand = np.array([100.0, 150.0, 120.0, 80.0])
+    algos = {}
+
+    def make_finish(idx):
+        def finish(algo, carrier):
+            algos[idx] = algo
+
+        return finish
+
+    actors = [
+        create_deed_admm_thermal_participant(
+            make_finish(i),
+            p_min=0.0,
+            p_max=60.0,
+            marginal_cost=c,
+            cost_quad=0.01,
+            d_i=demand / 4,
+            gamma=0.05,
+            max_iter=max_iter,
+            n_agents=4,
+            tol=tol,
+        )
+        for i, c in enumerate([1.0, 2.0, 3.0, 4.0])
+    ]
+    start = DEEDADMMMessage(lam=np.zeros(4), xi=np.zeros(4), k=0, data=None, initial=True)
+    await start_distributed_optimization(actors, start)
+    return algos, demand
+
+
+@pytest.mark.asyncio
+async def test_convergence_stop_ends_early_on_the_same_dispatch():
+    """The paper defines no criterion; with tol the run stops once every
+    agent's step and tracker are below it, on (nearly) the full-run result."""
+    full, demand = await _run_four_hubs(tol=None)
+    early, _ = await _run_four_hubs(tol=1e-6)
+
+    assert all(a.converged is None and a.iterations == 300 for a in full.values())
+    iterations = {a.iterations for a in early.values()}
+    assert len(iterations) == 1 and iterations.pop() < 300
+    assert all(a.converged is True for a in early.values())
+    np.testing.assert_allclose(sum(a.P for a in early.values()), demand, atol=1e-3)
+    for i in full:
+        np.testing.assert_allclose(early[i].P, full[i].P, atol=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_convergence_stop_not_converged_at_max_iter():
+    algos, _ = await _run_four_hubs(tol=1e-12, max_iter=2)
+    assert all(a.converged is False and a.iterations == 2 for a in algos.values())
