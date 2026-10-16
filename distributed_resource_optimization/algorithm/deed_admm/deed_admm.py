@@ -233,8 +233,10 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         lam_tilde = self._lam.copy()
         xi_tilde = self._xi.copy()
         me = address_of(carrier)
-        if me is None:
-            # Carrier cannot name this participant: plain mixing.
+        if me is None or not self._deadline.enabled:
+            # Plain mixing, as in the paper (Algorithm 1): lossless runs (no
+            # round deadline) or a carrier that cannot name this participant.
+            # The running-sum flows below only matter under message loss.
             for lam, xi in self._rounds.values(self._k, neighbours, default=lambda _n: own):
                 lam_tilde += self.beta * (lam - self._lam)
                 xi_tilde += self.beta * (xi - self._xi)

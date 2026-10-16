@@ -110,15 +110,18 @@ class RoundBuffer:
 
         Round-*k* value if it arrived, else the neighbour's most recent value,
         else ``default(neighbour)``.  Anonymous round-*k* values (unknown
-        sender) are included as they are.
+        sender) are included as they are.  Values that arrived come first, in
+        arrival order, so a lossless run sums them in the same order as a plain
+        message queue would (bit-identical floating-point results).
         """
         got = self._rounds.get(k, {})
         neighbours = list(neighbours)
-        out = [v for key, v in got.items() if isinstance(key, _Anonymous)]
+        wanted = set(neighbours)
+        out = [v for key, v in got.items() if isinstance(key, _Anonymous) or key in wanted]
         for n in neighbours:
             if n in got:
-                out.append(got[n])
-            elif n in self._latest:
+                continue
+            if n in self._latest:
                 out.append(self._latest[n][1])
             else:
                 out.append(default(n))
@@ -146,13 +149,18 @@ class RoundBuffer:
     def value_map(
         self, k: int, neighbours: Iterable[Any], default: Callable[[Any], Any]
     ) -> dict[Any, Any]:
-        """Like :meth:`values`, keyed by neighbour (identified senders only)."""
+        """Like :meth:`values`, keyed by neighbour (identified senders only).
+
+        Same order as :meth:`values`: arrived values first, in arrival order.
+        """
         got = self._rounds.get(k, {})
-        out: dict[Any, Any] = {}
+        neighbours = list(neighbours)
+        wanted = set(neighbours)
+        out: dict[Any, Any] = {key: v for key, v in got.items() if key in wanted}
         for n in neighbours:
-            if n in got:
-                out[n] = got[n]
-            elif n in self._latest:
+            if n in out:
+                continue
+            if n in self._latest:
                 out[n] = self._latest[n][1]
             else:
                 out[n] = default(n)

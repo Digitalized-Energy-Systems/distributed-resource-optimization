@@ -277,8 +277,11 @@ class _DiffusionRounds(DistributedAlgorithm):
         own = self._outgoing()
         self_w, neighbor_w = self._combine_weights(len(neighbours))
         me = address_of(carrier)
-        if me is None:
-            # Carrier cannot name this participant: plain weighted combine.
+        if me is None or not self._deadline.enabled:
+            # Plain weighted combine, as in the papers (Ces et al. eq. 27):
+            # lossless runs (no round deadline) or a carrier that cannot name
+            # this participant. The running-sum flows below only matter under
+            # message loss.
             phis = [
                 phi for phi, _ in self._rounds.values(self._k, neighbours, default=lambda _n: own)
             ]

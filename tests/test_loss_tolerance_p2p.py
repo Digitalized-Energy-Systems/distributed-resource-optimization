@@ -253,10 +253,13 @@ class TestRunningSums:
             assert np.array_equal(with_timeout[i], without[i])
 
     async def test_deed_lossless_unchanged(self):
+        # Without a deadline DEED-ADMM mixes ξ as in the paper; with one it
+        # uses the running-sum flows. Algebraically equal, so a deadline that
+        # never fires may only change rounding.
         with_timeout, _, _ = await _run_deed(round_timeout=1.0)
         without, _, _ = await _run_deed(round_timeout=None)
         for i in without:
-            assert np.array_equal(with_timeout[i], without[i])
+            np.testing.assert_allclose(with_timeout[i], without[i], rtol=1e-9, atol=1e-9)
 
     @pytest.mark.parametrize("loss_rate", [0.05, 0.2])
     @pytest.mark.parametrize("seed", [1, 2])
