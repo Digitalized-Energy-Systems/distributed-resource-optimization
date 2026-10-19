@@ -303,8 +303,8 @@ def _closed_form_lambda_star(costs: list[float], actor_epsilon: float, p_target:
 async def test_exact_diffusion_removes_classical_diffusion_bias():
     """For heterogeneous local costs and a constant step size, classical
     (adapt-then-combine) Diffusion is known to converge to a point *biased*
-    away from the true minimiser of the aggregate cost (Yuan, Ling & Sayed
-    2018) -- Exact Diffusion's correction stage exists specifically to
+    away from the true minimiser of the aggregate cost (Yuan, Ying, Zhao &
+    Sayed 2019) -- Exact Diffusion's correction stage exists specifically to
     remove that bias. This is the paper's headline claim for adopting exact
     diffusion, so it's the property worth verifying, not just that the code
     runs.

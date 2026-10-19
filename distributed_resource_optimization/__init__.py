@@ -13,7 +13,7 @@ Algorithms
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
   horizon (incl. economic dispatch and reservoir storage).
 * **Exact Diffusion** — adapt-correct-combine diffusion (Ces et al. 2025;
-  Yuan, Ling & Sayed 2018) removing classical Diffusion's steady-state bias.
+  Yuan, Ying, Zhao & Sayed 2019) removing classical Diffusion's steady-state bias.
 * **FDGDM** — Fast Distributed Gradient Descent Method for economic dispatch
   (Bai et al. 2022), using per-participant gradient/curvature bounds.
 * **DEED-ADMM** — Distributed Economic Dispatch via ADMM with dynamic

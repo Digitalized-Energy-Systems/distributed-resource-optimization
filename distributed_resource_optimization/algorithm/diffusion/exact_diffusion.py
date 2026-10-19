@@ -6,8 +6,9 @@ to a point that is *biased* relative to the true minimiser of the network's
 aggregate cost whenever participants' local costs differ -- the combine step
 mixes already-adapted iterates, so the network never quite agrees on the
 gradient direction it collectively descends along. Exact Diffusion (Ces
-et al. 2025, Sec. 3.4, eqs. 28-30; underlying theory: Yuan, Ling & Sayed,
-"Exact Diffusion for Distributed Optimization and Learning", 2018) removes
+et al. 2025, Sec. 3.4, eqs. 28-30; underlying theory: Yuan, Ying, Zhao &
+Sayed, "Exact Diffusion for Distributed Optimization and Learning", Parts I
+and II, IEEE Trans. Signal Process. 67, 2019; arXiv:1702.05122 / 1702.05142) removes
 that bias by inserting a **correction** stage between adapt and combine that
 cancels the first-order bias term, at the cost of one extra state variable
 per participant (the previous iteration's uncorrected φ).
