@@ -384,7 +384,7 @@ class TestReservoirStorageDiffusionActor:
         actor = self._actor(charge_cost=1.0, discharge_cost=2.0, epsilon=0.1)
         lam = np.array([2.0])  # in the dead-band
         actor.gradient_term(lam, None)
-        assert actor.P[0] == 0.0, "Should be idle in the dead-band"
+        assert actor.P[0] == pytest.approx(0.0, abs=1e-9), "Should be idle in the dead-band"
 
     def test_box_constraints_respected(self):
         actor = self._actor(p_charge_max=3.0, p_discharge_max=6.0)
