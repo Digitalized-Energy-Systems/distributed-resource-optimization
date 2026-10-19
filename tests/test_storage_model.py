@@ -35,6 +35,32 @@ def test_price_response_matches_an_independent_solve():
     assert e[-1] >= model.e0 - 1e-6  # E_T >= E_0
 
 
+def test_proximal_response_repeats_an_earlier_answer_exactly():
+    model = _battery(discharge_cost=2.0)
+    lam1, lam2 = np.array([1.0, 30.0, 2.0, 40.0]), np.array([5.0, 25.0, 6.0, 35.0])
+    p1, e1 = model.proximal_response(lam1, 0.5, None)
+    p2, _ = model.proximal_response(lam2, 0.5, p1)
+    again, e_again = model.proximal_response(lam1, 0.5, p2)  # e.g. a rollback
+    np.testing.assert_array_equal(again, p1)
+    np.testing.assert_array_equal(e_again, e1)
+
+
+def test_proximal_response_fixed_point_is_unbiased():
+    """Iterated (with a vanishing price drift, as in a converging price
+    iteration), the centred response reaches the exact best response: fill the
+    battery in the cheap hours, empty it back to E_0 in the expensive ones.
+    The zero-centred price_response stays pulled toward idle storage."""
+    model = _battery()
+    lam = np.array([9.0, 9.0, 11.0, 11.0])
+    p = None
+    for k in range(300):
+        p, e = model.proximal_response(lam + 1e-9 * k, 1.0, p)
+    assert e.max() == pytest.approx(10.0, abs=1e-3)  # full
+    assert e[-1] == pytest.approx(model.e0, abs=1e-3)  # back to E_0
+    biased, _ = model.price_response(lam, 1.0)
+    assert np.abs(biased).sum() < 0.5 * np.abs(p).sum()
+
+
 def test_price_response_charges_cheap_and_discharges_expensive_hours():
     model = _battery()
     p, _ = model.price_response(np.array([1.0, 1.0, 50.0, 50.0]), 0.1)

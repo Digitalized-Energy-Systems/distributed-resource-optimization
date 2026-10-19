@@ -32,6 +32,7 @@ starts — the per-round cost of a storage participant:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import cvxpy as cp
 import numpy as np
@@ -82,6 +83,10 @@ class StorageModel:
 
     _price_problems: dict = field(default_factory=dict, init=False, repr=False)
     _projection_problems: dict = field(default_factory=dict, init=False, repr=False)
+    _responses: dict = field(default_factory=dict, init=False, repr=False)
+
+    #: Recent proximal responses kept by price (see :meth:`proximal_response`).
+    RESPONSE_CACHE: ClassVar[int] = 64
 
     def __post_init__(self) -> None:
         if self.e_max <= 0:
@@ -187,6 +192,39 @@ class StorageModel:
         problem, price, p_d, p_c = self._price_problems[key]
         price.value = lam
         return self._solve(problem, p_d, p_c)
+
+    def proximal_response(
+        self, lam: np.ndarray, epsilon: float, previous: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Proximal-point response to the price *lam*:
+        ``argmin cost(p) − λᵀp + (ε/2)‖p − p_prev‖²`` = ``prox(p_prev + λ/ε, ε)``.
+
+        Centring the proximal term on the previous schedule (instead of on
+        zero, as :meth:`price_response` does) keeps a price iteration stable
+        without biasing its fixed point: at a fixed point p is an exact best
+        response to λ. Centred on zero, storage was pulled toward idling
+        (DE-AT, quadratic costs: 15 % of the optimal battery throughput;
+        centred: the optimal throughput).
+
+        The last responses are remembered by price, so asking again for an
+        earlier price (consensus followers rolling back to the round the
+        leader verified) returns exactly the schedule given then. A price
+        iteration only repeats a price exactly at its fixed point, where
+        repeating the answer is also correct.
+        """
+        lam = np.asarray(lam, dtype=float).ravel()
+        key = (lam.tobytes(), float(epsilon))
+        cached = self._responses.get(key)
+        if cached is not None:
+            return cached[0].copy(), cached[1].copy()
+        prev = np.zeros_like(lam) if previous is None else np.asarray(previous, dtype=float).ravel()
+        if prev.shape != lam.shape:
+            prev = np.zeros_like(lam)
+        result = self.prox(prev + lam / epsilon, epsilon)
+        self._responses[key] = (result[0].copy(), result[1].copy())
+        while len(self._responses) > self.RESPONSE_CACHE:
+            self._responses.pop(next(iter(self._responses)))
+        return result
 
     def prox(
         self, center: np.ndarray, rho: float, with_cost: bool = True

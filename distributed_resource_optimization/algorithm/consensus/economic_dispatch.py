@@ -88,7 +88,7 @@ class ReservoirStorageConsensusActor(ConsensusActor):
     :param charge_cost: Cost per MWh charged (0 by convention, Q15).
     :param discharge_cost: Cost per MWh discharged.
     :param epsilon: Proximal weight ε of the response, centred on the previous
-        schedule (default 0.1; see :func:`_storage_response`).
+        schedule (default 0.1; see :meth:`StorageModel.proximal_response`).
     """
 
     e_max: float
@@ -129,23 +129,5 @@ class ReservoirStorageConsensusActor(ConsensusActor):
         :param data: Unused (total demand is only needed by the leader).
         :returns: Net power (positive = discharge); :attr:`E` holds the energy path.
         """
-        self.P, self.E = _storage_response(self._model, lam, self.epsilon, self.P)
+        self.P, self.E = self._model.proximal_response(lam, self.epsilon, self.P)
         return self.P
-
-
-def _storage_response(model: Any, lam: Any, epsilon: float, previous: Any) -> tuple:
-    """Proximal-point response of the shared storage model to the price *lam*:
-    ``argmin cost(p) − λᵀp + (ε/2)‖p − p_prev‖²`` = ``prox(p_prev + λ/ε, ε)``.
-
-    Centring the proximal term on the previous schedule (instead of on zero)
-    keeps the price iteration stable without biasing its fixed point: at a
-    fixed point p is an exact best response to λ. Centred on zero, storage was
-    pulled toward idling (DE-AT, quadratic costs: 15 % of the optimal battery
-    throughput; centred: the optimal throughput, schedule within 4 % for exact
-    diffusion).
-    """
-    lam = np.asarray(lam, dtype=float)
-    prev = np.asarray(previous, dtype=float)
-    if prev.shape != lam.shape:
-        prev = np.zeros_like(lam)
-    return model.prox(prev + lam / epsilon, epsilon)
