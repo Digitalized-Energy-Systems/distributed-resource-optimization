@@ -159,3 +159,43 @@ async def test_exchange_admm_soft_alpha_biases_balance():
     soft_gap = await run(alpha=0.05)  # rho/alpha = 20 → visible bias
     assert exact_gap < 0.05
     assert soft_gap > 1.0, f"expected soft-penalty bias, got gap {soft_gap}"
+
+
+async def _merit_order_run(rho: float, adaptive: bool):
+    target = np.full(HORIZON, 15.0)
+    actors = [
+        create_admm_flex_actor_box_bounded(
+            lb=np.zeros(HORIZON), u=np.full(HORIZON, 10.0), S=np.full(HORIZON, c)
+        )
+        for c in (10.0, 30.0, 50.0)
+    ]
+    coordinator = create_consensus_target_reach_admm_coordinator(
+        rho=rho, max_iters=5000, adaptive_rho=adaptive
+    )
+    results = await start_coordinated_optimization(
+        actors, coordinator, create_admm_start_consensus(target)
+    )
+    return results, coordinator
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rho", [0.01, 100.0])
+async def test_adaptive_rho_recovers_from_a_poor_rho(rho):
+    """Boyd et al. 2011 §3.4.1: residual balancing reaches the same optimum in
+    fewer rounds when the initial rho is far off."""
+    fixed, fixed_coord = await _merit_order_run(rho, adaptive=False)
+    adapt, adapt_coord = await _merit_order_run(rho, adaptive=True)
+    assert adapt_coord.converged
+    assert adapt_coord.rho_changes > 0 and adapt_coord.final_rho != rho
+    assert adapt_coord.iterations < fixed_coord.iterations
+    for got in (adapt[0], adapt[1], adapt[2]):
+        assert np.all(np.isfinite(got))
+    assert np.allclose(adapt[0], 10.0, atol=0.1)
+    assert np.allclose(adapt[1], 5.0, atol=0.1)
+    assert np.allclose(adapt[2], 0.0, atol=0.1)
+
+
+@pytest.mark.asyncio
+async def test_fixed_rho_is_the_default():
+    _, coord = await _merit_order_run(1.0, adaptive=False)
+    assert coord.rho_changes == 0 and coord.final_rho == 1.0

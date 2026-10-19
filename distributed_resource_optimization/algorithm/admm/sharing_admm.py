@@ -156,6 +156,7 @@ def create_sharing_target_distance_admm_coordinator(
     max_iters: int = 1000,
     round_timeout: float | None = None,
     max_missing_rounds: int | None = None,
+    adaptive_rho: bool = False,
 ) -> ADMMGenericCoordinator:
     """Create an :class:`~.core.ADMMGenericCoordinator` for target-distance sharing.
 
@@ -163,6 +164,7 @@ def create_sharing_target_distance_admm_coordinator(
     :param max_iters: Maximum number of iterations.
     :param round_timeout: Per-round answer timeout; see :class:`~.core.ADMMGenericCoordinator`.
     :param max_missing_rounds: See :class:`~.core.ADMMGenericCoordinator`.
+    :param adaptive_rho: Residual balancing (Boyd §3.4.1); see :class:`~.core.ADMMGenericCoordinator`.
     """
     return ADMMGenericCoordinator(
         global_actor=ADMMSharingGlobalActor(),
@@ -170,4 +172,5 @@ def create_sharing_target_distance_admm_coordinator(
         max_iters=max_iters,
         round_timeout=round_timeout,
         max_missing_rounds=max_missing_rounds,
+        adaptive_rho=adaptive_rho,
     )

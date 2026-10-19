@@ -125,6 +125,7 @@ def create_consensus_target_reach_admm_coordinator(
     feas_tol: float = 1e-4,
     round_timeout: float | None = None,
     max_missing_rounds: int | None = None,
+    adaptive_rho: bool = False,
 ) -> ADMMGenericCoordinator:
     """Create an :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator` for the consensus variant.
 
@@ -135,6 +136,7 @@ def create_consensus_target_reach_admm_coordinator(
                      ``max |target|`` (ignored when ``alpha > 0``).
     :param round_timeout: Per-round answer timeout; see :class:`ADMMGenericCoordinator`.
     :param max_missing_rounds: See :class:`ADMMGenericCoordinator`.
+    :param adaptive_rho: Residual balancing (Boyd §3.4.1); see :class:`ADMMGenericCoordinator`.
     """
     return ADMMGenericCoordinator(
         global_actor=ADMMConsensusGlobalActor(alpha=alpha),
@@ -143,6 +145,7 @@ def create_consensus_target_reach_admm_coordinator(
         feas_tol=feas_tol,
         round_timeout=round_timeout,
         max_missing_rounds=max_missing_rounds,
+        adaptive_rho=adaptive_rho,
     )
 
 
