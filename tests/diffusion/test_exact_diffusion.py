@@ -412,38 +412,6 @@ class _MuteCarrier:
 
 
 @pytest.mark.asyncio
-async def test_exact_diffusion_rejects_mismatched_neighbour_degree():
-    """regular_graph_weights() assumes every neighbour shares this node's
-    degree; a neighbour reporting a different degree must raise rather than
-    silently produce a non-stochastic weight matrix."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import DiffusionMessage
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
-        ExactDiffusionAlgorithm,
-    )
-
-    algo = ExactDiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10)
-    start = create_exact_diffusion_start(initial_lam=1.0, horizon=1)
-    carrier = _MuteCarrier()
-    await algo.on_exchange_message(carrier, start, {})  # initialise (2 neighbours)
-
-    await algo.on_exchange_message(
-        carrier,
-        DiffusionMessage(
-            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
-        ),
-        {},
-    )
-    with pytest.raises(ValueError, match="degree-regular"):
-        await algo.on_exchange_message(
-            carrier,
-            DiffusionMessage(
-                phi=np.array([1.0]), k=0, data=None, degree=3, weight_rule="mean_metropolis"
-            ),
-            {},
-        )
-
-
-@pytest.mark.asyncio
 async def test_exact_diffusion_rejects_mismatched_weight_rule():
     """All participants must agree on the same weight_rule; a neighbour
     reporting a different one must raise rather than silently mix weights

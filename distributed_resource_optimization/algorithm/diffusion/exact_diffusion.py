@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._weight_rules import WeightRule, regular_graph_weights
+from .._weight_rules import WeightRule, combination_weights, regular_graph_weights
 from .diffusion import DiffusionActor, _DiffusionRounds, create_diffusion_start
 
 if TYPE_CHECKING:
@@ -98,6 +98,11 @@ class ExactDiffusionAlgorithm(_DiffusionRounds):
                           messages before advancing with the last received
                           iterates; ``None`` (default) waits for every
                           neighbour, which stalls if a message is lost.
+    :param diameter: Diameter of the communication graph (1 = complete).
+                     Above 1 a participant stops once its convergence radius
+                     reaches it (every participant converged, see
+                     :func:`~.._rounds.convergence_radius`) and tells its
+                     neighbours, which stop as well.
     """
 
     _label = "Exact Diffusion"
@@ -114,6 +119,7 @@ class ExactDiffusionAlgorithm(_DiffusionRounds):
         patience: int = 3,
         weight_rule: WeightRule = "mean_metropolis",
         round_timeout: float | None = None,
+        diameter: int = 1,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
@@ -132,7 +138,7 @@ class ExactDiffusionAlgorithm(_DiffusionRounds):
         #: Iterations completed when the last run terminated.
         self.iterations: int = 0
 
-        self._init_rounds(round_timeout)
+        self._init_rounds(round_timeout, diameter)
         # λ / φ state is sized from the kick-off message on (re-)initialisation.
         self._lam: np.ndarray = np.array([initial_lam])
         self._phi_prev: np.ndarray | None = None
@@ -164,6 +170,13 @@ class ExactDiffusionAlgorithm(_DiffusionRounds):
         # a negative eigenvalue on a complete graph).
         raw_self_w, raw_neighbor_w = regular_graph_weights(n_neighbours, self.weight_rule)
         return (1.0 + raw_self_w) / 2.0, raw_neighbor_w / 2.0
+
+    def _irregular_weights(
+        self, own_degree: int, degrees: dict[Any, int]
+    ) -> tuple[float, dict[Any, float]]:
+        # Same W̄ = (I + W)/2 with W from the neighbours' degrees.
+        raw_self_w, raw = combination_weights(own_degree, degrees, self.weight_rule)
+        return (1.0 + raw_self_w) / 2.0, {n: w / 2.0 for n, w in raw.items()}
 
     def _adapt(self, data: Any) -> None:
         self._phi_bar = self._adapt_and_correct(data)

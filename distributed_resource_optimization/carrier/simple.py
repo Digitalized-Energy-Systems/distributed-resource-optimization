@@ -38,9 +38,17 @@ class ActorContainer:
         :func:`start_distributed_optimization` is never dropped.
     :param rng: Random generator for the loss draws (default: a fresh
         ``random.Random(0)``, so runs are reproducible).
+    :param neighbours: Optional communication graph as ``{aid: [aid, ...]}``
+        (1-indexed, symmetric); :meth:`SimpleCarrier.others` then returns only
+        these neighbours. Default: every carrier neighbours every other one.
     """
 
-    def __init__(self, loss_rate: float = 0.0, rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        loss_rate: float = 0.0,
+        rng: random.Random | None = None,
+        neighbours: dict[int, list[int]] | None = None,
+    ) -> None:
         if not 0.0 <= loss_rate <= 1.0:
             raise ValueError(f"loss_rate must be in [0, 1], got {loss_rate!r}")
         self.actors: list[SimpleCarrier] = []
@@ -50,6 +58,7 @@ class ActorContainer:
         self._rng = rng if rng is not None else random.Random(0)
         #: Number of messages dropped so far.
         self.dropped: int = 0
+        self.neighbours = neighbours
 
     def _register(self, carrier: SimpleCarrier) -> int:
         self.actors.append(carrier)
@@ -239,7 +248,10 @@ class SimpleCarrier(Carrier):
         return future
 
     def others(self) -> list[int]:
-        """Return all 1-indexed carrier IDs except *this* carrier's ID."""
+        """Return the 1-indexed IDs of this carrier's neighbours (all other
+        carriers unless the container has a neighbour map)."""
+        if self.container.neighbours is not None:
+            return list(self.container.neighbours.get(self.aid, []))
         return [i + 1 for i in range(len(self.container.actors)) if i + 1 != self.aid]
 
     def address(self) -> int:

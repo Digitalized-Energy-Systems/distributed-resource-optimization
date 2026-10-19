@@ -459,36 +459,88 @@ class _MuteCarrier:
         pass
 
 
+def _path_neighbours(n: int) -> dict[int, list[int]]:
+    """1 - 2 - ... - n (1-indexed): degrees 1 and 2, diameter n - 1."""
+    return {i: [j for j in (i - 1, i + 1) if 1 <= j <= n] for i in range(1, n + 1)}
+
+
+async def _dispatch_on(neighbours, diameter, algo_factory, weight_rule="mean_metropolis"):
+    """Three generators (costs 2, 5, 8; 20 MW each) serving 30 MW."""
+    from distributed_resource_optimization.carrier.simple import ActorContainer
+
+    demand = np.array([30.0])
+    results: dict[int, np.ndarray] = {}
+    stopped: dict[int, bool] = {}
+
+    def make_finish(idx: int):
+        def finish(algo, carrier):
+            results[idx] = algo.actor.P.copy()
+            stopped[idx] = algo.converged
+
+        return finish
+
+    actors = [
+        algo_factory(
+            make_finish(i),
+            diffusion_actor=LinearCostEconomicDispatchDiffusionActor(
+                cost=cost, p_max=20.0, epsilon=1.0, n_guess=3
+            ),
+            initial_lam=5.0,
+            max_iter=5000,
+            epsilon=0.3,
+            tol=1e-6,
+            weight_rule=weight_rule,
+            diameter=diameter,
+        )
+        for i, cost in enumerate((2.0, 5.0, 8.0))
+    ]
+    start = create_diffusion_start(initial_lam=5.0, data=demand, horizon=1)
+    await start_distributed_optimization(
+        actors, start, container=ActorContainer(neighbours=neighbours)
+    )
+    return results, stopped
+
+
 @pytest.mark.asyncio
-async def test_diffusion_rejects_mismatched_neighbour_degree():
-    """regular_graph_weights() assumes every neighbour shares this node's
-    degree; a neighbour reporting a different degree must raise rather than
-    silently produce a non-stochastic weight matrix."""
+@pytest.mark.parametrize("weight_rule", ["mean_metropolis", "hastings"])
+async def test_diffusion_on_irregular_graph_balances_in_merit_order(weight_rule):
+    """A path graph (degrees 1, 2, 1) needs per-neighbour weights; the run
+    ends for everyone on the convergence radius (diameter 2). Classical
+    diffusion's constant-step bias depends on the weights, so only balance and
+    merit order are compared (exact diffusion below must match exactly)."""
     from distributed_resource_optimization.algorithm.diffusion.diffusion import (
         DiffusionAlgorithm,
-        DiffusionMessage,
     )
 
-    algo = DiffusionAlgorithm(finish_callback=lambda a, c: None, max_iter=10)
-    start = create_diffusion_start(initial_lam=1.0, horizon=1)
-    carrier = _MuteCarrier()
-    await algo.on_exchange_message(carrier, start, {})  # initialise (2 neighbours)
+    path, path_stop = await _dispatch_on(_path_neighbours(3), 2, DiffusionAlgorithm, weight_rule)
+    assert len(path) == 3 and all(path_stop.values())
+    assert sum(float(path[i][0]) for i in range(3)) == pytest.approx(30.0, abs=1.0)
+    assert path[0][0] >= path[1][0] >= path[2][0]
 
-    await algo.on_exchange_message(
-        carrier,
-        DiffusionMessage(
-            phi=np.array([1.0]), k=0, data=None, degree=2, weight_rule="mean_metropolis"
-        ),
-        {},
+
+@pytest.mark.asyncio
+async def test_exact_diffusion_on_irregular_graph_matches_complete_graph():
+    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+        ExactDiffusionAlgorithm,
     )
-    with pytest.raises(ValueError, match="degree-regular"):
-        await algo.on_exchange_message(
-            carrier,
-            DiffusionMessage(
-                phi=np.array([1.0]), k=0, data=None, degree=3, weight_rule="mean_metropolis"
-            ),
-            {},
-        )
+
+    path, path_stop = await _dispatch_on(
+        _path_neighbours(3), 2, ExactDiffusionAlgorithm, "mean_metropolis"
+    )
+    full, _ = await _dispatch_on(None, 1, ExactDiffusionAlgorithm, "mean_metropolis")
+    assert len(path) == 3 and all(path_stop.values())
+    for i in range(3):
+        assert np.allclose(path[i], full[i], atol=0.5), (i, path[i], full[i])
+
+
+def test_convergence_radius():
+    from distributed_resource_optimization.algorithm._rounds import convergence_radius
+
+    assert convergence_radius(False, [(True, 5)], 3) == -1
+    assert convergence_radius(True, [(True, -1), (True, 0)], 3) == 1
+    assert convergence_radius(True, [(True, 2), (False, 4)], 3) == 0
+    assert convergence_radius(True, [(True, 2), (True, 4)], 3) == 3
+    assert convergence_radius(True, [], 3) == 4  # isolated agent
 
 
 @pytest.mark.asyncio

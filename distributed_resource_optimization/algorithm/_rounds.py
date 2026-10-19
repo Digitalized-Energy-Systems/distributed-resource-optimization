@@ -438,3 +438,22 @@ class FlowSettlement:
             if handle is not None:
                 handle.cancel()
         self.reset()
+
+
+def convergence_radius(
+    own_flag: bool, neighbour_states: Iterable[tuple[bool, int]], diameter: int
+) -> int:
+    """Hops around this agent known to have converged (-1: not even itself).
+
+    *neighbour_states* are each neighbour's ``(converged flag, radius)`` as
+    carried by its round message, where the radius is the one it computed in
+    its previous round. A neighbour with its flag set certifies at least
+    radius 0, so this agent's radius is ``1 + min`` over the neighbours'.
+    Once the radius reaches the graph *diameter*, every agent's flag is
+    known to be set and the run can end for everyone. On a complete graph
+    (diameter 1) this is "own flag and every neighbour's flag".
+    """
+    if not own_flag:
+        return -1
+    reach = [max(radius, 0) if flag else -1 for flag, radius in neighbour_states]
+    return 1 + min(reach, default=diameter)

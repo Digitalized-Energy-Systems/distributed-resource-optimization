@@ -39,8 +39,15 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import EdgeFlows, RoundBuffer, RoundDeadline, address_of, sender_key
-from .._weight_rules import WeightRule, regular_graph_weights
+from .._rounds import (
+    EdgeFlows,
+    RoundBuffer,
+    RoundDeadline,
+    address_of,
+    convergence_radius,
+    sender_key,
+)
+from .._weight_rules import WeightRule, combination_weights, regular_graph_weights
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -84,10 +91,9 @@ class DiffusionMessage(OptimizationMessage):
     :param data: Auxiliary payload forwarded to :meth:`DiffusionActor.gradient_term`.
     :param initial: If ``True`` this is the kick-off message; recipients
                     (re-)initialise their state.
-    :param degree: Sender's own neighbour count.  Used only to verify the
-                   degree-regular-graph assumption
-                   :func:`~distributed_resource_optimization.algorithm._weight_rules.regular_graph_weights`
-                   relies on -- ignored on the ``initial`` kick-off message.
+    :param degree: Sender's own neighbour count; recipients use it for the
+                   combination weights (:func:`~distributed_resource_optimization.algorithm._weight_rules.combination_weights`)
+                   -- ignored on the ``initial`` kick-off message.
     :param weight_rule: Sender's own combination-weight rule.  Used only to
                         verify every participant agrees on the same rule --
                         ignored on the ``initial`` kick-off message.
@@ -102,6 +108,9 @@ class DiffusionMessage(OptimizationMessage):
                      receiver uses it to keep both ends' flows equal under
                      message loss.  ``None`` otherwise.
     :param flow_round: Last round included in ``flow_sum``.
+    :param radius: Sender's convergence radius from its previous round (see
+                   :func:`~.._rounds.convergence_radius`); only used on graphs
+                   with a diameter above 1.
     """
 
     phi: np.ndarray
@@ -113,6 +122,7 @@ class DiffusionMessage(OptimizationMessage):
     converged: bool = False
     flow_sum: np.ndarray | None = None
     flow_round: int = -1
+    radius: int = -1
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +157,13 @@ class _DiffusionRounds(DistributedAlgorithm):
     iterations: int
     _lam: np.ndarray
 
-    def _init_rounds(self, round_timeout: float | None) -> None:
-        self._rounds = RoundBuffer()  # (φ, converged) per round and sender
+    def _init_rounds(self, round_timeout: float | None, diameter: int = 1) -> None:
+        #: Diameter of the communication graph. Above 1 the run ends on the
+        #: convergence radius (every agent converged), not on the neighbours.
+        self.diameter = max(1, int(diameter))
+        self._radius: int = -1
+        self._degrees: dict[Any, int] = {}  # neighbour -> its degree
+        self._rounds = RoundBuffer()  # (φ, converged, radius) per round and sender
         self._flows = EdgeFlows()  # combine flows, kept equal on both ends
         self._deadline = RoundDeadline(round_timeout)
         self._data: Any = None
@@ -169,8 +184,31 @@ class _DiffusionRounds(DistributedAlgorithm):
         raise NotImplementedError
 
     def _combine_weights(self, n_neighbours: int) -> tuple[float, float]:
-        """``(self weight, weight per neighbour)`` of the combine step."""
+        """``(self weight, weight per neighbour)`` on a degree-regular graph."""
         raise NotImplementedError
+
+    def _neighbour_weights(self, neighbours: list) -> tuple[float, float, dict[Any, float] | None]:
+        """``(self weight, uniform neighbour weight, per-neighbour weights)``.
+
+        On a degree-regular neighbourhood (every neighbour's degree equals this
+        node's, e.g. a complete graph or a ring) the per-neighbour map is
+        ``None`` and the uniform weight applies, exactly as before. Otherwise
+        the weights come from each neighbour's degree (a neighbour never heard
+        of counts with this node's degree).
+        """
+        own = len(neighbours)
+        degrees = {n: self._degrees.get(n, own) for n in neighbours}
+        self_w, neighbor_w = self._combine_weights(own)
+        if all(d == own for d in degrees.values()):
+            return self_w, neighbor_w, None
+        self_w, weights = self._irregular_weights(own, degrees)
+        return self_w, neighbor_w, weights
+
+    def _irregular_weights(
+        self, own_degree: int, degrees: dict[Any, int]
+    ) -> tuple[float, dict[Any, float]]:
+        """Combination weights from the neighbours' degrees."""
+        return combination_weights(own_degree, degrees, self.weight_rule)
 
     def _adapt(self, data: Any) -> None:
         """Adapt step after the combine (updates the outgoing iterate)."""
@@ -195,8 +233,15 @@ class _DiffusionRounds(DistributedAlgorithm):
         # (k = max_iter) does not end this run: every participant stops by its
         # own counter and keeps that message as the neighbour's freshest value.
         if message_data.k > self.max_iter:
-            self.converged = self._converged_flag
-            self.iterations = self._k
+            if self.diameter > 1:
+                # The sender certified that every agent converged: stop too and
+                # pass the notice on, so no neighbour waits for this agent.
+                self.converged = True
+                self.iterations = self._k
+                self._notify_finished(carrier, neighbours)
+            else:
+                self.converged = self._converged_flag
+                self.iterations = self._k
             self._finish(carrier)
             return
 
@@ -212,6 +257,7 @@ class _DiffusionRounds(DistributedAlgorithm):
             self._k = 0
             self._converged_flag = False
             self._stable_rounds = 0
+            self._radius = -1
             self.converged = False
             self._rounds.reset()
             self._flows.reset()
@@ -221,11 +267,17 @@ class _DiffusionRounds(DistributedAlgorithm):
             if message_data.initial:
                 return  # kick-off is not a topology neighbour; do not queue
 
-        self._check_neighbour(message_data, len(neighbours))
+        self._check_neighbour(message_data)
         sender = sender_key(carrier, meta)
+        if sender is not None:
+            self._degrees[sender] = int(message_data.degree)
         if sender is not None and message_data.flow_sum is not None:
             self._flows.offer(sender, message_data.flow_round, np.asarray(message_data.flow_sum))
-        value = (np.asarray(message_data.phi), bool(message_data.converged))
+        value = (
+            np.asarray(message_data.phi),
+            bool(message_data.converged),
+            int(message_data.radius),
+        )
         if message_data.k < self._k:
             # Too late for its round, but the freshest value of that neighbour.
             self._rounds.remember(message_data.k, sender, value)
@@ -234,17 +286,9 @@ class _DiffusionRounds(DistributedAlgorithm):
         while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
             self._advance(carrier, neighbours)
 
-    def _check_neighbour(self, message: DiffusionMessage, own_degree: int) -> None:
-        """regular_graph_weights() assumes every neighbour has the same degree
-        and weight_rule as this node -- verify that rather than silently
-        computing a wrong (non-stochastic, or inconsistent-across-nodes)
-        weight matrix if it doesn't."""
-        if message.degree != own_degree:
-            raise ValueError(
-                f"{self._label} requires a degree-regular communication graph: "
-                f"this node has {own_degree} neighbours but received a message "
-                f"from a node with {message.degree} neighbours."
-            )
+    def _check_neighbour(self, message: DiffusionMessage) -> None:
+        """Every participant must use the same weight_rule, or the weight
+        matrix would be inconsistent across nodes."""
         if message.weight_rule != self.weight_rule:
             raise ValueError(
                 f"All {self._label} participants must share the same weight_rule: "
@@ -261,30 +305,55 @@ class _DiffusionRounds(DistributedAlgorithm):
         # neighbour may already have stopped (and its notice been lost), so a
         # round can never complete again; then every neighbour's last flag
         # must say converged and be at most `patience` rounds old.
-        complete_and_converged = self._rounds.complete(self._k, len(neighbours)) and all(
-            converged for _, converged in self._rounds.round_values(self._k)
-        )
+        own = self._outgoing()
         recently_converged = self._deadline.enabled and self._rounds.all_recent(
             neighbours, self._k, self.patience, lambda value: value[1]
         )
-        if self._converged_flag and (complete_and_converged or recently_converged):
+        if self.diameter > 1:
+            states = [
+                (value[1], value[2])
+                for value in self._rounds.values(
+                    self._k, neighbours, default=lambda _n: (own, False, -1)
+                )
+            ]
+            self._radius = convergence_radius(self._converged_flag, states, self.diameter)
+            stop = self._radius >= self.diameter and (
+                self._rounds.complete(self._k, len(neighbours)) or recently_converged
+            )
+        else:
+            complete_and_converged = self._rounds.complete(self._k, len(neighbours)) and all(
+                value[1] for value in self._rounds.round_values(self._k)
+            )
+            stop = self._converged_flag and (complete_and_converged or recently_converged)
+        if stop:
             self.converged = True
             self.iterations = self._k
-            if self._deadline.enabled:
+            if self._deadline.enabled or self.diameter > 1:
                 self._notify_finished(carrier, neighbours)
             self._finish(carrier)
             return
 
-        own = self._outgoing()
-        self_w, neighbor_w = self._combine_weights(len(neighbours))
+        self_w, neighbor_w, weights = self._neighbour_weights(neighbours)
         me = address_of(carrier)
-        if me is None or not self._deadline.enabled:
+        if weights is not None and (me is None or not self._deadline.enabled):
+            # Irregular neighbourhood, lossless: per-neighbour weights, values
+            # in arrival order.
+            values = self._rounds.value_map(
+                self._k, neighbours, default=lambda _n: (own, False, -1)
+            )
+            lam_new = self_w * own
+            for n, value in values.items():
+                lam_new = lam_new + weights[n] * value[0]
+        elif me is None or not self._deadline.enabled:
             # Plain weighted combine, as in the papers (Ces et al. eq. 27):
             # lossless runs (no round deadline) or a carrier that cannot name
             # this participant. The running-sum flows below only matter under
             # message loss.
             phis = [
-                phi for phi, _ in self._rounds.values(self._k, neighbours, default=lambda _n: own)
+                value[0]
+                for value in self._rounds.values(
+                    self._k, neighbours, default=lambda _n: (own, False, -1)
+                )
             ]
             lam_new = self_w * own
             for phi in phis:
@@ -293,10 +362,13 @@ class _DiffusionRounds(DistributedAlgorithm):
             # Same combine written as own + Σ w·(φ_j − φ_own) (the self
             # weight is 1 − Σ w), so each pairwise flow can be kept equal on
             # both ends of its edge under message loss (EdgeFlows).
-            values = self._rounds.value_map(self._k, neighbours, default=lambda _n: (own, False))
+            values = self._rounds.value_map(
+                self._k, neighbours, default=lambda _n: (own, False, -1)
+            )
             lam_new = own.copy()
             for n in neighbours:
-                lam_new = lam_new + self._flows.flow(me, n, self._k, own, values[n][0], neighbor_w)
+                w = neighbor_w if weights is None else weights[n]
+                lam_new = lam_new + self._flows.flow(me, n, self._k, own, values[n][0], w)
                 lam_new = lam_new + self._flows.correction(me, n)
         if np.max(np.abs(lam_new - self._lam)) <= self.tol:
             self._stable_rounds += 1
@@ -330,6 +402,7 @@ class _DiffusionRounds(DistributedAlgorithm):
                     converged=self._converged_flag,
                     flow_sum=None if owned is None else np.copy(owned[1]),
                     flow_round=-1 if owned is None else owned[0],
+                    radius=self._radius,
                 ),
                 addr,
             )
@@ -413,6 +486,11 @@ class DiffusionAlgorithm(_DiffusionRounds):
                           messages before advancing with the last received
                           iterates; ``None`` (default) waits for every
                           neighbour, which stalls if a message is lost.
+    :param diameter: Diameter of the communication graph (1 = complete).
+                     Above 1 a participant stops once its convergence radius
+                     reaches it (every participant converged, see
+                     :func:`~.._rounds.convergence_radius`) and tells its
+                     neighbours, which stop as well.
     """
 
     def __init__(
@@ -426,6 +504,7 @@ class DiffusionAlgorithm(_DiffusionRounds):
         patience: int = 3,
         weight_rule: WeightRule = "mean_metropolis",
         round_timeout: float | None = None,
+        diameter: int = 1,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor: DiffusionActor = (
@@ -444,7 +523,7 @@ class DiffusionAlgorithm(_DiffusionRounds):
         #: Iterations completed when the last run terminated.
         self.iterations: int = 0
 
-        self._init_rounds(round_timeout)
+        self._init_rounds(round_timeout, diameter)
         # λ / φ state is sized from the kick-off message on (re-)initialisation.
         self._lam: np.ndarray = np.array([initial_lam])
         self._phi: np.ndarray = np.array([initial_lam])
