@@ -579,6 +579,39 @@ async def test_stale_message_after_termination_does_not_restart():
 
 
 @pytest.mark.asyncio
+async def test_new_run_starts_from_neighbour_round_zero_before_kickoff():
+    """On a sparse graph the leader's kick-off can travel more hops than a
+    neighbour's round-0 message of the same (later) run: that message starts
+    the run, and the kick-off arriving afterwards must not restart it."""
+    from distributed_resource_optimization import FDGDMMessage
+    from tests.carrier import StubCarrier
+
+    finished: list[int] = []
+    algo = create_fdgdm_participant(
+        lambda a, c: finished.append(1), fdgdm_actor=FDGDMActor(), max_iter=3
+    )
+    carrier = StubCarrier(test_neighbors={2})
+    msg = lambda k: FDGDMMessage(  # noqa: E731
+        gradient=np.zeros(1), d_u_product=1.0, k=k, data=np.array([1.0])
+    )
+
+    await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
+    for k in range(3):
+        await algo.on_exchange_message(carrier, msg(k), {})
+    assert finished == [1]
+
+    # Second run: the neighbour's round 0 arrives first and starts it ...
+    await algo.on_exchange_message(carrier, msg(0), {})
+    assert algo._k == 1  # round 0 complete (single neighbour), now in round 1
+    # ... and the late kick-off does not reset it.
+    await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
+    assert algo._k == 1
+    for k in (1, 2):
+        await algo.on_exchange_message(carrier, msg(k), {})
+    assert finished == [1, 1]
+
+
+@pytest.mark.asyncio
 async def test_neighbours_last_round_message_does_not_end_run():
     """Every participant stops by its own counter (loss plan rule 4): a
     neighbour's round-max_iter message must not end a run that is behind."""

@@ -296,9 +296,23 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         if message_data.k >= self.max_iter and self._first_message:
             return
 
-        # After termination, ignore stale messages from the previous round.
-        # Only an explicit initial=True message may start a new round.
-        if self._first_message and self._started and not message_data.initial:
+        # After termination, ignore stale messages from the previous run. A
+        # new run starts with the kick-off (initial=True) or with a
+        # neighbour's round-0 message, whichever arrives first: when the
+        # kick-off travels more hops than a neighbour's message (sparse
+        # topologies), the neighbour may already have started. A stale round-0
+        # message cannot arrive after a run ended (it would have been needed
+        # to finish round 0).
+        if (
+            self._first_message
+            and self._started
+            and not message_data.initial
+            and message_data.k > 0
+        ):
+            return
+        # A kick-off for a run this participant already started from a
+        # neighbour's round-0 message must not restart it.
+        if message_data.initial and not self._first_message:
             return
 
         # --- Initialisation path ---
