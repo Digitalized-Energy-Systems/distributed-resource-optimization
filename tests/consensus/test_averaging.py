@@ -116,6 +116,54 @@ async def test_averaging_consensus_leader_follower_merit_order():
 
 
 @pytest.mark.asyncio
+async def test_leader_follower_on_path_graph_hears_every_power():
+    """Same dispatch on the path 1 - 2 - 3 - 4 with the leader at one end:
+    followers 3 and 4 are not its neighbours and report their power to it,
+    so ΔP is the system-wide imbalance; the leader's stop reaches everyone."""
+    from distributed_resource_optimization.carrier.simple import ActorContainer, SimpleCarrier
+
+    demand = 80.0
+    specs = [(10.0, 50.0), (20.0, 30.0), (30.0, 30.0), (40.0, 30.0)]
+    results: dict[int, tuple] = {}
+
+    def make_finish(idx: int):
+        def finish(algo, carrier):
+            results[idx] = (algo.converged, algo.actor.P.copy())
+
+        return finish
+
+    actors = [
+        create_averaging_consensus_participant(
+            make_finish(i),
+            consensus_actor=LinearCostEconomicDispatchConsensusActor(
+                cost=cost, p_max=p_max, epsilon=0.1
+            ),
+            initial_lam=10.0,
+            alpha=0.3,
+            max_iter=3000,
+            is_leader=(i == 0),
+            leader_gain=0.05,
+            leader=None if i == 0 else 1,
+            participants=[1, 2, 3, 4] if i == 0 else None,
+        )
+        for i, (cost, p_max) in enumerate(specs)
+    ]
+    start = create_averaging_consensus_start(10.0, data=demand)
+    container = ActorContainer(neighbours={1: [2], 2: [1, 3], 3: [2, 4], 4: [3]})
+    carriers = [SimpleCarrier(container, actor) for actor in actors]
+    # Kick-off goes to the leader (carrier 1), like the scenarios' trigger.
+    carriers[1]._send(start, 1, lossy=False)
+    await container.done_event.wait()
+
+    assert len(results) == len(specs)
+    assert all(converged for converged, _ in results.values())
+    powers = [float(results[i][1][0]) for i in range(len(specs))]
+    assert sum(powers) == pytest.approx(demand, abs=1.0)
+    assert powers[0] == pytest.approx(50.0, abs=1.0)
+    assert powers[1] == pytest.approx(30.0, abs=1.0)
+
+
+@pytest.mark.asyncio
 async def test_stale_messages_do_not_rewind_iteration():
     """Out-of-order/lossy delivery must never step the iteration backwards.
 

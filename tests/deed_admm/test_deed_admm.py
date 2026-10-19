@@ -427,6 +427,50 @@ async def test_quadratic_cost_three_agents():
     np.testing.assert_allclose(results[2], [10.0], atol=2.0)
 
 
+async def test_quadratic_cost_on_path_graph_stops_together():
+    """Same problem on the path 1 - 2 - 3 (diameter 2) with the convergence
+    stop: W = I − βL stays doubly stochastic, every agent stops in the same
+    round (none waits for a stopped neighbour) and reaches x* = [40, 20, 10]."""
+    demand = np.array([70.0])
+    algos: dict[int, DEEDADMMAlgorithm] = {}
+    results: dict[int, np.ndarray] = {}
+
+    def finish(i):
+        def cb(alg, carrier):
+            algos[i] = alg
+            results[i] = np.asarray(alg.P, dtype=float).copy()
+
+        return cb
+
+    actors = [
+        create_deed_admm_thermal_participant(
+            finish(i),
+            p_min=0.0,
+            p_max=100.0,
+            marginal_cost=0.0,
+            cost_quad=a,
+            d_i=demand / 3,
+            gamma=0.05,
+            max_iter=20000,
+            beta=1.0 / 3.0,  # 1 / (max degree + 1)
+            tol=1e-4,
+            diameter=2,
+        )
+        for i, a in enumerate((0.1, 0.2, 0.4))
+    ]
+    start_msg = DEEDADMMMessage(lam=np.zeros(1), xi=np.zeros(1), k=0, data=None, initial=True)
+    await start_distributed_optimization(
+        actors, start_msg, container=ActorContainer(neighbours={1: [2], 2: [1, 3], 3: [2]})
+    )
+
+    assert len(results) == 3
+    assert all(a.converged for a in algos.values())
+    assert len({a.iterations for a in algos.values()}) == 1
+    np.testing.assert_allclose(results[0], [40.0], atol=2.0)
+    np.testing.assert_allclose(results[1], [20.0], atol=2.0)
+    np.testing.assert_allclose(results[2], [10.0], atol=2.0)
+
+
 # ---------------------------------------------------------------------------
 # Protocol robustness
 # ---------------------------------------------------------------------------

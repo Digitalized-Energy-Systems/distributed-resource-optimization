@@ -23,6 +23,7 @@ def create_deed_admm_thermal_participant(
     beta: float | None = None,
     round_timeout: float | None = None,
     tol: float | None = None,
+    diameter: int = 1,
 ) -> DEEDADMMAlgorithm:
     """DEED-ADMM participant for a thermal generator.
 
@@ -39,6 +40,7 @@ def create_deed_admm_thermal_participant(
     :param beta: Laplacian step of the weight matrix W = I − βL.
     :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     :param tol: Convergence tolerance (MW); see :class:`~.deed_admm.DEEDADMMAlgorithm`.
+    :param diameter: Communication-graph diameter; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     tau = len(d_i)
     return DEEDADMMAlgorithm(
@@ -54,6 +56,7 @@ def create_deed_admm_thermal_participant(
         beta=beta,
         round_timeout=round_timeout,
         tol=tol,
+        diameter=diameter,
     )
 
 
@@ -69,6 +72,7 @@ def create_deed_admm_renewable_participant(
     beta: float | None = None,
     round_timeout: float | None = None,
     tol: float | None = None,
+    diameter: int = 1,
 ) -> DEEDADMMAlgorithm:
     """DEED-ADMM participant for a renewable generator.
 
@@ -83,6 +87,7 @@ def create_deed_admm_renewable_participant(
     :param beta: Laplacian step of the weight matrix W = I − βL.
     :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     :param tol: Convergence tolerance (MW); see :class:`~.deed_admm.DEEDADMMAlgorithm`.
+    :param diameter: Communication-graph diameter; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     tau = len(p_max_timeseries)
     assert len(d_i) == tau, "p_max_timeseries and d_i must have the same length"
@@ -99,6 +104,7 @@ def create_deed_admm_renewable_participant(
         beta=beta,
         round_timeout=round_timeout,
         tol=tol,
+        diameter=diameter,
     )
 
 
@@ -123,6 +129,7 @@ def create_deed_admm_storage_participant(
     beta: float | None = None,
     round_timeout: float | None = None,
     tol: float | None = None,
+    diameter: int = 1,
 ) -> DEEDADMMStorageAlgorithm:
     """DEED-ADMM participant for a battery / pumped-hydro storage unit.
 
@@ -150,6 +157,7 @@ def create_deed_admm_storage_participant(
     :param beta: Laplacian step of the weight matrix W = I − βL.
     :param round_timeout: Round deadline in seconds; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     :param tol: Convergence tolerance (MW); see :class:`~.deed_admm.DEEDADMMAlgorithm`.
+    :param diameter: Communication-graph diameter; see :class:`~.deed_admm.DEEDADMMAlgorithm`.
     """
     return DEEDADMMStorageAlgorithm(
         finish_callback=finish_callback,
@@ -164,6 +172,7 @@ def create_deed_admm_storage_participant(
         beta=beta,
         round_timeout=round_timeout,
         tol=tol,
+        diameter=diameter,
         e_max=float(e_max),
         p_charge_max=float(p_charge_max),
         p_discharge_max=float(p_discharge_max),

@@ -457,3 +457,49 @@ def convergence_radius(
         return -1
     reach = [max(radius, 0) if flag else -1 for flag, radius in neighbour_states]
     return 1 + min(reach, default=diameter)
+
+
+class ScheduledStop:
+    """Common stop round for every participant on a graph of diameter > 1.
+
+    For algorithms whose pairwise flows must be applied on both ends of an
+    edge (FDGDM's power transfers, DEED-ADMM's ξ tracker), all participants
+    have to stop in the same round. The first participant whose
+    :func:`convergence_radius` reaches the *diameter* (on a complete round)
+    announces ``stop round = k + diameter``; the announcement travels with the
+    round messages, one hop per round, so every participant knows the earliest
+    announced round by then and all of them stop before applying it.
+    """
+
+    def __init__(self, diameter: int = 1) -> None:
+        self.diameter = max(1, int(diameter))
+        self.reset()
+
+    def reset(self) -> None:
+        self.radius: int = -1
+        self.stop_round: int | None = None
+
+    @property
+    def carried(self) -> int:
+        """Stop round to put on outgoing messages (-1: none announced)."""
+        return -1 if self.stop_round is None else self.stop_round
+
+    def observe(
+        self,
+        k: int,
+        own_flag: bool,
+        neighbour_states: Iterable[tuple[bool, int, int]],
+        complete: bool,
+    ) -> bool:
+        """Update from round *k*'s ``(flag, radius, stop round)`` per neighbour;
+        ``True`` if this participant stops now (before applying round *k*)."""
+        states = list(neighbour_states)
+        for _, _, announced in states:
+            if announced >= 0 and (self.stop_round is None or announced < self.stop_round):
+                self.stop_round = announced
+        self.radius = convergence_radius(
+            own_flag, [(flag, radius) for flag, radius, _ in states], self.diameter
+        )
+        if self.stop_round is None and complete and self.radius >= self.diameter:
+            self.stop_round = k + self.diameter
+        return self.stop_round is not None and k >= self.stop_round

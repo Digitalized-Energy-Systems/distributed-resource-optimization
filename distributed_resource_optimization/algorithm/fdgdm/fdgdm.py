@@ -84,6 +84,7 @@ from .._rounds import (
     FlowSettlement,
     RoundBuffer,
     RoundDeadline,
+    ScheduledStop,
     address_of,
     sender_key,
 )
@@ -163,6 +164,9 @@ class FDGDMMessage(OptimizationMessage):
                       (``max_t |ΔP_t| < tol``).  With ``k > max_iter`` the
                       message is the notice of an agent that stopped on Eq. 24
                       (sent only with a round deadline).
+    :param radius: Sender's convergence radius (graphs with diameter > 1).
+    :param stop_round: Earliest stop round the sender knows of (-1: none);
+                       see :class:`~.._rounds.ScheduledStop`.
     """
 
     k: int
@@ -174,6 +178,8 @@ class FDGDMMessage(OptimizationMessage):
     flow_round: int = -1
     flow_ack: bool = False
     converged: bool = False
+    radius: int = -1
+    stop_round: int = -1
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +203,11 @@ class FDGDMAlgorithm(DistributedAlgorithm):
                           gradients before advancing with the last received
                           ones; ``None`` (default) waits for every neighbour,
                           which stalls if a message is lost.
+    :param diameter: Diameter of the communication graph (1 = complete). Above
+                     1 the Eq. 24 stop needs every participant converged and
+                     all participants stop in the same round (see
+                     :class:`~.._rounds.ScheduledStop`), so the power flows
+                     stay conserved.
     """
 
     def __init__(
@@ -206,8 +217,11 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         max_iter: int = 300,
         round_timeout: float | None = None,
         tol: float | None = None,
+        diameter: int = 1,
     ) -> None:
         self.finish_callback = finish_callback
+        self.diameter = max(1, int(diameter))
+        self._stop = ScheduledStop(self.diameter)
         self.actor: FDGDMActor = fdgdm_actor if fdgdm_actor is not None else FDGDMActor()
         self.max_iter = max_iter
         self.tol = tol
@@ -296,6 +310,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             self._flows.reset()
             self._settlement.cancel()
             self._converged_flag = False
+            self._stop.reset()
             self.converged = None
             self._data = message_data.data
 
@@ -324,6 +339,8 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             np.asarray(message_data.gradient, dtype=float),
             float(message_data.d_u_product),
             bool(message_data.converged),
+            int(message_data.radius),
+            int(message_data.stop_round),
         )
         if message_data.k < self._k:
             # Too late for its round, but the freshest gradient of that neighbour.
@@ -343,7 +360,28 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         # --- Eq. 24 stop: own flag and every neighbour's flag of a complete
         # round (all describe the step of round k−1). Under loss a
         # neighbour's last flag may also be one round old.
-        if self.tol is not None and self._converged_flag:
+        own = (self._last_grad, self._last_du, self._converged_flag, -1, -1)
+        if self.tol is not None and self.diameter > 1:
+            recently_converged = self._deadline.enabled and self._rounds.all_recent(
+                neighbours, self._k, 1, lambda v: v[2]
+            )
+            states = [
+                (v[2], v[3], v[4])
+                for v in self._rounds.values(
+                    self._k, neighbours, default=lambda _n: (None, 0.0, False, -1, -1)
+                )
+            ]
+            complete = self._rounds.complete(self._k, len(neighbours))
+            if self._stop.observe(
+                self._k, self._converged_flag, states, complete or recently_converged
+            ):
+                self.converged = True
+                self.iterations = self._k
+                if self._deadline.enabled:
+                    self._notify_finished(carrier, neighbours)
+                self._finish(carrier)
+                return
+        elif self.tol is not None and self._converged_flag:
             complete_and_converged = self._rounds.complete(self._k, len(neighbours)) and all(
                 v[2] for v in self._rounds.round_values(self._k)
             )
@@ -357,18 +395,17 @@ class FDGDMAlgorithm(DistributedAlgorithm):
                     self._notify_finished(carrier, neighbours)
                 self._finish(carrier)
                 return
-        own = (self._last_grad, self._last_du, self._converged_flag)
         delta_P = np.zeros_like(self._P)
         me = address_of(carrier)
         if me is None:
             # Carrier cannot name this participant: plain update.
-            for grad, du, _ in self._rounds.values(self._k, neighbours, default=lambda _n: own):
+            for grad, du, *_ in self._rounds.values(self._k, neighbours, default=lambda _n: own):
                 w_abs = 1.0 / max(self._last_du, du)
                 delta_P += w_abs * (grad - self._last_grad)
         else:
             values = self._rounds.value_map(self._k, neighbours, default=lambda _n: own)
             for n in neighbours:
-                grad, du, _ = values[n]
+                grad, du, *_ = values[n]
                 w_abs = 1.0 / max(self._last_du, du)
                 delta_P += self._flows.flow(me, n, self._k, self._last_grad, grad, w_abs)
                 delta_P += self._flows.correction(me, n)
@@ -423,6 +460,8 @@ class FDGDMAlgorithm(DistributedAlgorithm):
                 flow_sum=None if owned is None else np.copy(owned[1]),
                 flow_round=-1 if owned is None else owned[0],
                 converged=self._converged_flag,
+                radius=self._stop.radius,
+                stop_round=self._stop.carried,
             ),
             addr,
         )

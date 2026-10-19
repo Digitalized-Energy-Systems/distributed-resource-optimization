@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import RoundBuffer, RoundDeadline, sender_key
+from .._rounds import RoundBuffer, RoundDeadline, address_of, sender_key
 from ..core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
@@ -82,6 +82,10 @@ class AveragingConsensusMessage(OptimizationMessage):
     :param stop_ack: Under message loss (with a round deadline), a recipient's
                      acknowledgement of a ``stop``; the leader repeats the stop
                      to every neighbour that has not acknowledged it yet.
+    :param report: A follower that is not the leader's neighbour reports its
+                   round-``k`` power ``p`` to the leader directly (routed over
+                   the communication graph), so the leader can still compute
+                   the system-wide ΔP.
     """
 
     lam: np.ndarray
@@ -91,6 +95,7 @@ class AveragingConsensusMessage(OptimizationMessage):
     initial: bool = False
     stop: bool = False
     stop_ack: bool = False
+    report: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +113,13 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
     neighbour averaging.
 
     The leader reconstructs ΔP from its own power plus the powers attached
-    to the messages it receives, so it must be a direct neighbour of every
-    other participant (complete or leader-star topology) — on a sparser
-    graph it would pin λ against a partial, understated imbalance.
+    to its neighbours' messages. On a sparser graph the followers that are
+    not its neighbours also send the leader a ``report`` with their round
+    power (Jian et al. 2020, p. 1428: the leader "need[s] to obtain the global
+    variable ΔP in real time"; they cite transmitting a PCC measurement to it).
+    For that the leader needs :attr:`participants` and each follower
+    :attr:`leader`; both may be set after construction, once addresses exist.
+    The leader's ``stop`` goes to every participant.
 
     Termination follows Jian et al. 2020 (p. 1428, after eq. 23): iterate
     "until the system satisfies the power balance, that is, ΔP = 0". As
@@ -146,6 +155,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                          to neighbours that have not acknowledged it, so a lost
                          stop cannot leave a follower iterating on an
                          unverified schedule.
+    :param leader: Followers: the leader's address. A follower that is not
+                   the leader's neighbour reports its power to it each round.
+                   ``None`` (default): the leader neighbours everyone.
+    :param participants: Leader: every participant's address (its own may be
+                         included). ``None`` (default): only the neighbours.
     :raises ValueError: If ``is_leader`` is set without a positive ``leader_gain``
                         (the leader would never correct the power imbalance).
     """
@@ -162,6 +176,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         balance_tol: float = 0.01,
         round_timeout: float | None = None,
         stop_retries: int = 20,
+        leader: Any = None,
+        participants: list[Any] | None = None,
     ) -> None:
         if is_leader and leader_gain <= 0:
             raise ValueError(
@@ -179,6 +195,8 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self.leader_gain = leader_gain
         self.balance_tol = balance_tol
         self.stop_retries = stop_retries
+        self.leader = leader
+        self.participants = participants
 
         #: How the last run ended: ``True`` if the leader reached the power
         #: balance, ``False`` if it hit the max_iter failsafe.
@@ -188,6 +206,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
 
         # Mutable iteration state (reset at the start of each consensus run)
         self._rounds = RoundBuffer()  # (λ, p) per round and sender
+        self._reports = RoundBuffer()  # leader: p of non-neighbours
         self._deadline = RoundDeadline(round_timeout)
         self._data: Any = None  # run payload, cached from the round-0 message
         self._first_message: bool = True
@@ -248,6 +267,20 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._finish(carrier, converged=True)
             return
 
+        # --- Leader: power report of a participant that is not a neighbour ---
+        if message_data.report:
+            if not self.is_leader or self._first_message:
+                return
+            sender = sender_key(carrier, meta)
+            power = np.asarray(message_data.p)
+            if message_data.k < self._k:
+                self._reports.remember(message_data.k, sender, power)
+                return
+            self._reports.add(message_data.k, sender, power)
+            while not self._first_message and self._ready(carrier, neighbours):
+                self._advance(carrier, neighbours)
+            return
+
         # A neighbour's last-round message (k = max_iter) does not end this
         # run: every participant stops by its own counter (max_iter failsafe
         # in _advance), so one that is behind under loss still applies its
@@ -267,6 +300,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._started = True
             self._k = 0
             self._rounds.reset()
+            self._reports.reset()
             self._lam_history.clear()
             self._cancel_stop_repeats()
             self.converged = False
@@ -291,8 +325,23 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             self._rounds.remember(message_data.k, sender, value)
             return
         self._rounds.add(message_data.k, sender, value)
-        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+        while not self._first_message and self._ready(carrier, neighbours):
             self._advance(carrier, neighbours)
+
+    def _non_neighbours(self, carrier: "Carrier", neighbours: list) -> list:
+        """Leader: participants that report their power instead of being neighbours."""
+        if not self.is_leader or not self.participants:
+            return []
+        me = address_of(carrier)
+        return [a for a in self.participants if a != me and a not in neighbours]
+
+    def _ready(self, carrier: "Carrier", neighbours: list) -> bool:
+        """Round ``self._k`` is complete: every neighbour (and, for the leader,
+        every reporting participant) sent its value."""
+        if not self._rounds.complete(self._k, len(neighbours)):
+            return False
+        others = self._non_neighbours(carrier, neighbours)
+        return not others or self._reports.complete(self._k, len(others))
 
     def _advance(self, carrier: "Carrier", neighbours: list) -> None:
         """Run round ``self._k`` with the best values available and broadcast."""
@@ -308,10 +357,20 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._lam_history[self._k] = self._lam
         # The ΔP term needs every participant's power; until each neighbour
         # has been heard once, the default p = 0 would fake a huge deficit.
-        round_complete = self._rounds.complete(self._k, len(neighbours))
-        if self.is_leader and (self._rounds.heard_from_all(neighbours) or round_complete):
+        others = self._non_neighbours(carrier, neighbours)
+        round_complete = self._rounds.complete(self._k, len(neighbours)) and (
+            not others or self._reports.complete(self._k, len(others))
+        )
+        heard_from_all = self._rounds.heard_from_all(neighbours) and self._reports.heard_from_all(
+            others
+        )
+        if self.is_leader and (heard_from_all or round_complete):
             pd = np.asarray(self._data, dtype=float)
             sigma_p = self._P + sum(p for _, p in values)
+            if others:
+                sigma_p = sigma_p + sum(
+                    self._reports.values(self._k, others, default=lambda _n: np.zeros(size))
+                )
             delta_p = pd - sigma_p
             # Stop criterion: power balance ΔP ≈ 0 (see class docstring).
             # This round's schedules are the ones checked, so stop before
@@ -322,11 +381,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                 stop = AveragingConsensusMessage(
                     lam=self._lam.copy(), k=self._k, data=None, stop=True
                 )
-                for addr in neighbours:
+                for addr in [*neighbours, *others]:
                     carrier.send_to_other(stop, addr)
                 if self._deadline.enabled and self.stop_retries > 0:
                     self._stop_msg = stop
-                    self._stop_unacked = set(neighbours)
+                    self._stop_unacked = set(neighbours) | set(others)
                     self._stop_repeats_left = self.stop_retries
                     self._schedule_stop_repeat(carrier)
                 self._finish(carrier, converged=True)
@@ -337,6 +396,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._P = np.asarray(self.actor.project_power(self._lam, self._data))
         self._k += 1
         self._rounds.discard_before(self._k)
+        self._reports.discard_before(self._k)
         self._broadcast(carrier, neighbours)
         if self._k >= self.max_iter:
             self._finish(carrier, converged=False)
@@ -353,6 +413,13 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                 ),
                 addr,
             )
+        if not self.is_leader and self.leader is not None and self.leader not in neighbours:
+            carrier.send_to_other(
+                AveragingConsensusMessage(
+                    lam=self._lam.copy(), k=self._k, data=None, p=self._P.copy(), report=True
+                ),
+                self.leader,
+            )
         if self._k < self.max_iter:
             k = self._k
             self._deadline.arm(carrier, lambda: self._on_deadline(carrier, k))
@@ -363,7 +430,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
             return
         neighbours = carrier.others()
         self._advance(carrier, neighbours)
-        while not self._first_message and self._rounds.complete(self._k, len(neighbours)):
+        while not self._first_message and self._ready(carrier, neighbours):
             self._advance(carrier, neighbours)
 
     def _schedule_stop_repeat(self, carrier: "Carrier") -> None:
@@ -395,6 +462,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self.finish_callback(self, carrier)
         self._first_message = True
         self._rounds.reset()
+        self._reports.reset()
 
 
 # ---------------------------------------------------------------------------

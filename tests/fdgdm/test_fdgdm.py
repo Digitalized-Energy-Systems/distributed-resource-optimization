@@ -372,6 +372,52 @@ async def test_fdgdm_power_conservation():
     )
 
 
+async def _fdgdm_eq24(neighbours, diameter):
+    from distributed_resource_optimization.carrier.simple import ActorContainer
+
+    demand = np.array([30.0])
+    results: dict[int, tuple] = {}
+
+    def make_finish(idx: int):
+        def finish(algo, carrier):
+            results[idx] = (algo._P.copy(), algo.iterations, algo.converged)
+
+        return finish
+
+    actors = [
+        create_fdgdm_participant(
+            make_finish(i),
+            fdgdm_actor=LinearCostEconomicDispatchFDGDMActor(cost=c, p_max=100.0, epsilon=0.1),
+            max_iter=3000,
+            tol=1e-6,
+            diameter=diameter,
+        )
+        for i, c in enumerate((4.9, 5.0, 5.1))
+    ]
+    start = create_fdgdm_start(data=demand / 3)
+    await start_distributed_optimization(
+        actors, start, container=ActorContainer(neighbours=neighbours)
+    )
+    return results
+
+
+@pytest.mark.asyncio
+async def test_fdgdm_on_path_graph_stops_together_and_conserves_power():
+    """Path 1 - 2 - 3 (diameter 2): the Eq. 24 stop needs every agent
+    converged, all agents stop in the same round (no agent waits for a
+    stopped neighbour), ΣP stays exact and the dispatch matches the
+    complete graph's."""
+    path = await _fdgdm_eq24({1: [2], 2: [1, 3], 3: [2]}, diameter=2)
+    full = await _fdgdm_eq24(None, diameter=1)
+    assert len(path) == 3
+    assert len({it for _, it, _ in path.values()}) == 1
+    assert all(conv for _, _, conv in path.values())
+    total = sum(p for p, _, _ in path.values())
+    assert np.allclose(total, 30.0, atol=1e-9)
+    for i in range(3):
+        assert np.allclose(path[i][0], full[i][0], atol=1e-3), (i, path[i][0], full[i][0])
+
+
 # ---------------------------------------------------------------------------
 # Storage + thermal integration test
 # ---------------------------------------------------------------------------
