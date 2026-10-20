@@ -122,6 +122,11 @@ class ReservoirStorageConsensusActor(ConsensusActor):
             charge_cost=self.charge_cost,
         )
 
+    def restore_power(self, power: np.ndarray) -> None:
+        """Reset P (and the matching energy path) to an earlier answer."""
+        self.P = np.array(power, dtype=float, copy=True)
+        self.E = self._model.energy(np.maximum(self.P, 0.0), np.maximum(-self.P, 0.0))
+
     def project_power(self, lam: np.ndarray, data: Any) -> np.ndarray:
         """Exact SOC-feasible response to the price vector *lam*.
 

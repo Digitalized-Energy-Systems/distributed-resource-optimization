@@ -122,6 +122,9 @@ class DEEDADMMMessage(OptimizationMessage):
     :param radius: Sender's convergence radius (graphs with diameter > 1).
     :param stop_round: Earliest stop round the sender knows of (-1: none);
                        see :class:`~.._rounds.ScheduledStop`.
+    :param run: Sender's run counter (round messages only); a finished
+                participant starts a new run from a round-0 message of a
+                later run, never from a stale one.
     """
 
     lam: np.ndarray
@@ -135,6 +138,7 @@ class DEEDADMMMessage(OptimizationMessage):
     converged: bool = False
     radius: int = -1
     stop_round: int = -1
+    run: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +198,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
         self.tol = tol
         self.diameter = max(1, int(diameter))
         self._stop = ScheduledStop(self.diameter)
+        self._run: int = 0  # runs started so far
         #: How the last run ended: ``True`` on the convergence stop, ``False``
         #: at ``max_iter`` with ``tol`` set, ``None`` without ``tol``.
         self.converged: bool | None = None
@@ -355,6 +360,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                     converged=self._converged_flag,
                     radius=self._stop.radius,
                     stop_round=self._stop.carried,
+                    run=self._run,
                 ),
                 addr,
             )
@@ -403,7 +409,9 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
             if self._stop.observe(
                 self._k, self._converged_flag, states, complete or recently_converged
             ):
-                self.converged = True
+                # The common stop round certifies flags of earlier rounds;
+                # report this agent's own flag now (flags are not monotone).
+                self.converged = self._converged_flag
                 self.iterations = self._k
                 if self._deadline.enabled:
                     self._notify_finished(carrier, neighbours)
@@ -536,7 +544,17 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
 
         # After a finished run, late messages of that run (rounds > 0) are
         # ignored; a kick-off or a new run's round-0 message restarts it.
-        if not self._running and self._has_run and not message_data.initial and message_data.k > 0:
+        if (
+            not self._running
+            and self._has_run
+            and not message_data.initial
+            and not (message_data.k == 0 and message_data.run > self._run)
+        ):
+            return
+
+        # A kick-off for a run already started (from a neighbour's round-0
+        # message, which can arrive first on a sparse topology) is ignored.
+        if message_data.initial and self._running:
             return
 
         # --- Start of a run: external kick-off or first neighbour message ---
@@ -548,6 +566,7 @@ class DEEDADMMAlgorithm(DistributedAlgorithm):
                     f"n_agents (or beta) matching the communication graph."
                 )
             self._running = True
+            self._run = max(self._run + 1, int(getattr(message_data, "run", 0)))
             self._reset_state()
             self._data = message_data.data
             if not neighbours:

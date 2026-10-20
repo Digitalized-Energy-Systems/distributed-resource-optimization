@@ -167,6 +167,9 @@ class FDGDMMessage(OptimizationMessage):
     :param radius: Sender's convergence radius (graphs with diameter > 1).
     :param stop_round: Earliest stop round the sender knows of (-1: none);
                        see :class:`~.._rounds.ScheduledStop`.
+    :param run: Sender's run counter (round messages only); a finished
+                participant starts a new run from a round-0 message of a
+                later run, never from a stale one.
     """
 
     k: int
@@ -180,6 +183,7 @@ class FDGDMMessage(OptimizationMessage):
     converged: bool = False
     radius: int = -1
     stop_round: int = -1
+    run: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +226,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         self.finish_callback = finish_callback
         self.diameter = max(1, int(diameter))
         self._stop = ScheduledStop(self.diameter)
+        self._run: int = 0  # runs started so far
         self.actor: FDGDMActor = fdgdm_actor if fdgdm_actor is not None else FDGDMActor()
         self.max_iter = max_iter
         self.tol = tol
@@ -296,18 +301,16 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         if message_data.k >= self.max_iter and self._first_message:
             return
 
-        # After termination, ignore stale messages from the previous run. A
-        # new run starts with the kick-off (initial=True) or with a
-        # neighbour's round-0 message, whichever arrives first: when the
+        # After termination, ignore stale messages of earlier runs. A new run
+        # starts with the kick-off (initial=True) or with a neighbour's
+        # round-0 message of a later run, whichever arrives first: when the
         # kick-off travels more hops than a neighbour's message (sparse
-        # topologies), the neighbour may already have started. A stale round-0
-        # message cannot arrive after a run ended (it would have been needed
-        # to finish round 0).
+        # topologies), the neighbour may already have started.
         if (
             self._first_message
             and self._started
             and not message_data.initial
-            and message_data.k > 0
+            and not (message_data.k == 0 and message_data.run > self._run)
         ):
             return
         # A kick-off for a run this participant already started from a
@@ -319,6 +322,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
         if self._first_message or message_data.initial:
             self._first_message = False
             self._started = True
+            self._run = max(self._run + 1, int(getattr(message_data, "run", 0)))
             self._k = 0
             self._rounds.reset()
             self._flows.reset()
@@ -389,7 +393,9 @@ class FDGDMAlgorithm(DistributedAlgorithm):
             if self._stop.observe(
                 self._k, self._converged_flag, states, complete or recently_converged
             ):
-                self.converged = True
+                # The common stop round certifies flags of earlier rounds;
+                # report this agent's own flag now (flags are not monotone).
+                self.converged = self._converged_flag
                 self.iterations = self._k
                 if self._deadline.enabled:
                     self._notify_finished(carrier, neighbours)
@@ -476,6 +482,7 @@ class FDGDMAlgorithm(DistributedAlgorithm):
                 converged=self._converged_flag,
                 radius=self._stop.radius,
                 stop_round=self._stop.carried,
+                run=self._run,
             ),
             addr,
         )

@@ -45,6 +45,15 @@ class ConsensusActor:
     the neutral actor (pure averaging, no dispatch).
     """
 
+    def restore_power(self, power: np.ndarray) -> None:
+        """Reset the actor's schedule to *power* (an earlier round's answer).
+
+        Used when a follower rolls back to the round the leader verified.
+        The default keeps ``self.P`` in step if the actor has one.
+        """
+        if hasattr(self, "P"):
+            self.P = np.array(power, dtype=float, copy=True)
+
     def project_power(self, lam: np.ndarray, data: Any) -> np.ndarray | float:
         """Return the local power output implied by the current price *lam*.
 
@@ -86,6 +95,9 @@ class AveragingConsensusMessage(OptimizationMessage):
                    round-``k`` power ``p`` to the leader directly (routed over
                    the communication graph), so the leader can still compute
                    the system-wide ΔP.
+    :param run: Sender's run counter (round messages only); a finished
+                participant starts a new run from a round-0 message of a
+                later run, never from a stale one.
     """
 
     lam: np.ndarray
@@ -96,6 +108,7 @@ class AveragingConsensusMessage(OptimizationMessage):
     stop: bool = False
     stop_ack: bool = False
     report: bool = False
+    run: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +224,15 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         self._data: Any = None  # run payload, cached from the round-0 message
         self._first_message: bool = True
         self._started: bool = False  # True once any round has begun
+        self._run: int = 0  # runs started so far
         self._k: int = 0
         self._lam: np.ndarray = np.array([initial_lam])
         self._prev_lam: np.ndarray = self._lam.copy()  # λ before the last update
         # λ at the start of each round, so a stop that arrives several rounds
         # late (lost and repeated) can roll back to the verified round.
         self._lam_history: dict[int, np.ndarray] = {}
+        # Power broadcast in each round, restored together with λ on a rollback.
+        self._P_history: dict[int, np.ndarray] = {}
         self._P: np.ndarray = np.array([0.0])  # own last-projected power
         # Leader, under loss: the stop being repeated and who has not acked it.
         self._stop_msg: AveragingConsensusMessage | None = None
@@ -262,7 +278,11 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                 # late. Roll back so we finish on the schedule the leader
                 # verified.
                 self._lam = self._lam_history.get(message_data.k, self._prev_lam)
-                self._P = np.asarray(self.actor.project_power(self._lam, self._data))
+                if message_data.k in self._P_history:
+                    self._P = self._P_history[message_data.k]
+                    self.actor.restore_power(self._P)
+                else:
+                    self._P = np.asarray(self.actor.project_power(self._lam, self._data))
                 self._k = message_data.k
             self._finish(carrier, converged=True)
             return
@@ -291,17 +311,29 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
 
         # After termination, ignore stale messages from the previous round.
         # Only an explicit initial=True message may start a new round.
-        if self._first_message and self._started and not message_data.initial:
+        if (
+            self._first_message
+            and self._started
+            and not message_data.initial
+            and not (message_data.k == 0 and message_data.run > self._run)
+        ):
+            return
+        # A kick-off (or a repeated one) for a run already started must not
+        # restart it; a neighbour's round-0 message may start a run before the
+        # kick-off arrives (it can take more hops on a sparse topology).
+        if message_data.initial and not self._first_message:
             return
 
         # --- Initialisation path ---
         if self._first_message or message_data.initial:
             self._first_message = False
             self._started = True
+            self._run = max(self._run + 1, int(getattr(message_data, "run", 0)))
             self._k = 0
             self._rounds.reset()
             self._reports.reset()
             self._lam_history.clear()
+            self._P_history.clear()
             self._cancel_stop_repeats()
             self.converged = False
             # ``data`` is constant for the whole run, so it only travels with
@@ -355,6 +387,7 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
         avg_lam = sum(lam for lam, _ in values) / len(values)
         self._prev_lam = self._lam
         self._lam_history[self._k] = self._lam
+        self._P_history[self._k] = self._P
         # The ΔP term needs every participant's power; until each neighbour
         # has been heard once, the default p = 0 would fake a huge deficit.
         others = self._non_neighbours(carrier, neighbours)
@@ -410,13 +443,19 @@ class AveragingConsensusAlgorithm(DistributedAlgorithm):
                     k=self._k,
                     data=self._data if self._k == 0 else None,
                     p=self._P.copy(),
+                    run=self._run,
                 ),
                 addr,
             )
         if not self.is_leader and self.leader is not None and self.leader not in neighbours:
             carrier.send_to_other(
                 AveragingConsensusMessage(
-                    lam=self._lam.copy(), k=self._k, data=None, p=self._P.copy(), report=True
+                    lam=self._lam.copy(),
+                    k=self._k,
+                    data=None,
+                    p=self._P.copy(),
+                    report=True,
+                    run=self._run,
                 ),
                 self.leader,
             )

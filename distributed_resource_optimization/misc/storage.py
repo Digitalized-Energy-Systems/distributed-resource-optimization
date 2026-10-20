@@ -32,7 +32,6 @@ starts — the per-round cost of a storage participant:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
 
 import cvxpy as cp
 import numpy as np
@@ -83,10 +82,6 @@ class StorageModel:
 
     _price_problems: dict = field(default_factory=dict, init=False, repr=False)
     _projection_problems: dict = field(default_factory=dict, init=False, repr=False)
-    _responses: dict = field(default_factory=dict, init=False, repr=False)
-
-    #: Recent proximal responses kept by price (see :meth:`proximal_response`).
-    RESPONSE_CACHE: ClassVar[int] = 64
 
     def __post_init__(self) -> None:
         if self.e_max <= 0:
@@ -206,25 +201,14 @@ class StorageModel:
         (DE-AT, quadratic costs: 15 % of the optimal battery throughput;
         centred: the optimal throughput).
 
-        The last responses are remembered by price, so asking again for an
-        earlier price (consensus followers rolling back to the round the
-        leader verified) returns exactly the schedule given then. A price
-        iteration only repeats a price exactly at its fixed point, where
-        repeating the answer is also correct.
+        The answer depends on *previous*; callers that must reproduce an
+        earlier answer keep it themselves (consensus stores every round's power).
         """
         lam = np.asarray(lam, dtype=float).ravel()
-        key = (lam.tobytes(), float(epsilon))
-        cached = self._responses.get(key)
-        if cached is not None:
-            return cached[0].copy(), cached[1].copy()
         prev = np.zeros_like(lam) if previous is None else np.asarray(previous, dtype=float).ravel()
         if prev.shape != lam.shape:
             prev = np.zeros_like(lam)
-        result = self.prox(prev + lam / epsilon, epsilon)
-        self._responses[key] = (result[0].copy(), result[1].copy())
-        while len(self._responses) > self.RESPONSE_CACHE:
-            self._responses.pop(next(iter(self._responses)))
-        return result
+        return self.prox(prev + lam / epsilon, epsilon)
 
     def prox(
         self, center: np.ndarray, rho: float, with_cost: bool = True

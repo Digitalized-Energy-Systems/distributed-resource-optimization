@@ -582,7 +582,8 @@ async def test_stale_message_after_termination_does_not_restart():
 async def test_new_run_starts_from_neighbour_round_zero_before_kickoff():
     """On a sparse graph the leader's kick-off can travel more hops than a
     neighbour's round-0 message of the same (later) run: that message starts
-    the run, and the kick-off arriving afterwards must not restart it."""
+    the run, the kick-off arriving afterwards must not restart it, and a stale
+    round-0 message of the finished run must not start one."""
     from distributed_resource_optimization import FDGDMMessage
     from tests.carrier import StubCarrier
 
@@ -591,23 +592,29 @@ async def test_new_run_starts_from_neighbour_round_zero_before_kickoff():
         lambda a, c: finished.append(1), fdgdm_actor=FDGDMActor(), max_iter=3
     )
     carrier = StubCarrier(test_neighbors={2})
-    msg = lambda k: FDGDMMessage(  # noqa: E731
-        gradient=np.zeros(1), d_u_product=1.0, k=k, data=np.array([1.0])
-    )
+
+    def msg(k: int, run: int) -> FDGDMMessage:
+        return FDGDMMessage(
+            gradient=np.zeros(1), d_u_product=1.0, k=k, data=np.array([1.0]), run=run
+        )
 
     await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
     for k in range(3):
-        await algo.on_exchange_message(carrier, msg(k), {})
+        await algo.on_exchange_message(carrier, msg(k, run=1), {})
     assert finished == [1]
 
-    # Second run: the neighbour's round 0 arrives first and starts it ...
-    await algo.on_exchange_message(carrier, msg(0), {})
+    # A stale round-0 message of the finished run 1 starts nothing.
+    await algo.on_exchange_message(carrier, msg(0, run=1), {})
+    assert algo._first_message
+
+    # Run 2: the neighbour's round 0 arrives first and starts it ...
+    await algo.on_exchange_message(carrier, msg(0, run=2), {})
     assert algo._k == 1  # round 0 complete (single neighbour), now in round 1
     # ... and the late kick-off does not reset it.
     await algo.on_exchange_message(carrier, create_fdgdm_start(data=np.array([1.0])), {})
     assert algo._k == 1
     for k in (1, 2):
-        await algo.on_exchange_message(carrier, msg(k), {})
+        await algo.on_exchange_message(carrier, msg(k, run=2), {})
     assert finished == [1, 1]
 
 

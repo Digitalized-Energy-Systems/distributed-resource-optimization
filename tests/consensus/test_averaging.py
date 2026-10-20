@@ -483,3 +483,41 @@ async def test_leader_repeats_stop_until_every_neighbour_acknowledged():
     for timer in carrier.timers:
         timer.fire()
     assert stops_to("a") == 1 and stops_to("b") == 2
+
+
+@pytest.mark.asyncio
+async def test_rollback_restores_the_verified_rounds_power():
+    """A follower that gets the leader's stop for an earlier round finishes on
+    exactly the power it broadcast in that round, without asking its actor
+    again (a proximal storage response depends on its previous schedule)."""
+    calls = []
+
+    class _Counting(LinearCostEconomicDispatchConsensusActor):
+        def project_power(self, lam, data):
+            calls.append(1)
+            return super().project_power(lam, data)
+
+    finished = []
+    actor = _Counting(cost=10.0, p_max=50.0, epsilon=0.1)
+    algo = create_averaging_consensus_participant(
+        lambda a, c: finished.append(a.actor.P.copy()),
+        consensus_actor=actor,
+        initial_lam=5.0,
+        max_iter=50,
+    )
+    carrier = _RecordingCarrier(["leader"])
+    start = create_averaging_consensus_start(5.0, data=np.array([20.0]))
+    await algo.on_exchange_message(carrier, start, {})
+    rounds = []
+    for k in range(3):
+        rounds.append(algo._P.copy())
+        await algo.on_exchange_message(
+            carrier,
+            AveragingConsensusMessage(lam=np.array([12.0 + k]), k=k, data=None, p=np.zeros(1)),
+            {"sender": "leader"},
+        )
+    n_calls = len(calls)
+    stop = AveragingConsensusMessage(lam=np.array([12.0]), k=1, data=None, stop=True)
+    await algo.on_exchange_message(carrier, stop, {"sender": "leader"})
+    assert len(calls) == n_calls  # restored, not recomputed
+    np.testing.assert_array_equal(finished[-1], rounds[1])

@@ -464,7 +464,9 @@ def _path_neighbours(n: int) -> dict[int, list[int]]:
     return {i: [j for j in (i - 1, i + 1) if 1 <= j <= n] for i in range(1, n + 1)}
 
 
-async def _dispatch_on(neighbours, diameter, algo_factory, weight_rule="mean_metropolis"):
+async def _dispatch_on(
+    neighbours, diameter, algo_factory, weight_rule="mean_metropolis", loss_rate=0.0
+):
     """Three generators (costs 2, 5, 8; 20 MW each) serving 30 MW."""
     from distributed_resource_optimization.carrier.simple import ActorContainer
 
@@ -491,12 +493,15 @@ async def _dispatch_on(neighbours, diameter, algo_factory, weight_rule="mean_met
             tol=1e-6,
             weight_rule=weight_rule,
             diameter=diameter,
+            round_timeout=0.05 if loss_rate else None,
         )
         for i, cost in enumerate((2.0, 5.0, 8.0))
     ]
     start = create_diffusion_start(initial_lam=5.0, data=demand, horizon=1)
     await start_distributed_optimization(
-        actors, start, container=ActorContainer(neighbours=neighbours)
+        actors,
+        start,
+        container=ActorContainer(neighbours=neighbours, loss_rate=loss_rate),
     )
     return results, stopped
 
@@ -645,3 +650,21 @@ async def test_neighbours_last_round_message_does_not_end_run():
         await algo.on_exchange_message(carrier, msg(k), {})
         await algo.on_exchange_message(carrier, msg(k), {})
     assert finished == [1]
+
+
+@pytest.mark.asyncio
+async def test_exact_diffusion_asymmetric_rule_under_loss_matches_lossless():
+    """'averaging' is asymmetric on the irregular path 1 - 2 - 3; under loss the
+    combine must still use those weights (the running-sum flows assume
+    symmetric ones), so the lossy dispatch ends near the lossless one."""
+    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+        ExactDiffusionAlgorithm,
+    )
+
+    lossless, _ = await _dispatch_on(_path_neighbours(3), 2, ExactDiffusionAlgorithm, "averaging")
+    lossy, _ = await _dispatch_on(
+        _path_neighbours(3), 2, ExactDiffusionAlgorithm, "averaging", loss_rate=0.05
+    )
+    assert len(lossy) == 3
+    for i in range(3):
+        assert np.allclose(lossy[i], lossless[i], atol=0.5), (i, lossy[i], lossless[i])

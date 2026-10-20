@@ -111,6 +111,9 @@ class DiffusionMessage(OptimizationMessage):
     :param radius: Sender's convergence radius from its previous round (see
                    :func:`~.._rounds.convergence_radius`); only used on graphs
                    with a diameter above 1.
+    :param run: Sender's run counter (round messages only); a finished
+                participant starts a new run from a round-0 message of a
+                later run, never from a stale one.
     """
 
     phi: np.ndarray
@@ -123,11 +126,16 @@ class DiffusionMessage(OptimizationMessage):
     flow_sum: np.ndarray | None = None
     flow_round: int = -1
     radius: int = -1
+    run: int = 0
 
 
 # ---------------------------------------------------------------------------
 # Shared round handling
 # ---------------------------------------------------------------------------
+
+
+#: Weight rules that give symmetric pairwise weights on any graph.
+SYMMETRIC_RULES = ("mean_metropolis", "hastings")
 
 
 class _DiffusionRounds(DistributedAlgorithm):
@@ -163,6 +171,7 @@ class _DiffusionRounds(DistributedAlgorithm):
         self.diameter = max(1, int(diameter))
         self._radius: int = -1
         self._degrees: dict[Any, int] = {}  # neighbour -> its degree
+        self._run: int = 0  # runs started so far
         self._rounds = RoundBuffer()  # (φ, converged, radius) per round and sender
         self._flows = EdgeFlows()  # combine flows, kept equal on both ends
         self._deadline = RoundDeadline(round_timeout)
@@ -234,9 +243,10 @@ class _DiffusionRounds(DistributedAlgorithm):
         # own counter and keeps that message as the neighbour's freshest value.
         if message_data.k > self.max_iter:
             if self.diameter > 1:
-                # The sender certified that every agent converged: stop too and
-                # pass the notice on, so no neighbour waits for this agent.
-                self.converged = True
+                # The sender's radius reached the diameter: stop too and pass
+                # the notice on, so no neighbour waits for this agent. Report
+                # this agent's own flag (flags are not monotone).
+                self.converged = self._converged_flag
                 self.iterations = self._k
                 self._notify_finished(carrier, neighbours)
             else:
@@ -247,13 +257,23 @@ class _DiffusionRounds(DistributedAlgorithm):
 
         # After termination, ignore stale messages from the previous round.
         # Only an explicit initial=True message may start a new round.
-        if self._first_message and self._started and not message_data.initial:
+        if (
+            self._first_message
+            and self._started
+            and not message_data.initial
+            and not (message_data.k == 0 and message_data.run > self._run)
+        ):
+            return
+        # A kick-off for a run already started (from a neighbour's round-0
+        # message, which can arrive first on a sparse topology) is ignored.
+        if message_data.initial and not self._first_message:
             return
 
         # --- Initialisation path ---
         if self._first_message or message_data.initial:
             self._first_message = False
             self._started = True
+            self._run = max(self._run + 1, int(getattr(message_data, "run", 0)))
             self._k = 0
             self._converged_flag = False
             self._stable_rounds = 0
@@ -326,7 +346,10 @@ class _DiffusionRounds(DistributedAlgorithm):
             )
             stop = self._converged_flag and (complete_and_converged or recently_converged)
         if stop:
-            self.converged = True
+            # Complete graph: every flag of this round is set. Sparse graph: the
+            # radius certifies flags of earlier rounds, which may have turned
+            # off since, so report this agent's own flag.
+            self.converged = True if self.diameter <= 1 else self._converged_flag
             self.iterations = self._k
             if self._deadline.enabled or self.diameter > 1:
                 self._notify_finished(carrier, neighbours)
@@ -335,9 +358,14 @@ class _DiffusionRounds(DistributedAlgorithm):
 
         self_w, neighbor_w, weights = self._neighbour_weights(neighbours)
         me = address_of(carrier)
-        if weights is not None and (me is None or not self._deadline.enabled):
-            # Irregular neighbourhood, lossless: per-neighbour weights, values
-            # in arrival order.
+        if weights is not None and (
+            me is None or not self._deadline.enabled or self.weight_rule not in SYMMETRIC_RULES
+        ):
+            # Irregular neighbourhood: per-neighbour weights, values in arrival
+            # order (last known value for a missing neighbour). Lossless runs,
+            # and lossy runs with an asymmetric rule (w_ij != w_ji): the running
+            # -sum flows below assume symmetric pairwise weights, and an
+            # asymmetric combine conserves nothing they could protect.
             values = self._rounds.value_map(
                 self._k, neighbours, default=lambda _n: (own, False, -1)
             )
@@ -403,6 +431,7 @@ class _DiffusionRounds(DistributedAlgorithm):
                     flow_sum=None if owned is None else np.copy(owned[1]),
                     flow_round=-1 if owned is None else owned[0],
                     radius=self._radius,
+                    run=self._run,
                 ),
                 addr,
             )

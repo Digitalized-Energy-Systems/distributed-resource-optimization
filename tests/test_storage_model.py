@@ -35,16 +35,6 @@ def test_price_response_matches_an_independent_solve():
     assert e[-1] >= model.e0 - 1e-6  # E_T >= E_0
 
 
-def test_proximal_response_repeats_an_earlier_answer_exactly():
-    model = _battery(discharge_cost=2.0)
-    lam1, lam2 = np.array([1.0, 30.0, 2.0, 40.0]), np.array([5.0, 25.0, 6.0, 35.0])
-    p1, e1 = model.proximal_response(lam1, 0.5, None)
-    p2, _ = model.proximal_response(lam2, 0.5, p1)
-    again, e_again = model.proximal_response(lam1, 0.5, p2)  # e.g. a rollback
-    np.testing.assert_array_equal(again, p1)
-    np.testing.assert_array_equal(e_again, e1)
-
-
 def test_proximal_response_fixed_point_is_unbiased():
     """Iterated (with a vanishing price drift, as in a converging price
     iteration), the centred response reaches the exact best response: fill the
