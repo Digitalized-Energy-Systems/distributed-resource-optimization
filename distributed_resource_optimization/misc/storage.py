@@ -12,8 +12,8 @@ Every algorithm and central dispatch use the same storage model:
   completeness and defaults to 0.
 
 The net power ``p = p_d − p_c`` (positive = discharge) is what the algorithms
-exchange.  Two exact responses are offered, each a convex QP over the whole
-horizon that is compiled once (cvxpy parameters) and re-solved with OSQP warm
+exchange.  The exact responses below are convex QPs over the whole
+horizon that are compiled once (cvxpy parameters) and re-solved with OSQP warm
 starts — the per-round cost of a storage participant:
 
 * :meth:`StorageModel.price_response` — the storage counterpart of a
@@ -21,7 +21,11 @@ starts — the per-round cost of a storage participant:
   ``Σ c_d·p_d + c_c·p_c − λ·p + (ε/2)(p_d² + p_c²)``.  The proximal term with
   the same ε a generator of that size gets makes the response unique (a pure
   price response of a linear-cost battery is bang-bang) and discourages
-  simultaneous charging and discharging.  Used by consensus and diffusion.
+  simultaneous charging and discharging, but centred on zero it biases the
+  schedule toward idling.  Used only by the FDGDM scenario's outer storage loop.
+* :meth:`StorageModel.proximal_response` — the same response with the proximal
+  term centred on the previous schedule, ``prox(p_prev + λ/ε, ε)``: unbiased at
+  a fixed point.  Used by consensus, diffusion and exact diffusion.
 * :meth:`StorageModel.prox` — the proximal step
   ``argmin cost(p) + (ρ/2)‖p − center‖²``.  Used by ADMM (center ``−v``).
 * :meth:`StorageModel.project` — the Euclidean projection of a desired net

@@ -19,14 +19,13 @@ other three should be revisited against He/Wang/Wu directly if exact
 fidelity to that paper's numbers is required.
 
 All rules need each node's own degree; averaging/relative-degree/Hastings
-additionally need each *neighbor's* degree. On a degree-regular graph (this
-codebase always wires diffusion over a complete graph; the paper's own
-network model is a 2-regular ring) every neighbor's degree equals the
-node's own, so :func:`regular_graph_weights` covers that case directly from
-local degree alone, without a full per-neighbor degree exchange. Callers
-(:mod:`.diffusion.diffusion`, :mod:`.diffusion.exact_diffusion`) still verify
-this assumption at runtime -- each message carries the sender's own degree,
-and a mismatch raises rather than silently producing a non-stochastic matrix.
+additionally need each *neighbor's* degree. On a degree-regular graph (the
+benchmark's complete and ring topologies; the paper's own network model is a
+2-regular ring) every neighbor's degree equals the node's own, so
+:func:`regular_graph_weights` covers that case directly from local degree
+alone. Callers (:mod:`.diffusion.diffusion`, :mod:`.diffusion.exact_diffusion`)
+read each neighbour's degree from its messages and switch to the per-neighbour
+:func:`combination_weights` when the neighbourhood is not regular.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ def combination_weights(
         return self_weight, weights
     elif rule == "hastings":
         # Sayed Table 7, rule 5 (jointly cited to Metropolis & Hastings):
-        # a_lk = 1 / max(n_k', n_l')
+        # a_lk = 1 / max(n_k', n_l') — Sayed's Metropolis rule, i.e. Hastings with equal noise variances
         closed_self = n_k + 1
         weights = {addr: 1.0 / max(closed_self, n_l + 1) for addr, n_l in neighbor_degrees.items()}
     else:

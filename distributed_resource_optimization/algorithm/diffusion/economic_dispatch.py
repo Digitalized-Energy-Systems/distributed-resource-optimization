@@ -87,11 +87,12 @@ class LinearCostEconomicDispatchDiffusionActor(DiffusionActor):
 class ReservoirStorageDiffusionActor(DiffusionActor):
     """Reservoir/battery storage actor for diffusion-based dispatch.
 
-    The storage actor answers the price λ(t) with the exact SOC-feasible best
-    response of the shared storage model
+    The storage actor answers the price λ(t) with the proximal-point response
+    of the shared storage model
     (:class:`~distributed_resource_optimization.misc.storage.StorageModel`,
-    decision Q15): it minimises ``Σ c_d·p_d + c_c·p_c − λ·p + (ε/2)(p_d² + p_c²)``
-    under the SOC dynamics, power and energy bounds and ``E_T ≥ e_final·e_max``.
+    decision Q15): it minimises ``cost(p) − λᵀp + (ε/2)‖p − p_prev‖²`` (centred
+    on its previous schedule, :meth:`StorageModel.proximal_response`) under the
+    SOC dynamics, power and energy bounds and ``E_T ≥ e_final·e_max``.
 
     :param e_max: Maximum energy capacity (MWh).
     :param p_charge_max: Maximum charging power (MW).

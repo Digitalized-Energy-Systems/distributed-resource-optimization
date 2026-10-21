@@ -337,7 +337,9 @@ class ADMMGenericCoordinator(Coordinator):
             # 3. u-update
             u = actor.u_update(x, u, z, rho, n)
 
-            # 4. Convergence check
+            # 4. Convergence check. Boyd eq. 3.12 uses stacked 2-norms; here the
+            #    norms are the largest per-participant ones (looser by up to √n),
+            #    which is why the aggregate feasibility check below is added.
             r_norm = actor.primal_residual(x, z)
             s_norm = rho * _max_diff_norm(z, z_old)
             eps_pri = np.sqrt(m * n) * self.abs_tol + self.rel_tol * max(_max_norm(x), _max_norm(z))

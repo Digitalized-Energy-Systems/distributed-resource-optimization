@@ -70,11 +70,12 @@ class ReservoirStorageConsensusActor(ConsensusActor):
     """Reservoir/battery storage actor for consensus-based dispatch.
 
     The storage actor responds to price signals λ(t) across the full time
-    horizon with the exact SOC-feasible best response of the shared storage
-    model (:class:`~distributed_resource_optimization.misc.storage.StorageModel`,
-    decision Q15): it minimises ``Σ c_d·p_d + c_c·p_c − λ·p + (ε/2)(p_d² + p_c²)``
-    under the SOC dynamics, power and energy bounds and ``E_T ≥ e_final·e_max`` —
-    the storage counterpart of a generator's ``clip((λ − c)/ε)``.
+    horizon with the proximal-point response of the shared storage model
+    (:class:`~distributed_resource_optimization.misc.storage.StorageModel`,
+    decision Q15): it minimises ``cost(p) − λᵀp + (ε/2)‖p − p_prev‖²`` (centred
+    on its previous schedule, :meth:`StorageModel.proximal_response`) under the
+    SOC dynamics, power and energy bounds and ``E_T ≥ e_final·e_max`` — the
+    storage counterpart of a generator's ``clip((λ − c)/ε)``.
 
     :param e_max: Maximum energy capacity (MWh).
     :param p_charge_max: Maximum charging power (MW).

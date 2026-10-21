@@ -22,10 +22,12 @@ The update rule is:
 
 with (Mean-Metropolis) :math:`w_{ij} = 2 / (n_i + n_j + 1)` and
 :math:`w_{ii} = 1 - \\sum_j w_{ij}`.
-Weights are computed via :func:`~distributed_resource_optimization.algorithm._weight_rules.regular_graph_weights`,
-which assumes a degree-regular communication graph (true both for this
-codebase's complete-graph topologies and for the paper's own ring network);
-the paper notes this doubly-stochastic requirement is what allows classical
+Weights are computed via :func:`~distributed_resource_optimization.algorithm._weight_rules.regular_graph_weights`
+on a degree-regular communication graph (the benchmark's complete and ring
+topologies, and the paper's own ring network), otherwise per neighbour from the
+degrees carried in the messages
+(:func:`~distributed_resource_optimization.algorithm._weight_rules.combination_weights`);
+the paper notes the doubly-stochastic requirement is what allows classical
 Diffusion to converge at all.
 
 The optional :class:`DiffusionActor` plug-in supplies ``∇J``; the base class
