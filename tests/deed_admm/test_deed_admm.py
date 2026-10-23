@@ -796,7 +796,7 @@ async def _run_four_hubs(tol=None, max_iter=300):
         create_deed_admm_thermal_participant,
         start_distributed_optimization,
     )
-    from distributed_resource_optimization.algorithm.deed_admm.deed_admm import DEEDADMMMessage
+    from distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm import DEEDADMMMessage
 
     demand = np.array([100.0, 150.0, 120.0, 80.0])
     algos = {}

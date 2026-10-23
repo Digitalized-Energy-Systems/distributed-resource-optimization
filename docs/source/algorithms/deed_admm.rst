@@ -158,6 +158,6 @@ Participant factories
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMAlgorithm`,
-  :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMStorageAlgorithm`
-- :class:`~distributed_resource_optimization.algorithm.deed_admm.deed_admm.DEEDADMMMessage`
+- :class:`~distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm.DEEDADMMAlgorithm`,
+  :class:`~distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm.DEEDADMMStorageAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm.DEEDADMMMessage`

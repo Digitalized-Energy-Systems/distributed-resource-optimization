@@ -212,7 +212,7 @@ async def _run_fdgdm(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT, max_ite
 async def _run_deed(loss_rate=0.0, seed=0, round_timeout=ROUND_TIMEOUT, max_iter=300, algos=None):
     """Four thermal hubs, 4-step horizon (see tests/deed_admm)."""
     from distributed_resource_optimization import create_deed_admm_thermal_participant
-    from distributed_resource_optimization.algorithm.deed_admm.deed_admm import DEEDADMMMessage
+    from distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm import DEEDADMMMessage
 
     demand = np.array([100.0, 150.0, 120.0, 80.0])
     n = 4

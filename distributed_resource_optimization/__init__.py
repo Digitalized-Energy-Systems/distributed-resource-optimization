@@ -84,6 +84,16 @@ from .algorithm.admm.core import (
     ADMMMessage,
     ADMMStart,
 )
+
+# DEED-ADMM
+from .algorithm.admm.deed_admm import (
+    DEEDADMMAlgorithm,
+    DEEDADMMMessage,
+    DEEDADMMStorageAlgorithm,
+    create_deed_admm_renewable_participant,
+    create_deed_admm_storage_participant,
+    create_deed_admm_thermal_participant,
+)
 from .algorithm.admm.flex_actor import (
     ADMMFlexActor,
     create_admm_flex_actor_box_bounded,
@@ -158,29 +168,6 @@ from .algorithm.core import (
     OptimizationMessage,
 )
 
-# DEED-ADMM
-from .algorithm.deed_admm import (
-    DEEDADMMAlgorithm,
-    DEEDADMMMessage,
-    DEEDADMMStorageAlgorithm,
-    create_deed_admm_renewable_participant,
-    create_deed_admm_storage_participant,
-    create_deed_admm_thermal_participant,
-)
-
-# FDGDM
-from .algorithm.fdgdm.economic_dispatch import (
-    LinearCostEconomicDispatchFDGDMActor,
-    ReservoirStorageFDGDMActor,
-)
-from .algorithm.fdgdm.fdgdm import (
-    FDGDMActor,
-    FDGDMAlgorithm,
-    FDGDMMessage,
-    create_fdgdm_participant,
-    create_fdgdm_start,
-)
-
 # Consensus
 from .algorithm.firstorder.consensus.averaging import (
     AveragingConsensusAlgorithm,
@@ -210,6 +197,19 @@ from .algorithm.firstorder.diffusion.exact_diffusion import (
     ExactDiffusionAlgorithm,
     create_exact_diffusion_participant,
     create_exact_diffusion_start,
+)
+
+# FDGDM
+from .algorithm.firstorder.fdgdm.economic_dispatch import (
+    LinearCostEconomicDispatchFDGDMActor,
+    ReservoirStorageFDGDMActor,
+)
+from .algorithm.firstorder.fdgdm.fdgdm import (
+    FDGDMActor,
+    FDGDMAlgorithm,
+    FDGDMMessage,
+    create_fdgdm_participant,
+    create_fdgdm_start,
 )
 
 # Distributed QP (gossip primal-dual)

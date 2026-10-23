@@ -67,19 +67,19 @@ Diffusion & Exact Diffusion
 FDGDM
 -----
 
-.. automodule:: distributed_resource_optimization.algorithm.fdgdm.fdgdm
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.fdgdm.fdgdm
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.fdgdm.economic_dispatch
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.fdgdm.economic_dispatch
    :members:
 
 DEED-ADMM
 ---------
 
-.. automodule:: distributed_resource_optimization.algorithm.deed_admm.deed_admm
+.. automodule:: distributed_resource_optimization.algorithm.admm.deed_admm.deed_admm
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.deed_admm.actors
+.. automodule:: distributed_resource_optimization.algorithm.admm.deed_admm.actors
    :members:
 
 Algorithm Core

@@ -1,6 +1,6 @@
 """Economic-dispatch actors for the FDGDM algorithm.
 
-Two :class:`~distributed_resource_optimization.algorithm.fdgdm.fdgdm.FDGDMActor`
+Two :class:`~distributed_resource_optimization.algorithm.firstorder.fdgdm.fdgdm.FDGDMActor`
 implementations:
 
 * :class:`LinearCostEconomicDispatchFDGDMActor` — quadratic cost function
