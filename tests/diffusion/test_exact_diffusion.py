@@ -378,7 +378,7 @@ async def test_exact_diffusion_first_iteration_has_no_correction():
         def send_to_other(self, content, receiver):
             captured["phi"] = content.phi.copy()
 
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion import (
         ExactDiffusionAlgorithm,
     )
 
@@ -416,8 +416,10 @@ async def test_exact_diffusion_rejects_mismatched_weight_rule():
     """All participants must agree on the same weight_rule; a neighbour
     reporting a different one must raise rather than silently mix weights
     computed from two different rules."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import DiffusionMessage
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
+        DiffusionMessage,
+    )
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion import (
         ExactDiffusionAlgorithm,
     )
 
@@ -449,8 +451,10 @@ async def test_exact_diffusion_rejects_mismatched_weight_rule():
 async def test_exact_diffusion_ignores_stale_message_after_termination():
     """A late/duplicate pre-termination message arriving after finish_callback
     has already fired must not silently restart the algorithm."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import DiffusionMessage
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
+        DiffusionMessage,
+    )
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion import (
         ExactDiffusionAlgorithm,
     )
 

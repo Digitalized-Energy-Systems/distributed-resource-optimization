@@ -25,11 +25,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import RoundBuffer, RoundDeadline, address_of, sender_key
-from ..core import DistributedAlgorithm, OptimizationMessage
+from ..._rounds import RoundBuffer, RoundDeadline, address_of, sender_key
+from ...core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
+    from ....carrier.core import Carrier
 
 
 # ---------------------------------------------------------------------------

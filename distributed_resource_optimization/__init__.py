@@ -23,7 +23,7 @@ Carriers
 --------
 * :class:`~.carrier.simple.SimpleCarrier` — asyncio-backed in-process carrier
   (no network stack required).
-* :class:`~.carrier.mango.MangoCarrier` — integrates with *mango-agents* for
+* :class:`~.carrier.mango_carrier.MangoCarrier` — integrates with *mango-agents* for
   networked multi-agent deployments.
 
 Quick start — COHDA
@@ -89,6 +89,32 @@ from .algorithm.admm.flex_actor import (
     create_admm_flex_actor_box_bounded,
     create_admm_flex_actor_one_to_many,
 )
+
+# Distributed lexicographic cascade (true-distributed sum-sharing ADMM)
+from .algorithm.admm.lexicographic.coordinator import (
+    DistributedLexicographicCascadeCoordinator,
+    DistributedLexicographicCascadeDone,
+    DistributedLexicographicCascadeDoneReply,
+    DistributedLexicographicCascadeInit,
+    DistributedLexicographicCascadeInitAck,
+    DistributedLexicographicCascadeParticipant,
+    DistributedLexicographicCascadeStart,
+    LexicographicCascadeGlobalActor,
+    create_distributed_lexicographic_cascade_coordinator,
+    create_distributed_lexicographic_cascade_participant,
+    create_distributed_lexicographic_cascade_start,
+    solve_cp_distributed_lexicographic_cascade,
+)
+
+# Gossip lexicographic cascade (coordinator-free peer-to-peer variant)
+from .algorithm.admm.lexicographic.gossip import (
+    GossipCascadeInit,
+    GossipCascadeStart,
+    GossipIter,
+    GossipParticipant,
+    create_gossip_cascade_participant,
+    create_gossip_cascade_start,
+)
 from .algorithm.admm.sharing_admm import (
     ADMMSharingData,
     ADMMSharingGlobalActor,
@@ -101,17 +127,28 @@ from .algorithm.admm.storage import (
     create_admm_proximal_storage_actor,
 )
 
-# Consensus
-from .algorithm.consensus.averaging import (
-    AveragingConsensusAlgorithm,
-    AveragingConsensusMessage,
-    ConsensusActor,
-    create_averaging_consensus_participant,
-    create_averaging_consensus_start,
+# Priority-cascade ADMM shared data contracts
+from .algorithm.admm.types import (
+    CPAdmmResult,
+    CPSpec,
+    SectorDemand,
 )
-from .algorithm.consensus.economic_dispatch import (
-    LinearCostEconomicDispatchConsensusActor,
-    ReservoirStorageConsensusActor,
+
+# Waterfall ADMM (priority-cascaded sharing ADMM)
+from .algorithm.admm.waterfall.core import (
+    WaterfallADMMCoordinator,
+    WaterfallADMMParticipant,
+    WaterfallADMMResult,
+    WaterfallADMMSpecReply,
+    WaterfallADMMSpecRequest,
+    WaterfallADMMStart,
+    create_waterfall_admm_coordinator,
+    create_waterfall_admm_participant,
+    create_waterfall_admm_start,
+    marginal_priority,
+    solve_cp_priority_admm,
+    tier_priority_weight,
+    waterfall_serve,
 )
 
 # Algorithm base
@@ -131,24 +168,6 @@ from .algorithm.deed_admm import (
     create_deed_admm_thermal_participant,
 )
 
-# Diffusion
-from .algorithm.diffusion.diffusion import (
-    DiffusionActor,
-    DiffusionAlgorithm,
-    DiffusionMessage,
-    create_diffusion_participant,
-    create_diffusion_start,
-)
-from .algorithm.diffusion.economic_dispatch import (
-    LinearCostEconomicDispatchDiffusionActor,
-    ReservoirStorageDiffusionActor,
-)
-from .algorithm.diffusion.exact_diffusion import (
-    ExactDiffusionAlgorithm,
-    create_exact_diffusion_participant,
-    create_exact_diffusion_start,
-)
-
 # FDGDM
 from .algorithm.fdgdm.economic_dispatch import (
     LinearCostEconomicDispatchFDGDMActor,
@@ -160,6 +179,47 @@ from .algorithm.fdgdm.fdgdm import (
     FDGDMMessage,
     create_fdgdm_participant,
     create_fdgdm_start,
+)
+
+# Consensus
+from .algorithm.firstorder.consensus.averaging import (
+    AveragingConsensusAlgorithm,
+    AveragingConsensusMessage,
+    ConsensusActor,
+    create_averaging_consensus_participant,
+    create_averaging_consensus_start,
+)
+from .algorithm.firstorder.consensus.economic_dispatch import (
+    LinearCostEconomicDispatchConsensusActor,
+    ReservoirStorageConsensusActor,
+)
+
+# Diffusion
+from .algorithm.firstorder.diffusion.diffusion import (
+    DiffusionActor,
+    DiffusionAlgorithm,
+    DiffusionMessage,
+    create_diffusion_participant,
+    create_diffusion_start,
+)
+from .algorithm.firstorder.diffusion.economic_dispatch import (
+    LinearCostEconomicDispatchDiffusionActor,
+    ReservoirStorageDiffusionActor,
+)
+from .algorithm.firstorder.diffusion.exact_diffusion import (
+    ExactDiffusionAlgorithm,
+    create_exact_diffusion_participant,
+    create_exact_diffusion_start,
+)
+
+# Distributed QP (gossip primal-dual)
+from .algorithm.firstorder.gossip_qp.core import (
+    GossipQPAlgorithm,
+    GossipQPFinished,
+    GossipQPMessage,
+    LedgerEntry,
+    create_distributed_qp_participant,
+    create_distributed_qp_start,
 )
 
 # COHDA
@@ -199,7 +259,7 @@ from .carrier.simple import (
 # Mango carrier (optional — only imported if mango-agents is available)
 _MANGO_AVAILABLE = False
 try:
-    from .carrier.mango import (
+    from .carrier.mango_carrier import (
         CoordinatorRole,
         DistributedOptimizationRole,
         MangoCarrier,
@@ -297,6 +357,50 @@ __all__ = [
     "create_exact_diffusion_start",
     "LinearCostEconomicDispatchDiffusionActor",
     "ReservoirStorageDiffusionActor",
+    # Distributed QP (gossip primal-dual)
+    "LedgerEntry",
+    "GossipQPMessage",
+    "GossipQPFinished",
+    "GossipQPAlgorithm",
+    "create_distributed_qp_participant",
+    "create_distributed_qp_start",
+    # Waterfall ADMM
+    "CPSpec",
+    "SectorDemand",
+    "CPAdmmResult",
+    "WaterfallADMMStart",
+    "WaterfallADMMSpecRequest",
+    "WaterfallADMMSpecReply",
+    "WaterfallADMMResult",
+    "WaterfallADMMParticipant",
+    "WaterfallADMMCoordinator",
+    "create_waterfall_admm_participant",
+    "create_waterfall_admm_coordinator",
+    "create_waterfall_admm_start",
+    "solve_cp_priority_admm",
+    "waterfall_serve",
+    "marginal_priority",
+    "tier_priority_weight",
+    # Distributed lexicographic cascade
+    "DistributedLexicographicCascadeStart",
+    "DistributedLexicographicCascadeInit",
+    "DistributedLexicographicCascadeInitAck",
+    "DistributedLexicographicCascadeDone",
+    "DistributedLexicographicCascadeDoneReply",
+    "DistributedLexicographicCascadeParticipant",
+    "DistributedLexicographicCascadeCoordinator",
+    "LexicographicCascadeGlobalActor",
+    "create_distributed_lexicographic_cascade_participant",
+    "create_distributed_lexicographic_cascade_coordinator",
+    "create_distributed_lexicographic_cascade_start",
+    "solve_cp_distributed_lexicographic_cascade",
+    # Gossip lexicographic cascade
+    "GossipCascadeStart",
+    "GossipCascadeInit",
+    "GossipIter",
+    "GossipParticipant",
+    "create_gossip_cascade_participant",
+    "create_gossip_cascade_start",
 ]
 
 if _MANGO_AVAILABLE:

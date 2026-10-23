@@ -1,7 +1,7 @@
 """Exact Diffusion algorithm (adapt-correct-combine).
 
 Classical Diffusion
-(:mod:`~distributed_resource_optimization.algorithm.diffusion.diffusion`) converges, for a constant step size,
+(:mod:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion`) converges, for a constant step size,
 to a point that is *biased* relative to the true minimiser of the network's
 aggregate cost whenever participants' local costs differ -- the combine step
 mixes already-adapted iterates, so the network never quite agrees on the
@@ -38,9 +38,9 @@ at scenario-setup time, :math:`p_i` is expected to be computed once centrally
 economic-dispatch actors. On a degree-regular graph :math:`p_i \\equiv 1`, so
 *perron_scale* defaults to ``1.0`` (no scaling).
 
-Reuses :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+Reuses :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor`
 (same gradient-term interface) and
-:class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionMessage` (same wire shape -- the ``phi`` field
+:class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionMessage` (same wire shape -- the ``phi`` field
 just carries the corrected :math:`\\bar\\varphi` instead of the raw one).
 """
 
@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._weight_rules import WeightRule, combination_weights, regular_graph_weights
+from ..._weight_rules import WeightRule, combination_weights, regular_graph_weights
 from .diffusion import DiffusionActor, _DiffusionRounds, create_diffusion_start
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ class ExactDiffusionAlgorithm(_DiffusionRounds):
                             terminates — via the ``tol`` criterion or the
                             ``max_iter`` failsafe (see :attr:`converged`).
     :param diffusion_actor: Optional
-                            :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+                            :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor`
                             supplying the gradient.  ``None`` → the
                             zero-gradient base class.
     :param initial_lam: Starting scalar (broadcast to all λ dimensions).

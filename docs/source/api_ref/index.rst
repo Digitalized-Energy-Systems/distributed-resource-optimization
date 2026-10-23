@@ -10,7 +10,7 @@ Carrier
 .. automodule:: distributed_resource_optimization.carrier.simple
    :members:
 
-.. automodule:: distributed_resource_optimization.carrier.mango
+.. automodule:: distributed_resource_optimization.carrier.mango_carrier
    :members:
 
 COHDA
@@ -43,22 +43,22 @@ ADMM
 Consensus
 ---------
 
-.. automodule:: distributed_resource_optimization.algorithm.consensus.averaging
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.averaging
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.consensus.economic_dispatch
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.economic_dispatch
    :members:
 
 Diffusion & Exact Diffusion
 ---------------------------
 
-.. automodule:: distributed_resource_optimization.algorithm.diffusion.diffusion
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.diffusion.exact_diffusion
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.diffusion.economic_dispatch
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.diffusion.economic_dispatch
    :members:
 
 .. automodule:: distributed_resource_optimization.algorithm._weight_rules

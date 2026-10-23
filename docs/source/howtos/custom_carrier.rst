@@ -92,5 +92,5 @@ See Also
 
 - :class:`~distributed_resource_optimization.carrier.core.Carrier` — abstract base class
 - :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier` — asyncio reference implementation
-- :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier` — mango-agents implementation
+- :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier` — mango-agents implementation
 - :doc:`custom_algorithm`

@@ -60,9 +60,13 @@ class ADMMAnswer:
     """Reply from a participant after solving its local update.
 
     :param x: Local solution vector.
+    :param aux: Optional follower-side scalar/data (e.g. a per-step move
+        magnitude) surfaced to the global actor's convergence hook. ``None``
+        for variants that converge on the primal/dual residuals alone.
     """
 
     x: np.ndarray
+    aux: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +135,34 @@ class ADMMGlobalActor(ABC):
         ``violation <= abs_tol + feas_tol * scale`` before declaring convergence.
         """
         return None
+
+    # ---- optional hooks (defaults preserve standard ADMM behaviour) ----
+
+    def dual_residual(self, z: Any, z_old: Any, rho: float) -> float:
+        """Dual residual for convergence. Default: ``rho * max||z - z_old||``."""
+        return float(rho * _max_diff_norm(z, z_old))
+
+    def should_stop(
+        self,
+        primal_res: float,
+        dual_res: float,
+        aux: list[Any],
+        abs_tol: float,
+    ) -> bool | None:
+        """Convergence override. Return ``True``/``False`` to decide directly,
+        or ``None`` to fall back to the coordinator's eps_pri/eps_dual test."""
+        return None
+
+    def adapt_rho(
+        self,
+        primal_res: float,
+        dual_res: float,
+        rho: float,
+        u: Any,
+    ) -> tuple[float, Any]:
+        """Optionally rebalance ``rho`` (rescaling the scaled dual ``u``
+        inversely). Default: leave both unchanged."""
+        return rho, u
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +291,8 @@ class ADMMGenericCoordinator(Coordinator):
         message_data: ADMMStart,
         meta: Any,
     ) -> list[np.ndarray]:
-        return await self._run(carrier, message_data.data, message_data.solution_length)
+        x, _z, _u = await self._run(carrier, message_data.data, message_data.solution_length)
+        return x
 
     async def _x_update_round(
         self,
@@ -269,13 +302,14 @@ class ADMMGenericCoordinator(Coordinator):
         z: Any,
         u: Any,
         rho: float | None = None,
-    ) -> list[bool]:
+    ) -> tuple[list[bool], list[Any]]:
         """Send each participant its correction in parallel; store replies in *x*.
 
         A participant whose request or answer was lost within
         :attr:`round_timeout` keeps its previous ``x[i]`` (initially zeros).
 
-        :returns: Per participant, whether it answered in this round.
+        :returns: Per participant, whether it answered in this round, and the
+            ``aux`` of its answer (``None`` if it did not answer).
         """
         requests = {
             addr: ADMMMessage(
@@ -288,32 +322,42 @@ class ADMMGenericCoordinator(Coordinator):
             requests, timeout=self.round_timeout, reply_type=ADMMAnswer
         )
         fresh: list[bool] = []
+        aux: list[Any] = []
         for i, addr in enumerate(participant_addrs):
             reply = replies.get(addr)
             if reply is not None:
                 x[i] = np.asarray(reply.x, dtype=float)
             fresh.append(reply is not None)
-        return fresh
+            aux.append(getattr(reply, "aux", None))
+        return fresh, aux
 
     async def _run(
         self,
         carrier: "Carrier",
         input_data: Any,
         m: int,
-    ) -> list[np.ndarray]:
+        *,
+        x_init: list[np.ndarray] | None = None,
+    ) -> tuple[list[np.ndarray], Any, Any]:
         """Core ADMM loop.
 
         :param carrier: Coordinator's carrier.
         :param input_data: Algorithm-specific data (target, priorities, …).
         :param m: Problem dimension (number of decision variables).
-        :returns: The participants' ``x`` at convergence or max-iter.
+        :param x_init: Optional warm-start primal list (e.g. carried over
+            from a previous run); defaults to per-participant zeros.
+        :returns: ``(x, z, u)`` at convergence or max-iter.
         """
         actor = self.global_actor
         rho = self.rho
         participant_addrs = carrier.others()
         n = len(participant_addrs)
 
-        x: list[np.ndarray] = [np.zeros(m) for _ in range(n)]
+        x: list[np.ndarray] = (
+            [np.array(xi, dtype=float) for xi in x_init]
+            if x_init is not None
+            else [np.zeros(m) for _ in range(n)]
+        )
         u = actor.init_u(n, m)
         z = actor.init_z(n, m)
         self.iterations = 0
@@ -324,8 +368,8 @@ class ADMMGenericCoordinator(Coordinator):
 
         for k in range(1, self.max_iters + 1):
             # 1. x-update round (all participants in parallel); a participant
-            #    that did not answer keeps its previous x.
-            fresh = await self._x_update_round(carrier, participant_addrs, x, z, u, rho)
+            #    that did not answer keeps its previous x (and reports no aux).
+            fresh, aux = await self._x_update_round(carrier, participant_addrs, x, z, u, rho)
             missed_in_a_row = [0 if ok else m_ + 1 for ok, m_ in zip(fresh, missed_in_a_row)]
             self.missed_answers += fresh.count(False)
             round_complete = all(fresh)
@@ -340,12 +384,18 @@ class ADMMGenericCoordinator(Coordinator):
             # 4. Convergence check. Boyd eq. 3.12 uses stacked 2-norms; here the
             #    norms are the largest per-participant ones (looser by up to √n),
             #    which is why the aggregate feasibility check below is added.
+            #    The actor may replace the eps_pri/eps_dual test (should_stop).
             r_norm = actor.primal_residual(x, z)
-            s_norm = rho * _max_diff_norm(z, z_old)
-            eps_pri = np.sqrt(m * n) * self.abs_tol + self.rel_tol * max(_max_norm(x), _max_norm(z))
-            # u is the *scaled* dual, so the unscaled dual is rho·u (Boyd §3.3).
-            eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * rho * _max_norm(u)
+            s_norm = actor.dual_residual(z, z_old, rho)
             self.iterations = k
+            stop = actor.should_stop(r_norm, s_norm, aux, self.abs_tol)
+            if stop is None:
+                eps_pri = np.sqrt(m * n) * self.abs_tol + self.rel_tol * max(
+                    _max_norm(x), _max_norm(z)
+                )
+                # u is the *scaled* dual, so the unscaled dual is rho·u (Boyd §3.3).
+                eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * rho * _max_norm(u)
+                stop = bool(r_norm < eps_pri and s_norm < eps_dual)
 
             # The residuals above are per participant; also bound the
             # aggregate constraint violation of the x we actually return.
@@ -355,11 +405,10 @@ class ADMMGenericCoordinator(Coordinator):
                 gap, scale = violation
                 feasible = gap <= self.abs_tol + self.feas_tol * scale
 
-            if round_complete and r_norm < eps_pri and s_norm < eps_dual and feasible:
+            if round_complete and stop and feasible:
                 self.converged = True
                 logger.debug("ADMM converged in %d iterations.", k)
                 break
-
             if (
                 self.max_missing_rounds is not None
                 and max(missed_in_a_row, default=0) >= self.max_missing_rounds
@@ -379,15 +428,20 @@ class ADMMGenericCoordinator(Coordinator):
                 )
                 break
 
+            # 5. Penalty re-balancing: the coordinator's residual balancing
+            #    (adaptive_rho) or else the actor's own rule (no-op by default).
+            rho_before = rho
             if self.adaptive_rho:
                 if r_norm > self.rho_mu * s_norm:
                     rho *= self.rho_tau
                     u = _scale_dual(u, 1.0 / self.rho_tau)
-                    self.rho_changes += 1
                 elif s_norm > self.rho_mu * r_norm:
                     rho /= self.rho_tau
                     u = _scale_dual(u, self.rho_tau)
-                    self.rho_changes += 1
+            else:
+                rho, u = actor.adapt_rho(r_norm, s_norm, rho, u)
+            if rho != rho_before:
+                self.rho_changes += 1
 
             if k == self.max_iters:
                 logger.warning(
@@ -398,4 +452,4 @@ class ADMMGenericCoordinator(Coordinator):
                 )
 
         self.final_rho = rho
-        return x
+        return x, z, u

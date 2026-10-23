@@ -62,7 +62,7 @@ regardless of which carrier you choose.
      - Quick experiments and single-process simulation.
    * - :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier`
      - Full control over message flow within one asyncio process.
-   * - :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`
+   * - :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`
      - Realistic distributed deployments with TCP networking via mango-agents.
 
 

@@ -22,13 +22,22 @@ class Carrier(ABC):
 
     * :class:`~distributed_resource_optimization.carrier.simple.SimpleCarrier`
       — lightweight in-process carrier backed by asyncio tasks.
-    * :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`
+    * :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`
       — integrates with the *mango-agents* framework for networked deployments.
 
     The loss-tolerance helpers (:meth:`request_all`, :meth:`schedule_after`,
     :meth:`now`, :meth:`sender_of`) have defaults built on the abstract
     methods and the running event loop; carriers with their own clock (mango's
     simulation clock) override them so deadlines follow that clock.
+
+    Park-point contract: any wait that resolves only via an inbound message
+    or the carrier clock — a :meth:`send_awaitable` future, :meth:`sleep`, or
+    a combination of those — must be awaited through :meth:`wait_for`,
+    :meth:`gather`, or :meth:`race`, never directly.  A simulation-backed
+    carrier declares those parks idle to its scheduler; awaiting them
+    directly deadlocks discrete stepping.  Sends and locally-completing
+    awaitables must *not* be routed through the park point — they are work
+    that has to finish within a simulation step.
     """
 
     @abstractmethod
@@ -133,3 +142,46 @@ class Carrier(ABC):
         scheme override it.
         """
         return meta["sender"]
+
+    def sleep(self, seconds: float) -> Any:
+        """Return an awaitable that resolves after *seconds* in this
+        carrier's clock domain."""
+        return asyncio.sleep(seconds)
+
+    def spawn(self, coroutine: Any) -> asyncio.Task:
+        """Launch a long-running driver coroutine (e.g. a coordinator's
+        request/reply loop or the gossip cascade round).
+
+        The base implementation runs it as a plain event-loop task. A
+        simulation-backed carrier overrides this to schedule it on the
+        agent scheduler so the simulation clock tracks it.  The driver's
+        reply/timeout waits must go through :meth:`wait_for` /
+        :meth:`gather` / :meth:`race` (see the class docstring).
+        """
+        return asyncio.ensure_future(coroutine)
+
+    async def wait_for(self, awaitable: Any) -> Any:
+        """Await *awaitable* through the carrier's park point.
+
+        A simulation-backed carrier marks the calling driver idle for the
+        duration of the wait.
+        """
+        return await awaitable
+
+    async def gather(self, *awaitables: Any) -> list[Any]:
+        """Await all *awaitables* through this carrier's park point."""
+        return await self.wait_for(asyncio.gather(*awaitables))
+
+    async def race(self, *awaitables: Any) -> None:
+        """Wait until the first of *awaitables* resolves, then cancel the rest.
+
+        Used to race a peer-ready event against a clock-domain timeout so the
+        timeout obeys the carrier's clock (simulation or wall-clock).
+        """
+        tasks = [asyncio.ensure_future(a) for a in awaitables]
+        try:
+            await self.wait_for(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()

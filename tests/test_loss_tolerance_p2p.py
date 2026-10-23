@@ -20,7 +20,7 @@ from distributed_resource_optimization import (
     create_exact_diffusion_participant,
     create_exact_diffusion_start,
 )
-from distributed_resource_optimization.algorithm.consensus.economic_dispatch import (
+from distributed_resource_optimization.algorithm.firstorder.consensus.economic_dispatch import (
     LinearCostEconomicDispatchConsensusActor,
 )
 from distributed_resource_optimization.carrier.simple import (

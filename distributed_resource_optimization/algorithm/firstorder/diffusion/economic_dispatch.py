@@ -1,6 +1,6 @@
 """Economic-dispatch actors for the diffusion algorithm.
 
-Two :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+Two :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor`
 implementations:
 
 * :class:`LinearCostEconomicDispatchDiffusionActor` — linearised inverted
@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from ...misc.storage import StorageModel
+from ....misc.storage import StorageModel
 from .diffusion import DiffusionActor
 
 # ---------------------------------------------------------------------------

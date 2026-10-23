@@ -27,7 +27,7 @@ Usage example::
     import asyncio
     from mango import activate, agent_composed_of, auto_assign, complete_topology
     from mango import create_tcp_container
-    from distributed_resource_optimization.carrier.mango import (
+    from distributed_resource_optimization.carrier.mango_carrier import (
         CoordinatorRole, DistributedOptimizationRole,
         StartCoordinatedDistributedOptimization,
     )
@@ -248,6 +248,29 @@ class MangoCarrier(Carrier):
         """mango address of the agent that sent the message described by *meta*."""
         return mango_sender_addr(meta)
 
+    def sleep(self, seconds: float) -> Any:
+        """Sleep on the agent's scheduler clock, marked as sleeping, so a
+        stepped simulation jumps to the wakeup instead of blocking on it."""
+        return self._sim_sleep(seconds)
+
+    async def _sim_sleep(self, seconds: float) -> None:
+        with sleeping_wait():
+            await self._context.context.clock.sleep(seconds)
+
+    def spawn(self, coroutine: Any) -> asyncio.Task:
+        """Run a long-running driver as a tracked agent-scheduler task.
+
+        Its reply/timeout waits go through :meth:`wait_for`, which declares
+        them idle so stepped termination detection does not deadlock on it.
+        """
+        return self._context.schedule_instant_task(coroutine)
+
+    async def wait_for(self, awaitable: Any) -> Any:
+        """The park point: the wait resolves only via an inbound message or
+        the clock, so the driver is declared idle for its duration."""
+        with sleeping_wait():
+            return await super().wait_for(awaitable)
+
 
 # ---------------------------------------------------------------------------
 # Shared role base
@@ -340,7 +363,8 @@ class CoordinatorRole(_CarrierRole):
 
     Listens for :class:`StartCoordinatedDistributedOptimization` messages,
     runs the coordinator, then sends each participant (``others()``) its own
-    entry of the result list in an :class:`OptimizationFinishedMessage`.
+    entry of the result list in an :class:`OptimizationFinishedMessage` (or
+    the whole result, if it is not one entry per participant).
 
     :param coordinator: The coordinator object (e.g.
                         :class:`~distributed_resource_optimization.algorithm.admm.core.ADMMGenericCoordinator`).
@@ -399,9 +423,17 @@ class CoordinatorRole(_CarrierRole):
                 results = await self.coordinator.start_optimization(
                     self._carrier, content.input, meta
                 )
-                for i, addr in enumerate(self._carrier.others()):
+                neighbours = self._carrier.others()
+                # Per-participant list (e.g. ADMMGenericCoordinator) -> fan out
+                # the matching entry; a single aggregate result (e.g.
+                # CPAdmmResult) -> broadcast the whole object to everyone.
+                per_participant = isinstance(results, (list, tuple)) and len(results) == len(
+                    neighbours
+                )
+                for i, addr in enumerate(neighbours):
+                    payload = results[i] if per_participant else results
                     await self.context.send_message(
-                        OptimizationFinishedMessage(result=results[i]), addr
+                        OptimizationFinishedMessage(result=payload), addr
                     )
             except Exception as exc:  # propagate to wait_done() instead of hanging it
                 if not done_future.done():
@@ -410,10 +442,14 @@ class CoordinatorRole(_CarrierRole):
             if not done_future.done():
                 done_future.set_result(results)
 
-        self.context.schedule_instant_task(_run())
+        self._carrier.spawn(_run())
 
     async def wait_done(self) -> Any:
-        """Await the completion of the optimization run."""
+        """Await the completion of the optimization run.
+
+        Routed through the carrier's park point so it is safe to call from
+        inside a scheduled task under stepped simulation.
+        """
         if self._done_future is None:
             raise RuntimeError("Optimization has not been started yet.")
-        return await self._done_future
+        return await self._carrier.wait_for(self._done_future)

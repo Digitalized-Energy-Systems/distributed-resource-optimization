@@ -1,7 +1,7 @@
 MangoCarrier
 ============
 
-:class:`~distributed_resource_optimization.carrier.mango.MangoCarrier` integrates with the
+:class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier` integrates with the
 `mango-agents <https://github.com/OFFIS-DAI/mango>`_ framework for networked multi-agent
 deployments.  The algorithm code is identical to the SimpleCarrier version — only the
 wiring changes.
@@ -17,17 +17,17 @@ Roles
 
 Two mango ``Role`` classes are provided:
 
-:class:`~distributed_resource_optimization.carrier.mango.DistributedOptimizationRole`
+:class:`~distributed_resource_optimization.carrier.mango_carrier.DistributedOptimizationRole`
    Wraps a :class:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm` (e.g. a COHDA
    participant or ADMM flex actor) as a mango role.  Messages are routed to the algorithm's
    :meth:`~distributed_resource_optimization.algorithm.core.DistributedAlgorithm.on_exchange_message`.
 
-:class:`~distributed_resource_optimization.carrier.mango.CoordinatorRole`
+:class:`~distributed_resource_optimization.carrier.mango_carrier.CoordinatorRole`
    Wraps a :class:`~distributed_resource_optimization.algorithm.core.Coordinator` (e.g. an ADMM
    coordinator).  Listens for a
-   :class:`~distributed_resource_optimization.carrier.mango.StartCoordinatedDistributedOptimization`
+   :class:`~distributed_resource_optimization.carrier.mango_carrier.StartCoordinatedDistributedOptimization`
    message, runs the optimisation, then sends each participant its own result in an
-   :class:`~distributed_resource_optimization.carrier.mango.OptimizationFinishedMessage`.  Pass
+   :class:`~distributed_resource_optimization.carrier.mango_carrier.OptimizationFinishedMessage`.  Pass
    ``include_self=True`` only when the coordinator's agent is itself one of the
    participants.
 
@@ -120,9 +120,9 @@ details.
 See Also
 --------
 
-- :class:`~distributed_resource_optimization.carrier.mango.MangoCarrier`,
-  :class:`~distributed_resource_optimization.carrier.mango.DistributedOptimizationRole`,
-  :class:`~distributed_resource_optimization.carrier.mango.CoordinatorRole`
-- :class:`~distributed_resource_optimization.carrier.mango.StartCoordinatedDistributedOptimization`,
-  :class:`~distributed_resource_optimization.carrier.mango.OptimizationFinishedMessage`
+- :class:`~distributed_resource_optimization.carrier.mango_carrier.MangoCarrier`,
+  :class:`~distributed_resource_optimization.carrier.mango_carrier.DistributedOptimizationRole`,
+  :class:`~distributed_resource_optimization.carrier.mango_carrier.CoordinatorRole`
+- :class:`~distributed_resource_optimization.carrier.mango_carrier.StartCoordinatedDistributedOptimization`,
+  :class:`~distributed_resource_optimization.carrier.mango_carrier.OptimizationFinishedMessage`
 - :doc:`simple` — lightweight in-process carrier

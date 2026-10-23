@@ -513,7 +513,7 @@ async def test_diffusion_on_irregular_graph_balances_in_merit_order(weight_rule)
     ends for everyone on the convergence radius (diameter 2). Classical
     diffusion's constant-step bias depends on the weights, so only balance and
     merit order are compared (exact diffusion below must match exactly)."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
         DiffusionAlgorithm,
     )
 
@@ -525,7 +525,7 @@ async def test_diffusion_on_irregular_graph_balances_in_merit_order(weight_rule)
 
 @pytest.mark.asyncio
 async def test_exact_diffusion_on_irregular_graph_matches_complete_graph():
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion import (
         ExactDiffusionAlgorithm,
     )
 
@@ -553,7 +553,7 @@ async def test_diffusion_rejects_mismatched_weight_rule():
     """All participants must agree on the same weight_rule; a neighbour
     reporting a different one must raise rather than silently mix weights
     computed from two different rules."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
         DiffusionAlgorithm,
         DiffusionMessage,
     )
@@ -586,7 +586,7 @@ async def test_diffusion_rejects_mismatched_weight_rule():
 async def test_diffusion_ignores_stale_message_after_termination():
     """A late/duplicate pre-termination message arriving after finish_callback
     has already fired must not silently restart the algorithm."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
         DiffusionAlgorithm,
         DiffusionMessage,
     )
@@ -629,7 +629,7 @@ async def test_diffusion_ignores_stale_message_after_termination():
 async def test_neighbours_last_round_message_does_not_end_run():
     """Every participant stops by its own counter (loss plan rule 4): a
     neighbour's round-max_iter message must not end a run that is behind."""
-    from distributed_resource_optimization.algorithm.diffusion.diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion import (
         DiffusionAlgorithm,
         DiffusionMessage,
     )
@@ -657,7 +657,7 @@ async def test_exact_diffusion_asymmetric_rule_under_loss_matches_lossless():
     """'averaging' is asymmetric on the irregular path 1 - 2 - 3; under loss the
     combine must still use those weights (the running-sum flows assume
     symmetric ones), so the lossy dispatch ends near the lossless one."""
-    from distributed_resource_optimization.algorithm.diffusion.exact_diffusion import (
+    from distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion import (
         ExactDiffusionAlgorithm,
     )
 

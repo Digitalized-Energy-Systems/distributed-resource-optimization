@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from ...misc.storage import StorageModel
+from ....misc.storage import StorageModel
 from .averaging import ConsensusActor
 
 

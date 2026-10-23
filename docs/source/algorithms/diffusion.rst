@@ -122,7 +122,7 @@ Parameters
      - Called with ``(algorithm, carrier)`` when the run terminates
    * - ``diffusion_actor``
      - ``None``
-     - :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor` supplying the gradient
+     - :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor` supplying the gradient
        :math:`\nabla J`; ``None`` means zero gradient
    * - ``initial_lam``
      - ``10.0``
@@ -154,13 +154,13 @@ the *length* of that message's vector is used — each participant starts from i
 Economic Dispatch & Storage Actors
 ----------------------------------
 
-Two built-in :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`
+Two built-in :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor`
 implementations drive the price signal toward an economic dispatch:
 
-- :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.LinearCostEconomicDispatchDiffusionActor` —
+- :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.economic_dispatch.LinearCostEconomicDispatchDiffusionActor` —
   responds with :math:`P(\lambda) = \operatorname{clip}((\lambda - c)/\varepsilon,
   P_{\min}, P_{\max})` and returns the gradient :math:`P(\lambda) - P_{\text{target}}/n`.
-- :class:`~distributed_resource_optimization.algorithm.diffusion.economic_dispatch.ReservoirStorageDiffusionActor` — a
+- :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.economic_dispatch.ReservoirStorageDiffusionActor` — a
   battery/reservoir answering λ with the exact SOC-feasible best response of the
   shared storage model (power limits, efficiencies, ``E_T ≥ e_final·e_max``,
   discharge-only cost) in :mod:`~distributed_resource_optimization.misc.storage`.
@@ -179,9 +179,9 @@ not ported.
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.algorithm.diffusion.diffusion.create_diffusion_participant`,
-  :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionAlgorithm`
-- :func:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.create_exact_diffusion_participant`,
-  :class:`~distributed_resource_optimization.algorithm.diffusion.exact_diffusion.ExactDiffusionAlgorithm`
-- :class:`~distributed_resource_optimization.algorithm.diffusion.diffusion.DiffusionActor`,
+- :func:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.create_diffusion_participant`,
+  :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionAlgorithm`
+- :func:`~distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion.create_exact_diffusion_participant`,
+  :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.exact_diffusion.ExactDiffusionAlgorithm`
+- :class:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.DiffusionActor`,
   (the base class is the neutral, zero-gradient actor)

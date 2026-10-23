@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from .._rounds import (
+from ..._rounds import (
     EdgeFlows,
     RoundBuffer,
     RoundDeadline,
@@ -49,11 +49,11 @@ from .._rounds import (
     convergence_radius,
     sender_key,
 )
-from .._weight_rules import WeightRule, combination_weights, regular_graph_weights
-from ..core import DistributedAlgorithm, OptimizationMessage
+from ..._weight_rules import WeightRule, combination_weights, regular_graph_weights
+from ...core import DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
-    from ...carrier.core import Carrier
+    from ....carrier.core import Carrier
 
 
 # ---------------------------------------------------------------------------

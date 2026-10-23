@@ -11,7 +11,7 @@ from distributed_resource_optimization import (
     create_averaging_consensus_start,
     start_distributed_optimization,
 )
-from distributed_resource_optimization.algorithm.consensus.economic_dispatch import (
+from distributed_resource_optimization.algorithm.firstorder.consensus.economic_dispatch import (
     LinearCostEconomicDispatchConsensusActor,
 )
 

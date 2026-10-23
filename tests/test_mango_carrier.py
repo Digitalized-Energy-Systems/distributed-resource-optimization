@@ -28,7 +28,7 @@ from distributed_resource_optimization.algorithm.admm.sharing_admm import (
     create_sharing_admm_start,
 )
 from distributed_resource_optimization.algorithm.core import Coordinator
-from distributed_resource_optimization.carrier.mango import (
+from distributed_resource_optimization.carrier.mango_carrier import (
     CoordinatorRole,
     DistributedOptimizationRole,
     StartCoordinatedDistributedOptimization,
