@@ -6,9 +6,9 @@ lexicographic cascade that solves each round's LP via Boyd et al.
 runs each round as a finite sharing-ADMM inner loop with a hand-coded
 closed form, eliminating any dependency on a QP solver and giving every
 CP the option to *replicate the kernel locally* and arrive at the
-identical commitment from the gossiped peer view.  (A centralised
-cvxpy-backed reference solver, ``solve_cp_lexicographic_cascade``, was
-planned for cross-validation but is not yet implemented.)
+identical commitment from the gossiped peer view.  The centralised
+cvxpy/HiGHS reference, :func:`.reference.solve_cp_lexicographic_cascade`,
+solves the same per-tier LP for cross-validation.
 
 Algorithm
 ---------

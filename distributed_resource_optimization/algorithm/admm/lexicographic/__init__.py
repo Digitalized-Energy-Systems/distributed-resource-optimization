@@ -32,6 +32,7 @@ from .gossip import (
     create_gossip_cascade_participant,
     create_gossip_cascade_start,
 )
+from .reference import solve_cp_lexicographic_cascade
 
 __all__ = [
     # Coordinator transport
@@ -47,6 +48,8 @@ __all__ = [
     "create_distributed_lexicographic_cascade_coordinator",
     "create_distributed_lexicographic_cascade_start",
     "solve_cp_distributed_lexicographic_cascade",
+    # Centralised LP reference
+    "solve_cp_lexicographic_cascade",
     # Gossip transport
     "GossipCascadeStart",
     "GossipCascadeInit",

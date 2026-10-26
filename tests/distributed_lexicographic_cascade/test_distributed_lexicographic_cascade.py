@@ -19,20 +19,10 @@ from distributed_resource_optimization import (
     create_distributed_lexicographic_cascade_participant,
     create_distributed_lexicographic_cascade_start,
     solve_cp_distributed_lexicographic_cascade,
+    solve_cp_lexicographic_cascade,
     start_coordinated_optimization,
 )
 from distributed_resource_optimization.algorithm.admm.types import CPSpec
-
-# The cvxpy reference solver ``solve_cp_lexicographic_cascade`` was never
-# implemented; the cross-check tests that call it are skipped below. This
-# stub keeps the module importable and gives a clear error if a skip is
-# ever removed before the reference solver lands.
-_LP_REFERENCE_MISSING = "cvxpy reference solver (solve_cp_lexicographic_cascade) not implemented"
-
-
-def solve_cp_lexicographic_cascade(*_args, **_kwargs):
-    raise NotImplementedError(_LP_REFERENCE_MISSING)
-
 
 # ---------------------------------------------------------------------------
 # Helpers used by multiple scenarios
@@ -287,7 +277,6 @@ def test_three_identical_cps_split_load_symmetrically():
     assert result.served_by_sector_tier["heat"][1][0] == pytest.approx(5.0, abs=1e-2)
 
 
-@pytest.mark.skip(reason=_LP_REFERENCE_MISSING)
 def test_heterogeneous_caps_interior_serves_full_deficit():
     """Non-parallel caps, interior demand: served sigma matches LP exactly.
 
@@ -319,7 +308,6 @@ def test_heterogeneous_caps_interior_serves_full_deficit():
     assert result.served_by_sector_tier["heat"][1][0] == pytest.approx(lp_heat, abs=1e-2)
 
 
-@pytest.mark.skip(reason=_LP_REFERENCE_MISSING)
 def test_heterogeneous_caps_saturation_serves_full_deficit():
     """Non-parallel caps, saturation demand: served sigma matches LP exactly.
 
@@ -348,7 +336,6 @@ def test_heterogeneous_caps_saturation_serves_full_deficit():
     assert result.served_by_sector_tier["heat"][1][0] == pytest.approx(lp_heat, abs=1e-2)
 
 
-@pytest.mark.skip(reason=_LP_REFERENCE_MISSING)
 def test_orthogonal_caps_serve_full_deficit():
     """High-COP + low-COP fleet (45-degree cap angle): sigma matches LP.
 
@@ -582,7 +569,34 @@ def test_replicated_kernel_runs_are_bit_identical():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason=_LP_REFERENCE_MISSING)
+def test_lp_reference_serves_tiers_in_priority_order():
+    """Hand-checked two-tier case: tier 1 takes the supply first.
+
+    One P2H (4 MW in, 4 MW heat), 5 MW electricity base. Tier 1 serves all
+    3 MW of electricity, which leaves 2 MW for the P2H (r = 0.5), so tier-2
+    heat gets 2 of its 3 MW. A single LP over both tiers would be indifferent
+    between this and 2 MW electricity + 3 MW heat.
+    """
+    cps = [_p2h_spec("p2h", electricity=4.0, heat=-4.0)]
+    demands = [
+        SectorDemand(
+            sector="electricity",
+            demand_by_tier={1: np.array([3.0]), 2: np.array([0.0])},
+            base_supply=np.array([5.0]),
+        ),
+        SectorDemand(
+            sector="heat",
+            demand_by_tier={1: np.array([0.0]), 2: np.array([3.0])},
+            base_supply=np.array([0.0]),
+        ),
+    ]
+    lp = solve_cp_lexicographic_cascade(cps, demands)
+    assert lp.served_by_sector_tier["electricity"][1][0] == pytest.approx(3.0, abs=1e-6)
+    assert lp.served_by_sector_tier["heat"][2][0] == pytest.approx(2.0, abs=1e-6)
+    assert lp.factor_by_cp["p2h"][0] == pytest.approx(0.5, abs=1e-6)
+    assert lp.iterations == 2
+
+
 @pytest.mark.parametrize("angle_deg", [0, 10, 20, 30, 45, 60, 90])
 def test_arbitrary_cap_angle_matches_lp(angle_deg):
     """No alignment prerequisite — the sum-sharing kernel matches the LP

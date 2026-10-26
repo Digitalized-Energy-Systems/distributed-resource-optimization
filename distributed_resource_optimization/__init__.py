@@ -125,6 +125,7 @@ from .algorithm.admm.lexicographic.gossip import (
     create_gossip_cascade_participant,
     create_gossip_cascade_start,
 )
+from .algorithm.admm.lexicographic.reference import solve_cp_lexicographic_cascade
 from .algorithm.admm.sharing_admm import (
     ADMMSharingData,
     ADMMSharingGlobalActor,
@@ -394,6 +395,7 @@ __all__ = [
     "create_distributed_lexicographic_cascade_coordinator",
     "create_distributed_lexicographic_cascade_start",
     "solve_cp_distributed_lexicographic_cascade",
+    "solve_cp_lexicographic_cascade",
     # Gossip lexicographic cascade
     "GossipCascadeStart",
     "GossipCascadeInit",
