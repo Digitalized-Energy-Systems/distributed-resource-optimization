@@ -29,6 +29,9 @@ Several algorithm families are available:
 | **Exact Diffusion** | Adapt-correct-combine diffusion without constant-step-size bias (Yuan et al. 2019; economic dispatch per Ces et al. 2025) | Fully distributed |
 | **FDGDM** | Fast distributed gradient descent for economic dispatch (Bai et al. 2022) | Fully distributed |
 | **DEED-ADMM** | Economic dispatch via ADMM with dynamic consensus (Zhu et al. 2025) | Fully distributed |
+| **Gossip QP** | Priority-weighted QP, sum-to-target with box bounds (primal-dual, one circulating token) | Fully distributed |
+| **Waterfall ADMM** | Multi-sector sharing ADMM with near-strict priority tiers (per-sector waterfall penalty) | Coordinator required |
+| **Lexicographic Cascade** | Strict priority tiers solved tier by tier with sharing ADMM (Boyd et al. 2011 §7.3); centralised LP reference included | Coordinator or gossip (coordinator-free) |
 
 Two carriers are included:
 
@@ -133,6 +136,19 @@ documentation for worked examples of each: `create_averaging_consensus_participa
 `create_diffusion_participant`, `create_exact_diffusion_participant`,
 `create_fdgdm_participant`, and `create_deed_admm_thermal_participant` /
 `create_deed_admm_renewable_participant` / `create_deed_admm_storage_participant`.
+
+### Gossip QP, Waterfall ADMM, and Lexicographic Cascade
+
+The priority-coordination algorithms have their own factories:
+`create_distributed_qp_participant` / `create_distributed_qp_start` (Gossip QP),
+`create_waterfall_admm_participant` / `create_waterfall_admm_coordinator` /
+`create_waterfall_admm_start` (Waterfall ADMM; `solve_cp_priority_admm` runs the kernel
+directly), and for the Lexicographic Cascade either
+`create_distributed_lexicographic_cascade_participant` /
+`create_distributed_lexicographic_cascade_coordinator` /
+`create_distributed_lexicographic_cascade_start` or the coordinator-free
+`create_gossip_cascade_participant` / `create_gossip_cascade_start`.
+`solve_cp_lexicographic_cascade` is the centralised cvxpy/HiGHS reference for the cascade.
 
 ### Using SimpleCarrier directly
 
