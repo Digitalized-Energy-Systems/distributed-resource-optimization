@@ -37,6 +37,23 @@ Two carriers are included:
 
 ---
 
+## Scope of this package
+
+This package is one of three with separate responsibilities:
+
+- **mango-energy-environments** — simulation and representation of energy networks (PyPSA now,
+  pandapower and others later): networks, components, time series, observe/act, component agents,
+  generic network loading/preparation steps. No distributed-algorithm or benchmark logic.
+- **distributed-resource-optimization** — only the logic of the distributed algorithms, as generic
+  as possible (usable for non-energy problems too) and built on mango as far as possible, including
+  the generic mango carrier/role. No PyPSA, network or benchmark logic.
+- **energy-scheduling-benchmark** — builds the benchmark from the other two: the economic-dispatch
+  problem formulation, storage model, central-dispatch optimum, benchmark roles (leader, loads),
+  concrete datasets, runs and comparisons.
+
+Dependencies point one way only: energy-scheduling-benchmark → the other two; mango-energy-environments
+and distributed-resource-optimization never import each other.
+
 ## Installation
 
 ```bash
