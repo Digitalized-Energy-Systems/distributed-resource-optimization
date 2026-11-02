@@ -41,9 +41,13 @@ Two carriers are included:
 
 This package is one of three with separate responsibilities:
 
-- **mango-energy-environments** — simulation and representation of energy networks (PyPSA now,
-  pandapower and others later): networks, components, time series, observe/act, component agents,
-  generic network loading/preparation steps. No distributed-algorithm or benchmark logic.
+- **mango-energy-environments** — simulation and representation of energy networks for mango, in
+  two modes: **physical** (runs on the real frameworks — pandapower, monee — incl. their physical
+  calculations) and **copper-plate** (physics skipped; lines only decide which agents are connected,
+  energy moves freely between any actors; used by the benchmark). Networks, components, time series,
+  observe/act, component agents, network sources (e.g. PyPSA) converted into backend networks,
+  generic preparation steps. Existing functionality (monee restoration, pandapower scheduling) is
+  kept. No distributed-algorithm or benchmark logic.
 - **distributed-resource-optimization** — only the logic of the distributed algorithms, as generic
   as possible (usable for non-energy problems too) and built on mango as far as possible, including
   the generic mango carrier/role. No PyPSA, network or benchmark logic.
