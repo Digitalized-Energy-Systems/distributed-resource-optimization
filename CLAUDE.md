@@ -2,6 +2,8 @@
 
 Part of the energy scheduling benchmark workspace (`~/development/esb`, see its `CLAUDE.md` for
 goal, rules and plan). Branch `restructuring`. Never `git push` unless Jonas asks.
+Whenever new code is written here, first invoke the ponytail skill (`ponytail:ponytail`, level full)
+— smallest change that fully solves it.
 
 ## Scope (IMPORTANT — check every change against it)
 
