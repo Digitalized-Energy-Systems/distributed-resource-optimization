@@ -185,9 +185,7 @@ async def test_scale_free_settings_keep_gossip_matching_the_reference():
     demands = [
         _heat_demand(demand_mw=0.008),
         _electricity_slack(base_mw=0.5),
-        SectorDemand(
-            sector="gas", demand_by_tier={1: np.zeros(1)}, base_supply=np.array([0.2])
-        ),
+        SectorDemand(sector="gas", demand_by_tier={1: np.zeros(1)}, base_supply=np.array([0.2])),
     ]
     scale_free = {
         "normalize": True,
@@ -203,9 +201,7 @@ async def test_scale_free_settings_keep_gossip_matching_the_reference():
             reference.factor_by_cp[cp.cp_id][0], abs=1e-2
         ), f"CP {cp.cp_id} disagrees with reference"
     # and the fleet actually covers the deficit, unlike the unfixed path
-    delivered = -sum(
-        float(gossip[c.cp_id][0]) * c.capacity_by_sector.get("heat", 0.0) for c in cps
-    )
+    delivered = -sum(float(gossip[c.cp_id][0]) * c.capacity_by_sector.get("heat", 0.0) for c in cps)
     assert delivered == pytest.approx(0.008, rel=0.1)
 
 

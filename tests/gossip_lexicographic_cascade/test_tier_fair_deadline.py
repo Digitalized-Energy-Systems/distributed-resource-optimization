@@ -31,7 +31,6 @@ from distributed_resource_optimization import (
     create_gossip_cascade_start,
 )
 
-
 _N_CPS = 4
 
 
@@ -109,30 +108,23 @@ async def _run(cps, demands, *, tier_fair, round_timeout_s=2.0, iter_timeout_s=0
         tier_fair_deadline=tier_fair,
     )
     carriers[0].send_to_other(start, cid(carriers[0]))
-    await asyncio.wait_for(
-        asyncio.gather(*[e.wait() for e in events.values()]), timeout=60.0
-    )
+    await asyncio.wait_for(asyncio.gather(*[e.wait() for e in events.values()]), timeout=60.0)
     return results, seen_tiers
 
 
 def _four_tier_case():
     """A P2H fleet whose heat deficit only appears in the LOWER tiers, so the
     answer is invisible to a cascade that never leaves tier 1."""
-    cps = [
-        CPSpec(f"p2h-{i}", {"electricity": 0.05, "heat": -0.0475})
-        for i in range(_N_CPS)
-    ]
+    cps = [CPSpec(f"p2h-{i}", {"electricity": 0.05, "heat": -0.0475}) for i in range(_N_CPS)]
     demands = [
         SectorDemand(
             "heat",
-            {1: np.array([0.05]), 2: np.array([0.15]), 3: np.array([0.2]),
-             4: np.array([0.1])},
+            {1: np.array([0.05]), 2: np.array([0.15]), 3: np.array([0.2]), 4: np.array([0.1])},
             np.array([0.10]),  # covers tier 1 only; tiers 2-4 need the fleet
         ),
         SectorDemand(
             "electricity",
-            {1: np.array([0.02]), 2: np.array([0.02]), 3: np.array([0.02]),
-             4: np.array([0.02])},
+            {1: np.array([0.02]), 2: np.array([0.02]), 3: np.array([0.02]), 4: np.array([0.02])},
             np.array([5.0]),  # abundant, so the fleet is free to run
         ),
     ]

@@ -93,12 +93,13 @@ from distributed_resource_optimization import (
     start_coordinated_optimization,
 )
 
+
 async def main():
     # Three resources: 10 kW, 15 kW, 10 kW input capacities
     # Efficiency vectors map input to three output types
-    flex1 = create_admm_flex_actor_one_to_many(10, [0.1,  0.5, -1.0])
-    flex2 = create_admm_flex_actor_one_to_many(15, [0.1,  0.5, -1.0])
-    flex3 = create_admm_flex_actor_one_to_many(10, [-1.0, 0.0,  1.0])
+    flex1 = create_admm_flex_actor_one_to_many(10, [0.1, 0.5, -1.0])
+    flex2 = create_admm_flex_actor_one_to_many(15, [0.1, 0.5, -1.0])
+    flex3 = create_admm_flex_actor_one_to_many(10, [-1.0, 0.0, 1.0])
 
     # Target combined output [-4, 0, 6] with first sector weighted x5
     coordinator = create_sharing_target_distance_admm_coordinator()
@@ -109,6 +110,7 @@ async def main():
     print(flex1.x)  # optimal output for resource 1
     print(flex2.x)  # optimal output for resource 2
     print(flex3.x)  # optimal output for resource 3
+
 
 asyncio.run(main())
 ```
@@ -126,6 +128,7 @@ from distributed_resource_optimization import (
     start_distributed_optimization,
 )
 
+
 async def main():
     actor1 = create_cohda_participant(1, [[0.0, 1, 2], [1, 2, 3]])
     actor2 = create_cohda_participant(2, [[0.0, 1, 2], [1, 2, 3]])
@@ -134,6 +137,7 @@ async def main():
     await start_distributed_optimization([actor1, actor2], start)
 
     print(actor1.memory.solution_candidate.schedules.sum(axis=0))
+
 
 asyncio.run(main())
 ```
@@ -145,9 +149,13 @@ For full control over message flow, create the container and carriers yourself:
 ```python
 import asyncio
 from distributed_resource_optimization import (
-    ActorContainer, SimpleCarrier, cid,
-    create_cohda_participant, create_cohda_start_message,
+    ActorContainer,
+    SimpleCarrier,
+    cid,
+    create_cohda_participant,
+    create_cohda_start_message,
 )
+
 
 async def main():
     container = ActorContainer()
@@ -157,6 +165,7 @@ async def main():
     start = create_cohda_start_message([1.2, 2.0, 3.0])
     c1.send_to_other(start, cid(c2))
     await container.done_event.wait()
+
 
 asyncio.run(main())
 ```

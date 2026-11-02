@@ -85,9 +85,7 @@ def _heat_served(result) -> float:
 
 
 def _heat_delivered(result, cps) -> float:
-    return -sum(
-        float(result.factor_by_cp[c.cp_id][0]) * c.capacity_by_sector["heat"] for c in cps
-    )
+    return -sum(float(result.factor_by_cp[c.cp_id][0]) * c.capacity_by_sector["heat"] for c in cps)
 
 
 def test_lv_scale_defaults_stop_after_one_iteration_per_tier():
@@ -161,12 +159,8 @@ def test_defaults_are_not_invariant_under_rescaling(scale):
     This is the hypothesis-free proof that the formulation, not any single
     constant, is scale-blind -- the problem is homogeneous in the data.
     """
-    small = solve_cp_distributed_lexicographic_cascade(
-        *_lv_case(1.0), inner_abs_tol=1.0e-3
-    )
-    big = solve_cp_distributed_lexicographic_cascade(
-        *_lv_case(scale), inner_abs_tol=1.0e-3
-    )
+    small = solve_cp_distributed_lexicographic_cascade(*_lv_case(1.0), inner_abs_tol=1.0e-3)
+    big = solve_cp_distributed_lexicographic_cascade(*_lv_case(scale), inner_abs_tol=1.0e-3)
     assert float(big.factor_by_cp["p2h-0"][0]) > 100.0 * float(small.factor_by_cp["p2h-0"][0])
 
 
@@ -226,9 +220,7 @@ def test_characteristic_scale_uses_the_round_peak():
 
 def test_characteristic_scale_falls_back_to_one_on_empty_data():
     demands = [
-        SectorDemand(
-            sector="heat", demand_by_tier={1: np.zeros(1)}, base_supply=np.zeros(1)
-        )
+        SectorDemand(sector="heat", demand_by_tier={1: np.zeros(1)}, base_supply=np.zeros(1))
     ]
     assert _characteristic_scale(demands) == 1.0
 

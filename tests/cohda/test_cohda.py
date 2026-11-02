@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import numpy as np
 import pytest
 
@@ -278,25 +276,19 @@ class TestSelectionMultiplePerceiveDecide:
 
 
 class TestOnExchangeCohda:
-    def test_two_participant_exchange(self):
+    async def test_two_participant_exchange(self):
         test_carrier = TestCarrier(test_neighbors={1})
         part1 = create_cohda_participant(1, [[1, 1, 0.0], [1, 1, 1], [4, 2, 1], [0, 1, 0]])
         part2 = create_cohda_participant(2, [[0.0, 1, 2], [1, 2.0, 3], [1, 1, 1], [4, 2, 3]])
         init_wm = create_cohda_start_message([1, 2.0, 1])
 
-        asyncio.get_event_loop().run_until_complete(
-            part1.on_exchange_message(test_carrier, init_wm, None)
-        )
+        await part1.on_exchange_message(test_carrier, init_wm, None)
         wm = test_carrier.test_neighbor_messages[1][-1]
         assert np.allclose(wm.solution_candidate.schedules, [[1, 1, 1]])
 
-        asyncio.get_event_loop().run_until_complete(
-            part2.on_exchange_message(test_carrier, wm, None)
-        )
+        await part2.on_exchange_message(test_carrier, wm, None)
         wm = test_carrier.test_neighbor_messages[1][-1]
-        asyncio.get_event_loop().run_until_complete(
-            part1.on_exchange_message(test_carrier, wm, None)
-        )
+        await part1.on_exchange_message(test_carrier, wm, None)
         wm = test_carrier.test_neighbor_messages[1][-1]
 
         assert part1.participant_id == 1
@@ -312,9 +304,7 @@ class TestOnExchangeCohda:
 
         assert np.allclose(wm.solution_candidate.schedules, [[1, 1, 0], [0, 1, 2]])
 
-        asyncio.get_event_loop().run_until_complete(
-            part2.on_exchange_message(test_carrier, wm, None)
-        )
+        await part2.on_exchange_message(test_carrier, wm, None)
         wm = test_carrier.test_neighbor_messages[1][-1]
 
         assert wm is not None
@@ -322,9 +312,7 @@ class TestOnExchangeCohda:
         assert np.allclose(part2.memory.solution_candidate.schedules, [[1, 1, 0], [0, 1, 2]])
 
         len_before = len(test_carrier.test_neighbor_messages[1])
-        asyncio.get_event_loop().run_until_complete(
-            part1.on_exchange_message(test_carrier, wm, None)
-        )
+        await part1.on_exchange_message(test_carrier, wm, None)
         # No new message should have been sent (nothing changed)
         assert len_before == len(test_carrier.test_neighbor_messages[1])
 
@@ -402,7 +390,7 @@ S_HINRICHS = [
 
 
 class TestOnExchangeCohdaHinrichs:
-    def test_convergence_10_participants(self):
+    async def test_convergence_10_participants(self):
         """Participants are run in round-robin order; each always processes the
         latest message.  The loop stops when a participant produces no new
         output (i.e. the algorithm has converged for that round).
@@ -425,9 +413,7 @@ class TestOnExchangeCohdaHinrichs:
                 else:
                     last_length = 0
 
-                asyncio.get_event_loop().run_until_complete(
-                    part.on_exchange_message(test_carrier, wm, None)
-                )
+                await part.on_exchange_message(test_carrier, wm, None)
                 # always grab the latest message
                 if test_carrier.test_neighbor_messages.get(1):
                     wm = test_carrier.test_neighbor_messages[1][-1]

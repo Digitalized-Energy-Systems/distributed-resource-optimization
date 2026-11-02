@@ -135,9 +135,7 @@ class Carrier(ABC):
         """
         tasks = [asyncio.ensure_future(a) for a in awaitables]
         try:
-            await self.wait_for(
-                asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            )
+            await self.wait_for(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
         finally:
             for task in tasks:
                 if not task.done():
