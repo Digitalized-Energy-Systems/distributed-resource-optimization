@@ -10,6 +10,10 @@ Provides:
   :class:`~..algorithm.core.Coordinator`.
 * :class:`StartCoordinatedDistributedOptimization` /
   :class:`OptimizationFinishedMessage` — coordination message types.
+* :func:`next_hops` — routing tables for sparse topologies: with ``routes`` a
+  carrier reaches non-neighbours hop by hop (each hop a normal, possibly lossy
+  mango message; one mango conversation id end to end), and the receiver sees
+  the original sender, so replies route back.
 
 Usage example::
 
@@ -58,6 +62,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+import networkx as nx
 from mango import AgentAddress, Role
 from mango import sender_addr as mango_sender_addr
 
@@ -106,6 +111,28 @@ class _CarrierReply:
     request_id: str
 
 
+@dataclass
+class _Routed:
+    """Envelope for a message to a non-neighbour, passed on hop by hop."""
+
+    content: Any
+    receiver: AgentAddress
+    sender: AgentAddress
+
+
+def next_hops(graph: nx.Graph) -> dict[Any, dict[Any, Any]]:
+    """Per node: destination → next hop on a shortest path (BFS, unweighted).
+
+    Build the graph with agent ids as nodes and pass ``routes=next_hops(g)[aid]``
+    to the roles of agent *aid*.
+    """
+    routes: dict[Any, dict[Any, Any]] = {node: {} for node in graph}
+    for dest in graph:
+        for parent, node in nx.bfs_edges(graph, dest):
+            routes[node][dest] = parent
+    return routes
+
+
 # ---------------------------------------------------------------------------
 # MangoCarrier
 # ---------------------------------------------------------------------------
@@ -119,11 +146,23 @@ class MangoCarrier(Carrier):
     :param include_self: Whether :meth:`others` should include the agent's own
                          address (mirrors ``CoordinatorRole``'s ``include_self``
                          parameter).
+    :param routes: destination aid → next-hop aid (see :func:`next_hops`);
+                   messages to non-neighbours are relayed along it.
+    :param address_all: :meth:`others` returns every routable agent, not only
+                        the topology neighbours (used by the coordinator).
     """
 
-    def __init__(self, parent: Role, include_self: bool = False) -> None:
+    def __init__(
+        self,
+        parent: Role,
+        include_self: bool = False,
+        routes: dict[str, str] | None = None,
+        address_all: bool = False,
+    ) -> None:
         self._parent = parent
         self._include_self = include_self
+        self._routes = routes or {}
+        self._address_all = address_all
         # Pending request futures keyed by request_id
         self._pending: dict[str, asyncio.Future] = {}
 
@@ -152,7 +191,7 @@ class MangoCarrier(Carrier):
         meta: dict | None = None,
     ) -> asyncio.Task:
         """Send *content* to *receiver* asynchronously (fire-and-forget)."""
-        return self._schedule(self._parent.context.send_message(content, receiver))
+        return self._schedule(self._send(content, receiver))
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
         """Reply to the sender stored in *meta*.
@@ -164,7 +203,7 @@ class MangoCarrier(Carrier):
         addr = mango_sender_addr(meta)
         request_id = meta.get("_request_id")
         payload = _CarrierReply(content=content, request_id=request_id) if request_id else content
-        return self._schedule(self._parent.context.send_message(payload, addr))
+        return self._schedule(self._send(payload, addr))
 
     def send_awaitable(
         self,
@@ -178,12 +217,46 @@ class MangoCarrier(Carrier):
         future: asyncio.Future = loop.create_future()
         self._pending[request_id] = future
         self._schedule(
-            self._parent.context.send_message(
-                _CarrierRequest(content=content, request_id=request_id),
-                receiver,
-            )
+            self._send(_CarrierRequest(content=content, request_id=request_id), receiver)
         )
         return future
+
+    def _next_hop(self, receiver: AgentAddress) -> AgentAddress | None:
+        """Neighbour to relay a message for *receiver* through; None = send directly."""
+        hop = self._routes.get(receiver.aid)
+        if hop is None or hop == receiver.aid:
+            return None
+        return next(a for a in self._parent.context.neighbors() if a.aid == hop)
+
+    async def _send(self, content: Any, receiver: AgentAddress) -> Any:
+        context = self._parent.context
+        hop = self._next_hop(receiver)
+        if hop is None:
+            return await context.send_message(content, receiver)
+        async with context.open_conversation() as conversation:
+            return await conversation.send(hop, _Routed(content, receiver, context.addr))
+
+    def _on_routed(self, envelope: _Routed, meta: dict) -> tuple[Any, dict] | None:
+        """Relay *envelope* to the next hop, or, if it is for this agent, return
+        ``(content, meta)`` with the original sender in *meta*."""
+        # shortcut: an agent hosting both a CoordinatorRole and a DistributedOptimizationRole relays
+        # a passing envelope twice; give relay duty to one role when such a setup is needed.
+        context = self._parent.context
+        if envelope.receiver.aid != context.addr.aid:
+
+            async def relay() -> None:
+                async with context.join_conversation(meta) as conversation:
+                    hop = self._next_hop(envelope.receiver) or envelope.receiver
+                    await conversation.send(hop, envelope)
+
+            self._schedule(relay())
+            return None
+        sender = envelope.sender
+        return envelope.content, {
+            **meta,
+            "sender_addr": sender.protocol_addr,
+            "sender_id": sender.aid,
+        }
 
     def _resolve_reply(self, reply: _CarrierReply) -> bool:
         """Resolve the future for *reply.request_id*. Returns True on match."""
@@ -194,8 +267,15 @@ class MangoCarrier(Carrier):
         return False
 
     def others(self, participant_id: str) -> list[Any]:
-        """Return topology neighbours; optionally include own address."""
+        """Return topology neighbours (or every routable agent with
+        ``address_all``); optionally include own address."""
         neighbors = list(self._parent.context.neighbors())
+        if self._address_all:
+            known = {a.aid for a in neighbors} | {self.get_address().aid}
+            protocol_addr = self.get_address().protocol_addr
+            neighbors += [
+                AgentAddress(protocol_addr, aid) for aid in self._routes if aid not in known
+            ]
         if self._include_self:
             neighbors.append(self._parent.context.addr)
         return neighbors
@@ -247,25 +327,28 @@ class DistributedOptimizationRole(Role):
 
     :param algorithm: The distributed algorithm instance.
     :param include_self: Passed to :class:`MangoCarrier`.
+    :param routes: Passed to :class:`MangoCarrier` (multi-hop on sparse topologies).
     """
 
     def __init__(
         self,
         algorithm: "DistributedAlgorithm",
         include_self: bool = False,
+        routes: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.algorithm = algorithm
         self._carrier: MangoCarrier | None = None
         self._include_self = include_self
+        self._routes = routes
 
     def setup(self) -> None:
-        self._carrier = MangoCarrier(self, self._include_self)
+        self._carrier = MangoCarrier(self, self._include_self, self._routes)
         self.context.subscribe_message(
             self,
             self._handle_optimization,
             lambda c, m: (
-                not isinstance(c, (_CarrierReply, StartCoordinatedDistributedOptimization))
+                not isinstance(c, (_CarrierReply, _Routed, StartCoordinatedDistributedOptimization))
             ),
         )
         self.context.subscribe_message(
@@ -273,6 +356,18 @@ class DistributedOptimizationRole(Role):
             self._handle_reply,
             lambda c, m: isinstance(c, _CarrierReply),
         )
+        self.context.subscribe_message(
+            self, self._handle_routed, lambda c, m: isinstance(c, _Routed)
+        )
+
+    def _handle_routed(self, content: _Routed, meta: dict) -> None:
+        delivered = self._carrier._on_routed(content, meta)
+        if delivered is not None:
+            inner, inner_meta = delivered
+            if isinstance(inner, _CarrierReply):
+                self._handle_reply(inner, inner_meta)
+            elif not isinstance(inner, StartCoordinatedDistributedOptimization):
+                self._handle_optimization(inner, inner_meta)
 
     def _handle_optimization(self, content: Any, meta: dict) -> None:
         from ..algorithm.core import on_exchange_message
@@ -313,21 +408,28 @@ class CoordinatorRole(Role):
     :param include_self: Whether to include own address when asking for
                          *others* (needed when the coordinator is also one of
                          the ADMM participants).
+    :param routes: Passed to :class:`MangoCarrier`; with routes the coordinator
+                   addresses every routable agent, not only its neighbours.
     """
 
     def __init__(
         self,
         coordinator: "Coordinator",
         include_self: bool = False,
+        routes: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.coordinator = coordinator
         self._include_self = include_self
+        self._routes = routes
         self._carrier: MangoCarrier | None = None
         self._done_future: asyncio.Future | None = None
 
     def setup(self) -> None:
-        self._carrier = MangoCarrier(self, self._include_self)
+        self._carrier = MangoCarrier(self, self._include_self, self._routes, address_all=True)
+        self.context.subscribe_message(
+            self, self._handle_routed, lambda c, m: isinstance(c, _Routed)
+        )
         self.context.subscribe_message(
             self,
             self._handle_start,
@@ -354,7 +456,7 @@ class CoordinatorRole(Role):
             per_participant = isinstance(results, (list, tuple)) and len(results) == len(neighbours)
             for i, addr in enumerate(neighbours):
                 payload = results[i] if per_participant else results
-                await self.context.send_message(OptimizationFinishedMessage(result=payload), addr)
+                await self._carrier._send(OptimizationFinishedMessage(result=payload), addr)
             if not self._done_future.done():
                 self._done_future.set_result(results)
 
@@ -366,6 +468,15 @@ class CoordinatorRole(Role):
     def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
         if self._carrier is not None:
             self._carrier._resolve_reply(content)
+
+    def _handle_routed(self, content: _Routed, meta: dict) -> None:
+        delivered = self._carrier._on_routed(content, meta)
+        if delivered is not None:
+            inner, inner_meta = delivered
+            if isinstance(inner, _CarrierReply):
+                self._handle_reply(inner, inner_meta)
+            elif isinstance(inner, StartCoordinatedDistributedOptimization):
+                self._handle_start(inner, inner_meta)
 
     async def wait_done(self) -> Any:
         """Await the completion of the optimization run.
