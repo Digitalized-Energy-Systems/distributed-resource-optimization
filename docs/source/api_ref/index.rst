@@ -40,9 +40,6 @@ Consensus
 .. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.averaging
    :members:
 
-.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.economic_dispatch
-   :members:
-
 Algorithm Core
 --------------
 

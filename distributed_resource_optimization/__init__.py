@@ -8,10 +8,10 @@ Algorithms
 * **COHDA** — Combinatorial Optimization Heuristic for Distributed Agents.
 * **ADMM** — Alternating Direction Method of Multipliers (consensus and
   sharing variants).
-* **Averaging Consensus** — distributed price/signal averaging with optional
-  gradient correction (incl. economic dispatch).
+* **Averaging Consensus** — distributed averaging of a shared variable with
+  optional gradient correction.
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
-  horizon (incl. economic dispatch and reservoir storage).
+  horizon.
 
 Carriers
 --------
@@ -171,9 +171,6 @@ from .algorithm.firstorder.consensus.averaging import (
     create_averaging_consensus_participant,
     create_averaging_consensus_start,
 )
-from .algorithm.firstorder.consensus.economic_dispatch import (
-    LinearCostEconomicDispatchConsensusActor,
-)
 
 # Diffusion
 from .algorithm.firstorder.diffusion.diffusion import (
@@ -183,10 +180,6 @@ from .algorithm.firstorder.diffusion.diffusion import (
     NoDiffusionActor,
     create_diffusion_participant,
     create_diffusion_start,
-)
-from .algorithm.firstorder.diffusion.economic_dispatch import (
-    LinearCostEconomicDispatchDiffusionActor,
-    ReservoirStorageDiffusionActor,
 )
 
 # Distributed QP (gossip primal-dual)
@@ -314,7 +307,6 @@ __all__ = [
     "AveragingConsensusAlgorithm",
     "create_averaging_consensus_participant",
     "create_averaging_consensus_start",
-    "LinearCostEconomicDispatchConsensusActor",
     # Diffusion
     "DiffusionActor",
     "NoDiffusionActor",
@@ -322,8 +314,6 @@ __all__ = [
     "DiffusionAlgorithm",
     "create_diffusion_participant",
     "create_diffusion_start",
-    "LinearCostEconomicDispatchDiffusionActor",
-    "ReservoirStorageDiffusionActor",
     # Distributed QP (gossip primal-dual)
     "LedgerEntry",
     "GossipQPMessage",

@@ -1,9 +1,9 @@
 """Diffusion algorithm (adapt-then-combine).
 
-Each participant maintains a local price estimate λ and a power iterate φ over a
-scheduling horizon.  At every iteration a participant
+Each participant maintains a local estimate λ of the shared variable and a local
+iterate φ over a scheduling horizon.  At every iteration a participant
 
-1. **adapts** its power iterate via a local gradient step
+1. **adapts** its local iterate via a local gradient step
    ``φ = λ - ε · ∇J(λ, data)``,
 2. broadcasts ``φ`` to its neighbours, and
 3. **combines** its own φ with all received φ's by unweighted averaging to form
@@ -50,7 +50,7 @@ class DiffusionActor:
     def gradient_term(self, lam: np.ndarray, data: Any) -> np.ndarray | float:
         """Return the gradient ``∇J(λ, data)`` for the current iterate *lam*.
 
-        :param lam: Current local price/λ estimate over the schedule.
+        :param lam: Current local estimate λ over the schedule.
         :param data: Auxiliary data forwarded from the start message.
         :returns: Additive gradient (default: 0).
         """
@@ -70,7 +70,7 @@ class NoDiffusionActor(DiffusionActor):
 class DiffusionMessage(OptimizationMessage):
     """Message exchanged between diffusion participants.
 
-    :param phi: Current power iterate φ of the sender.
+    :param phi: Current local iterate φ of the sender.
     :param k: Current iteration counter.
     :param data: Auxiliary payload forwarded to :meth:`DiffusionActor.gradient_term`.
     :param initial: If ``True`` this is the kick-off message; recipients

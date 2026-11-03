@@ -6,10 +6,6 @@ from .diffusion import (
     create_diffusion_participant,
     create_diffusion_start,
 )
-from .economic_dispatch import (
-    LinearCostEconomicDispatchDiffusionActor,
-    ReservoirStorageDiffusionActor,
-)
 
 __all__ = [
     "DiffusionActor",
@@ -18,6 +14,4 @@ __all__ = [
     "DiffusionAlgorithm",
     "create_diffusion_participant",
     "create_diffusion_start",
-    "LinearCostEconomicDispatchDiffusionActor",
-    "ReservoirStorageDiffusionActor",
 ]

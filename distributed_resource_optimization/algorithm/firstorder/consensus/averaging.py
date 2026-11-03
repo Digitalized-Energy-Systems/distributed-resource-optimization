@@ -39,7 +39,7 @@ class ConsensusActor:
     """Optional plug-in that adds a gradient term to the averaging update.
 
     Subclass this to bias the consensus toward a local optimum (e.g. economic
-    dispatch or price signals).
+    dispatch).
     """
 
     def gradient_term(self, lam: np.ndarray, data: Any) -> np.ndarray | float:

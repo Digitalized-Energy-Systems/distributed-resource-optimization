@@ -99,52 +99,6 @@ The ``data`` argument carries whatever was embedded in the initial
 :class:`~distributed_resource_optimization.AveragingConsensusMessage` — useful for
 passing problem data alongside the consensus.
 
-Economic Dispatch
------------------
-
-The built-in
-:class:`~distributed_resource_optimization.LinearCostEconomicDispatchConsensusActor`
-implements consensus-based economic dispatch. Each agent has a linear cost and power
-limits; the gradient term pushes :math:`\lambda` toward the clearing price at which
-supply equals demand:
-
-.. math::
-
-   P(\lambda) = \operatorname{clip}\!\left(\frac{\lambda - c}{\epsilon},\; P_{\min},\; P_{\max}\right)
-
-   \nabla = -\rho \Bigl(P(\lambda) - \frac{P_{\text{target}}}{N}\Bigr)
-
-.. doctest::
-
-   >>> from distributed_resource_optimization import (
-   ...     LinearCostEconomicDispatchConsensusActor,
-   ...     create_averaging_consensus_participant,
-   ...     AveragingConsensusMessage,
-   ...     start_distributed_optimization,
-   ... )
-   >>> actors = [
-   ...     create_averaging_consensus_participant(
-   ...         lambda *_: None,
-   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
-   ...         max_iter=100,
-   ...     ),
-   ...     create_averaging_consensus_participant(
-   ...         lambda *_: None,
-   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
-   ...         max_iter=100,
-   ...     ),
-   ...     create_averaging_consensus_participant(
-   ...         lambda *_: None,
-   ...         LinearCostEconomicDispatchConsensusActor(cost=10, p_max=100, n_guess=3),
-   ...         max_iter=100,
-   ...     ),
-   ... ]
-   >>> p_target = [10, 30, 40, 45, 60, 10]
-   >>> msg = AveragingConsensusMessage(lam=np.ones(len(p_target)) * 10, k=0, data=p_target)
-   >>> asyncio.run(start_distributed_optimization(actors, msg))
-   >>> np.allclose(actors[0]._lam, actors[1]._lam, atol=1e-3)
-   True
-
 .. note::
 
    The algorithm terminates after exactly ``max_iter`` gossip rounds — there is no
@@ -158,4 +112,3 @@ See Also
   :class:`~distributed_resource_optimization.AveragingConsensusAlgorithm`
 - :class:`~distributed_resource_optimization.ConsensusActor`,
   :class:`~distributed_resource_optimization.NoConsensusActor`
-- :class:`~distributed_resource_optimization.LinearCostEconomicDispatchConsensusActor`

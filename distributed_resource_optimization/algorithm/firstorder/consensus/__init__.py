@@ -7,7 +7,6 @@ from .averaging import (
     create_averaging_consensus_participant,
     create_averaging_consensus_start,
 )
-from .economic_dispatch import LinearCostEconomicDispatchConsensusActor
 
 __all__ = [
     "ConsensusActor",
@@ -17,5 +16,4 @@ __all__ = [
     "AveragingConsensusAlgorithm",
     "create_averaging_consensus_participant",
     "create_averaging_consensus_start",
-    "LinearCostEconomicDispatchConsensusActor",
 ]
