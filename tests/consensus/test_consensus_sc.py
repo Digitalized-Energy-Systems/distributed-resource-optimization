@@ -25,7 +25,7 @@ class QuadraticActor(ConsensusActor):
 
 @pytest.mark.asyncio
 async def test_averaging_consensus_with_simple_carrier():
-    """Identical gradient-carrying actors agree on λ and trigger finish_callback."""
+    """Gradient-carrying actors agree on λ, reach λ* = a·data/n and trigger finish_callback."""
     finished = [False]
 
     def on_finish(algo, carrier):
@@ -33,7 +33,7 @@ async def test_averaging_consensus_with_simple_carrier():
 
     callbacks = [on_finish, lambda *_: None, lambda *_: None]
     actors = [
-        create_averaging_consensus_participant(cb, QuadraticActor(), max_iter=100)
+        create_averaging_consensus_participant(cb, QuadraticActor(), max_iter=300)
         for cb in callbacks
     ]
 
@@ -46,3 +46,5 @@ async def test_averaging_consensus_with_simple_carrier():
     lams = [actor._lam for actor in actors]
     assert np.allclose(lams[0], lams[1], atol=1e-3)
     assert np.allclose(lams[0], lams[2], atol=1e-3)
+    # identical actors agree trivially; the gradient must also drive λ to the optimum
+    assert np.allclose(lams[0], 2.0 * target / 3, rtol=1e-2)
