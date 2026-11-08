@@ -5,7 +5,7 @@ distributed-resource-optimization
 
    **Distributed optimization algorithms for flexible resource coordination**
 
-   Carrier-agnostic implementations of ADMM, COHDA, and averaging consensus —
+   Carrier-agnostic implementations of ADMM, COHDA, and consensus + innovations —
    run in a single asyncio process or across a network via mango-agents.
 
    .. grid:: 3
@@ -82,10 +82,10 @@ Algorithms
    .. grid-item-card::
       :shadow: sm
 
-      **Averaging Consensus**
+      **Consensus + Innovations**
       ^^^
-      Distributed averaging of a parameter vector, with optional gradient corrections
-      for economic dispatch and price-signal coordination.
+      Agreement on a shared vector plus local mismatch terms, e.g. price-based
+      economic dispatch.
 
       :doc:`algorithms/consensus`
 

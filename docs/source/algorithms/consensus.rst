@@ -1,114 +1,72 @@
-Averaging Consensus
-===================
+Consensus + Innovations
+=======================
 
-The Averaging Consensus algorithm distributes a parameter vector :math:`\lambda` across
-:math:`N` agents via a gossip-style protocol. Each agent maintains its own copy of
-:math:`\lambda` and iteratively averages it with values received from neighbours. An
-optional gradient term allows each agent to steer the consensus towards locally desirable
-values.
+Consensus + innovations (Kar & Hug 2012; Hug, Kar & Wu 2015) lets :math:`N` participants
+agree on a shared vector :math:`\lambda` (e.g. a price per time step) while each one's local
+*innovation* — its mismatch for the current :math:`\lambda` — drives the agreed value to the
+point where all mismatches sum to zero.
 
 Algorithm
 ---------
 
-Let :math:`\lambda_i^k` be the value held by agent :math:`i` at iteration :math:`k`.
-The update rule is:
+Participant :math:`j` holds :math:`\lambda_j`. In iteration :math:`i = 1, 2, \dots`:
 
 .. math::
 
-   \lambda_i^{k+1} = \lambda_i^k
-                   + \alpha \bigl(\bar{\lambda}^k - \lambda_i^k\bigr)
-                   + \nabla_i^k
+   \lambda_j \leftarrow \lambda_j
+     - \beta_i \sum_{l \in \omega_j} \bigl(\lambda_j - \lambda_l\bigr)
+     - \alpha_i \, \mathrm{innovation}_j(\lambda_j)
 
-where
+- :math:`\omega_j` — the participant's peers: topology neighbours that take part
+- :math:`\beta_i` — consensus step, :math:`\alpha_i` — innovation step, both functions of
+  :math:`i` (:func:`~distributed_resource_optimization.power_step` gives :math:`c / i^p`)
+- decaying steps with :math:`\beta_i / \alpha_i \to \infty` reach the exact solution;
+  constant steps converge faster but only to a neighbourhood of it (Kar & Hug 2012, §V)
 
-- :math:`\bar{\lambda}^k` is the average of all received values at iteration :math:`k`
-- :math:`\alpha \in (0,1]` is the step size (mixing parameter)
-- :math:`\nabla_i^k = \text{gradient\_term}(\text{actor}_i, \lambda_i^k, \text{data})`
-  is the local gradient correction (zero by default)
+Rounds are synchronous: iteration :math:`k` waits for every peer's :math:`\lambda` of
+iteration :math:`k`.
 
-The algorithm runs for a fixed number of iterations (``max_iter``) after which each agent
-calls a user-supplied ``finish_callback``.
+Protocol
+--------
 
-Usage
------
+1. A :class:`~distributed_resource_optimization.ConsensusCoordinator` sends a
+   :class:`~distributed_resource_optimization.ConsensusStart` (initial :math:`\lambda`,
+   participant list, its own address) to every participant.
+2. Participants exchange :class:`~distributed_resource_optimization.ConsensusMessage`\ s
+   with their peers and iterate.
+3. A participant is *converged* when :math:`\max|\Delta\lambda| <` ``eps`` and its actor's
+   :meth:`~distributed_resource_optimization.ConsensusActor.converged` is true; it reports
+   every flip of that flag to the coordinator
+   (:class:`~distributed_resource_optimization.ConsensusReport`).
+4. When all participants are converged the coordinator returns a
+   :class:`~distributed_resource_optimization.ConsensusResult`; with the mango carrier its
+   ``OptimizationFinishedMessage`` stops the participants. Each participant also stops on
+   its own after ``max_iter`` iterations and then calls ``finish_callback``.
 
-.. doctest::
+The local problem
+-----------------
 
-   >>> from distributed_resource_optimization import (
-   ...     create_averaging_consensus_participant,
-   ...     create_averaging_consensus_start,
-   ...     start_distributed_optimization,
-   ... )
-   >>> finished = []
-   >>> def on_finish(algo, carrier):
-   ...     finished.append(algo._lam.copy())
-   >>> actors = [
-   ...     create_averaging_consensus_participant(on_finish, initial_lam=v, max_iter=200)
-   ...     for v in [1.0, 5.0, 10.0]
-   ... ]
-   >>> start = create_averaging_consensus_start(1.0, data=None)
-   >>> asyncio.run(start_distributed_optimization(actors, start))
-   >>> len(finished) > 0
-   True
-   >>> np.allclose(actors[0]._lam, actors[1]._lam, atol=1e-2)
-   True
+Subclass :class:`~distributed_resource_optimization.ConsensusActor`:
 
-Parameters
-----------
+.. code-block:: python
 
-.. list-table::
-   :header-rows: 1
-   :widths: 20 10 50
+   class Quadratic(ConsensusActor):
+       """x(λ) = clip((λ − b)/a, 0, cap) against a local demand d."""
 
-   * - Parameter
-     - Default
-     - Description
-   * - ``finish_callback``
-     - —
-     - Called with ``(algorithm, carrier)`` when ``max_iter`` is reached
-   * - ``consensus_actor``
-     - ``None``
-     - :class:`~distributed_resource_optimization.ConsensusActor` providing gradient term
-   * - ``initial_lam``
-     - ``10.0``
-     - Starting scalar value broadcast to all :math:`\lambda` components
-   * - ``alpha``
-     - ``0.3``
-     - Mixing step size
-   * - ``max_iter``
-     - ``50``
-     - Number of gossip rounds before finishing
+       def innovation(self, lam):
+           self.prev, self.x = self.x, np.clip((lam - self.b) / self.a, 0.0, self.cap)
+           return self.x - self.d
 
-Local Gradient Corrections
----------------------------
+       def converged(self):
+           return self.prev is not None and np.max(np.abs(self.x - self.prev)) < 1e-6
 
-To steer the consensus, subclass :class:`~distributed_resource_optimization.ConsensusActor`
-and override :meth:`~distributed_resource_optimization.ConsensusActor.gradient_term`:
-
-.. doctest::
-
-   >>> from distributed_resource_optimization import ConsensusActor
-   >>> class PushToTarget(ConsensusActor):
-   ...     def __init__(self, target, step=0.05):
-   ...         self.target = np.asarray(target)
-   ...         self.step = step
-   ...     def gradient_term(self, lam, data):
-   ...         return self.step * (self.target - lam)
-
-The ``data`` argument carries whatever was embedded in the initial
-:class:`~distributed_resource_optimization.AveragingConsensusMessage` — useful for
-passing problem data alongside the consensus.
-
-.. note::
-
-   The algorithm terminates after exactly ``max_iter`` gossip rounds — there is no
-   residual-based stopping criterion.  In a fully connected graph convergence is typically
-   fast (10–30 rounds); increase ``max_iter`` for larger or sparser networks.
+A complete run on an irregular graph in a mango world is in
+``tests/consensus/test_innovations.py``.
 
 See Also
 --------
 
-- :func:`~distributed_resource_optimization.create_averaging_consensus_participant`,
-  :class:`~distributed_resource_optimization.AveragingConsensusAlgorithm`
+- :class:`~distributed_resource_optimization.ConsensusInnovationsAlgorithm`,
+  :class:`~distributed_resource_optimization.ConsensusCoordinator`
 - :class:`~distributed_resource_optimization.ConsensusActor`,
-  :class:`~distributed_resource_optimization.NoConsensusActor`
+  :func:`~distributed_resource_optimization.power_step`

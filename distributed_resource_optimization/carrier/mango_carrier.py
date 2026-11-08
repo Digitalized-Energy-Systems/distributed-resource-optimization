@@ -404,6 +404,8 @@ class CoordinatorRole(Role):
     participant it addressed (topology neighbours, or all routable agents with
     ``routes``): a result list with one entry per participant is split, anything
     else is sent whole to each.
+    Other participant messages go to ``coordinator.on_exchange_message`` if the
+    coordinator has one (e.g. convergence reports).
 
     :param coordinator: The coordinator object (e.g.
                         :class:`~..admm.core.ADMMGenericCoordinator`).
@@ -442,6 +444,13 @@ class CoordinatorRole(Role):
             self._handle_reply,
             lambda c, m: isinstance(c, _CarrierReply),
         )
+        self.context.subscribe_message(
+            self,
+            self._handle_other,
+            lambda c, m: (
+                not isinstance(c, (_Routed, _CarrierReply, StartCoordinatedDistributedOptimization))
+            ),
+        )
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
         from ..algorithm.core import start_optimization
@@ -479,6 +488,14 @@ class CoordinatorRole(Role):
                 self._handle_reply(inner, inner_meta)
             elif isinstance(inner, StartCoordinatedDistributedOptimization):
                 self._handle_start(inner, inner_meta)
+            else:
+                self._handle_other(inner, inner_meta)
+
+    def _handle_other(self, content: Any, meta: dict) -> None:
+        """Forward participant messages to a coordinator that handles them (e.g. reports)."""
+        handler = getattr(self.coordinator, "on_exchange_message", None)
+        if handler is not None:
+            self.context.schedule_instant_task(handler(self._carrier, content, meta))
 
     async def wait_done(self) -> Any:
         """Await the completion of the optimization run.

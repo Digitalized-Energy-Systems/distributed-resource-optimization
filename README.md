@@ -24,7 +24,7 @@ Three algorithm families are available:
 | **ADMM Sharing** | Continuous resource allocation, sum-to-target | Coordinator required |
 | **ADMM Consensus** | Agents converge to a shared target vector | Coordinator required |
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
-| **Averaging Consensus** | Distributed averaging with optional gradient terms | Fully distributed |
+| **Consensus + innovations** | Agree on a shared vector λ; local mismatches sum to zero | Coordinator starts and stops |
 
 Two carriers are included:
 

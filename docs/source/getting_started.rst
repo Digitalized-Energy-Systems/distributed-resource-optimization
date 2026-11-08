@@ -23,9 +23,9 @@ Choosing an Algorithm
    * - :doc:`COHDA <algorithms/cohda>`
      - Combinatorial schedule selection, L1 target
      - Fully distributed
-   * - :doc:`Averaging Consensus <algorithms/consensus>`
-     - Distributed averaging with gradient terms
-     - Fully distributed
+   * - :doc:`Consensus + innovations <algorithms/consensus>`
+     - Agree on a shared vector; local mismatches sum to zero
+     - Peer-to-peer iterations; coordinator starts and stops
 
 Use **ADMM** when participants have continuous, bounded decision variables and a convex
 global objective (e.g. match a power target while minimising deviation cost).
@@ -33,8 +33,8 @@ global objective (e.g. match a power target while minimising deviation cost).
 Use **COHDA** when each participant picks one schedule from a discrete set and the goal
 is to minimise the distance of the combined schedule to a target.
 
-Use **Averaging Consensus** when you need distributed parameter averaging, optionally with
-local gradient corrections (e.g. economic dispatch).
+Use **consensus + innovations** when participants answer a shared price-like vector with local
+decisions and these must balance overall (e.g. economic dispatch).
 
 Choosing a Carrier
 ------------------

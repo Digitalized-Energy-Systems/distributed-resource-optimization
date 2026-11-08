@@ -37,7 +37,7 @@ ADMM
 Consensus
 ---------
 
-.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.averaging
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.innovations
    :members:
 
 Algorithm Core

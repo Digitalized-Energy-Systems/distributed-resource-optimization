@@ -8,8 +8,9 @@ Algorithms
 * **COHDA** — Combinatorial Optimization Heuristic for Distributed Agents.
 * **ADMM** — Alternating Direction Method of Multipliers (consensus and
   sharing variants).
-* **Averaging Consensus** — distributed averaging of a shared variable with
-  optional gradient correction.
+* **Consensus + innovations** — participants agree on a shared vector λ while
+  local innovation terms drive it to where their mismatches sum to zero
+  (Kar & Hug 2012; Hug, Kar & Wu 2015).
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
   horizon.
 
@@ -162,14 +163,15 @@ from .algorithm.core import (
 )
 
 # Consensus
-from .algorithm.firstorder.consensus.averaging import (
-    AveragingConsensusAlgorithm,
-    AveragingConsensusMessage,
+from .algorithm.firstorder.consensus.innovations import (
     ConsensusActor,
-    ConsensusFinishedMessage,
-    NoConsensusActor,
-    create_averaging_consensus_participant,
-    create_averaging_consensus_start,
+    ConsensusCoordinator,
+    ConsensusInnovationsAlgorithm,
+    ConsensusMessage,
+    ConsensusReport,
+    ConsensusResult,
+    ConsensusStart,
+    power_step,
 )
 
 # Diffusion
@@ -301,12 +303,13 @@ __all__ = [
     "create_sharing_admm_coordinator",
     # Consensus
     "ConsensusActor",
-    "NoConsensusActor",
-    "AveragingConsensusMessage",
-    "ConsensusFinishedMessage",
-    "AveragingConsensusAlgorithm",
-    "create_averaging_consensus_participant",
-    "create_averaging_consensus_start",
+    "ConsensusCoordinator",
+    "ConsensusInnovationsAlgorithm",
+    "ConsensusMessage",
+    "ConsensusReport",
+    "ConsensusResult",
+    "ConsensusStart",
+    "power_step",
     # Diffusion
     "DiffusionActor",
     "NoDiffusionActor",
