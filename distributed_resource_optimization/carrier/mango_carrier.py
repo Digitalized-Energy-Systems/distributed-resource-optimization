@@ -400,8 +400,10 @@ class CoordinatorRole(Role):
     """Mango Role hosting a :class:`~..algorithm.core.Coordinator`.
 
     Listens for :class:`StartCoordinatedDistributedOptimization` messages,
-    runs the coordinator, then broadcasts :class:`OptimizationFinishedMessage`
-    to all topology neighbours.
+    runs the coordinator, then sends :class:`OptimizationFinishedMessage` to every
+    participant it addressed (topology neighbours, or all routable agents with
+    ``routes``): a result list with one entry per participant is split, anything
+    else is sent whole to each.
 
     :param coordinator: The coordinator object (e.g.
                         :class:`~..admm.core.ADMMGenericCoordinator`).

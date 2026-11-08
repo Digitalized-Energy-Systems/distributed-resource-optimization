@@ -45,14 +45,14 @@ This package is one of three with separate responsibilities:
   two modes: **physical** (runs on the real frameworks — pandapower, monee — incl. their physical
   calculations) and **copper-plate** (physics skipped; lines only decide which agents are connected,
   energy moves freely between any actors; used by the benchmark). Networks, components, time series,
-  observe/act, component agents, network sources (e.g. PyPSA) converted into backend networks,
+  observe/act, binding agents to network elements (one component or a whole bus), network sources (e.g. PyPSA) converted into backend networks,
   generic preparation steps. Existing functionality (monee restoration, pandapower scheduling) is
   kept. No distributed-algorithm or benchmark logic.
 - **distributed-resource-optimization** — only the logic of the distributed algorithms, as generic
   as possible (usable for non-energy problems too) and built on mango as far as possible, including
   the generic mango carrier/role. No PyPSA, network or benchmark logic.
 - **energy-scheduling-benchmark** — builds the benchmark from the other two: the economic-dispatch
-  problem formulation, storage model, central-dispatch optimum, benchmark roles (leader, loads),
+  problem formulation, storage model, central-dispatch optimum, benchmark roles (leader, bus agents),
   concrete datasets, runs and comparisons.
 
 Dependencies point one way only: energy-scheduling-benchmark → the other two; mango-energy-environments

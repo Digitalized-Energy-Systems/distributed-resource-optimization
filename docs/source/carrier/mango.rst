@@ -26,8 +26,19 @@ Two mango ``Role`` classes are provided:
    Wraps a :class:`~distributed_resource_optimization.Coordinator` (e.g. an ADMM
    coordinator).  Listens for a
    :class:`~distributed_resource_optimization.StartCoordinatedDistributedOptimization`
-   message, runs the optimisation, then broadcasts
-   :class:`~distributed_resource_optimization.OptimizationFinishedMessage` to all peers.
+   message, runs the optimisation, then sends
+   :class:`~distributed_resource_optimization.OptimizationFinishedMessage` to every
+   participant: a result list with one entry per participant is split, anything else is
+   sent whole to each.
+
+Sparse topologies
+-----------------
+
+By default a carrier only reaches its topology neighbours.  Pass ``routes`` to either role
+(``routes=next_hops(graph)[aid]``, with :func:`~distributed_resource_optimization.carrier.mango_carrier.next_hops`
+on a graph whose nodes are agent ids) to reach any agent hop by hop: every hop is a normal,
+possibly lossy mango message, and the receiver sees the original sender, so replies route
+back.  With ``routes`` the coordinator addresses all routable agents.
 
 Example — COHDA with MangoCarrier
 ----------------------------------
