@@ -60,9 +60,12 @@ def lam_star(hour):
     return lo
 
 
-async def run(max_iter, alpha=power_step(0.3, 0.6), beta=power_step(0.2, 0.001)):
-    # irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
-    graph = nx.Graph([("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3"), ("c", "p0")])
+IRREGULAR = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3"), ("c", "p0")]
+
+
+async def run(max_iter, alpha=power_step(0.3, 0.6), beta=power_step(0.2, 0.001), edges=IRREGULAR):
+    # default: irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
+    graph = nx.Graph(edges)
     routes = next_hops(graph)
     finished = []
     algos = {
@@ -75,6 +78,7 @@ async def run(max_iter, alpha=power_step(0.3, 0.6), beta=power_step(0.2, 0.001))
             max_iter=max_iter,
         )
         for j in range(4)
+        if f"p{j}" in graph
     }
     world = create_world(
         start_time=0.0, communication_sim=SimpleCommunicationSimulation(default_delay_s=0.01)
@@ -118,3 +122,10 @@ async def test_max_iter_stops_everyone():
     assert result.stop_reason == "max_iter"
     assert result.iterations == 5
     assert finished == [5, 5, 5, 5]
+
+
+async def test_single_participant_stops_when_converged():
+    # no peers: the agent must stop at its own converged iteration, not run on to max_iter
+    result, algos, finished = await run(max_iter=50_000, edges=[("c", "p0")])
+    assert result.stop_reason == "converged"
+    assert finished == [result.iterations]

@@ -151,6 +151,11 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         if converged != self._converged:
             self._converged = converged
             self._report(carrier, converged)
+            if converged and not self._peers:
+                # alone: its own check is the global one, and without peers the loop in
+                # on_exchange_message never yields, so the coordinator's stop could not arrive
+                self._stop(carrier)
+                return
         self._send_lam(carrier)
 
     def _send_lam(self, carrier: "Carrier") -> None:
