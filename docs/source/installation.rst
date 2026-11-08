@@ -28,8 +28,8 @@ From source (development install)
 
 .. code-block:: bash
 
-   git clone https://github.com/Digitalized-Energy-Systems/mango-optimization
-   cd mango-optimization
+   git clone https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization
+   cd distributed-resource-optimization
    pip install -e ".[dev,docs]"
 
 Verify the installation

@@ -31,7 +31,7 @@ distributed-resource-optimization
 
       .. grid-item::
 
-         .. button-link:: https://github.com/Digitalized-Energy-Systems/mango-optimization
+         .. button-link:: https://github.com/Digitalized-Energy-Systems/distributed-resource-optimization
             :color: secondary
             :outline:
 
