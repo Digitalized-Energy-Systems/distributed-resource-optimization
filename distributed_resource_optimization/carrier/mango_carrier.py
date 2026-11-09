@@ -63,7 +63,7 @@ from typing import Any
 from uuid import uuid4
 
 import networkx as nx
-from mango import AgentAddress, Role
+from mango import AgentAddress, Role, on_message
 from mango import sender_addr as mango_sender_addr
 from mango.util.scheduling import sleeping_wait
 
@@ -321,15 +321,8 @@ class DistributedOptimizationRole(Role):
 
     def setup(self) -> None:
         self._carrier = MangoCarrier(self, self._include_self, self._routes)
-        self.context.subscribe_message(
-            self,
-            self._handle_optimization,
-            lambda c, m: not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization)),
-        )
-        self.context.subscribe_message(
-            self, self._handle_routed, lambda c, m: isinstance(c, _Routed)
-        )
 
+    @on_message(_Routed)
     def _handle_routed(self, content: _Routed, meta: dict) -> None:
         delivered = self._carrier._on_routed(content, meta)
         if delivered is not None:
@@ -337,6 +330,12 @@ class DistributedOptimizationRole(Role):
             if not isinstance(inner, StartCoordinatedDistributedOptimization):
                 self._handle_optimization(inner, inner_meta)
 
+    @on_message(
+        object,
+        where=lambda self, c, m: (
+            not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization))
+        ),
+    )
     def _handle_optimization(self, content: Any, meta: dict) -> None:
         from ..algorithm.core import on_exchange_message
 
@@ -387,20 +386,8 @@ class CoordinatorRole(Role):
 
     def setup(self) -> None:
         self._carrier = MangoCarrier(self, self._include_self, self._routes, address_all=True)
-        self.context.subscribe_message(
-            self, self._handle_routed, lambda c, m: isinstance(c, _Routed)
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_start,
-            lambda c, m: isinstance(c, StartCoordinatedDistributedOptimization),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_other,
-            lambda c, m: not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization)),
-        )
 
+    @on_message(StartCoordinatedDistributedOptimization)
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
         from ..algorithm.core import start_optimization
 
@@ -425,6 +412,7 @@ class CoordinatorRole(Role):
         # through carrier.wait_for, so discrete stepping advances it.
         self._carrier.spawn(_run())
 
+    @on_message(_Routed)
     def _handle_routed(self, content: _Routed, meta: dict) -> None:
         delivered = self._carrier._on_routed(content, meta)
         if delivered is not None:
@@ -434,6 +422,12 @@ class CoordinatorRole(Role):
             else:
                 self._handle_other(inner, inner_meta)
 
+    @on_message(
+        object,
+        where=lambda self, c, m: (
+            not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization))
+        ),
+    )
     def _handle_other(self, content: Any, meta: dict) -> None:
         """Forward participant messages to a coordinator that handles them (e.g. reports)."""
         handler = getattr(self.coordinator, "on_exchange_message", None)
