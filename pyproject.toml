@@ -31,21 +31,21 @@ dependencies = [
 
 [project.optional-dependencies]
 mango = [
-    "mango-agents>=2.0",
+    "mango-agents>=2.4.0",  # sleeping_wait
 ]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
     "ruff>=0.4",
-    "mango-agents>=2.0",
+    "mango-agents>=2.4.0",  # sleeping_wait
 ]
 docs = [
     "sphinx>=7.0",
     "furo>=2024.1.29",
     "sphinx-copybutton>=0.5",
     "sphinx-design>=0.5",
-    "mango-agents>=2.0",
+    "mango-agents>=2.4.0",  # sleeping_wait
 ]
 
 [project.urls]

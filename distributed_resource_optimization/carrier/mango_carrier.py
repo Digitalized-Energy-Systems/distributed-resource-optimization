@@ -65,13 +65,7 @@ from uuid import uuid4
 import networkx as nx
 from mango import AgentAddress, Role
 from mango import sender_addr as mango_sender_addr
-
-try:
-    from mango.util.scheduling import sleeping_wait
-except ImportError:
-    # Older mango: its scheduler blanket-marks any parked task as sleeping,
-    # so no explicit declaration is needed (or possible).
-    from contextlib import nullcontext as sleeping_wait
+from mango.util.scheduling import sleeping_wait
 
 from ..algorithm.core import Coordinator, DistributedAlgorithm
 from .core import Carrier
