@@ -17,7 +17,7 @@ resources. Algorithms are implemented independently of any particular communicat
 backend — a pluggable *carrier* abstraction lets you run the same algorithm code in a
 single asyncio process or across a real network via [mango-agents](https://github.com/OFFIS-DAI/mango).
 
-Three algorithm families are available:
+Four algorithm families are available:
 
 | Algorithm | Problem type | Coordination |
 |-----------|-------------|--------------|
@@ -31,7 +31,7 @@ Two carriers are included:
 | Carrier | When to use |
 |---------|-------------|
 | **SimpleCarrier** | In-process asyncio simulation — zero overhead, ideal for prototyping and testing |
-| **MangoCarrier** | Networked multi-agent deployments via mango-agents |
+| **MangoCarrier** | Networked multi-agent deployments via mango-agents (≥ 2.4.0); `routes` (`next_hops`) relay messages hop by hop on sparse topologies, replies route back |
 
 > **Note:** the package is still experimental. API may change between minor versions.
 
