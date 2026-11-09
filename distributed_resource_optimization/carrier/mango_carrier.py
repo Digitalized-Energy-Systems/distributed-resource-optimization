@@ -58,7 +58,7 @@ Usage example::
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -90,28 +90,13 @@ class OptimizationFinishedMessage:
 
 
 @dataclass
-class _CarrierRequest:
-    """Internal wrapper that adds request-tracking to any optimization message."""
-
-    content: Any
-    request_id: str
-
-
-@dataclass
-class _CarrierReply:
-    """Internal reply wrapper matched to a :class:`_CarrierRequest` by ID."""
-
-    content: Any
-    request_id: str
-
-
-@dataclass
 class _Routed:
     """Envelope for a message to a non-neighbour, passed on hop by hop."""
 
     content: Any
     receiver: AgentAddress
     sender: AgentAddress
+    meta: dict = field(default_factory=dict)  # mango tracking_id / reply, restored at the end
 
 
 def next_hops(graph: nx.Graph) -> dict[Any, dict[Any, Any]]:
@@ -157,8 +142,6 @@ class MangoCarrier(Carrier):
         self._include_self = include_self
         self._routes = routes or {}
         self._address_all = address_all
-        # Pending request futures keyed by request_id
-        self._pending: dict[str, asyncio.Future] = {}
 
     # ------------------------------------------------------------------
     # Carrier interface
@@ -188,16 +171,11 @@ class MangoCarrier(Carrier):
         return self._schedule(self._send(content, receiver))
 
     def reply_to_other(self, content: Any, meta: dict) -> asyncio.Task:
-        """Reply to the sender stored in *meta*.
-
-        If *meta* contains a ``_request_id`` key (set when the message arrived
-        via :meth:`send_awaitable`), the reply is wrapped in a
-        :class:`_CarrierReply` so the originating future can be resolved.
-        """
-        addr = mango_sender_addr(meta)
-        request_id = meta.get("_request_id")
-        payload = _CarrierReply(content=content, request_id=request_id) if request_id else content
-        return self._schedule(self._send(payload, addr))
+        """Reply to the sender stored in *meta*; echoes mango's ``tracking_id``
+        (as ``reply_to`` does) so a :meth:`send_awaitable` future resolves."""
+        tracking_id = meta.get("tracking_id")
+        extra = {"reply": True, "tracking_id": tracking_id} if tracking_id else {}
+        return self._schedule(self._send(content, mango_sender_addr(meta), **extra))
 
     def send_awaitable(
         self,
@@ -205,14 +183,22 @@ class MangoCarrier(Carrier):
         receiver: AgentAddress,
         meta: dict | None = None,
     ) -> asyncio.Future:
-        """Send *content* and return a Future that resolves when the reply arrives."""
-        request_id = str(uuid4())
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-        self._pending[request_id] = future
-        self._schedule(
-            self._send(_CarrierRequest(content=content, request_id=request_id), receiver)
-        )
+        """Send *content* and return a Future that resolves when the reply arrives.
+
+        Same as mango's ``send_tracked_message`` (tracking_id in meta, handler in
+        the agent's transaction table), which itself can only send directly, not
+        along ``routes``.
+        """
+        future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+        def on_reply(reply: Any, _meta: dict) -> None:
+            if not future.done():
+                future.set_result(reply)
+
+        tracking_id = str(uuid4())
+        agent = self._parent.context._bound_agent("send_awaitable")
+        agent._transaction_handlers[tracking_id] = (on_reply,)
+        self._schedule(self._send(content, receiver, tracking_id=tracking_id))
         return future
 
     def _next_hop(self, receiver: AgentAddress) -> AgentAddress | None:
@@ -222,17 +208,18 @@ class MangoCarrier(Carrier):
             return None
         return next(a for a in self._parent.context.neighbors() if a.aid == hop)
 
-    async def _send(self, content: Any, receiver: AgentAddress) -> Any:
+    async def _send(self, content: Any, receiver: AgentAddress, **meta: Any) -> Any:
         context = self._parent.context
         hop = self._next_hop(receiver)
         if hop is None:
-            return await context.send_message(content, receiver)
+            return await context.send_message(content, receiver, **meta)
         async with context.open_conversation() as conversation:
-            return await conversation.send(hop, _Routed(content, receiver, context.addr))
+            return await conversation.send(hop, _Routed(content, receiver, context.addr, meta))
 
     def _on_routed(self, envelope: _Routed, meta: dict) -> tuple[Any, dict] | None:
         """Relay *envelope* to the next hop, or, if it is for this agent, return
-        ``(content, meta)`` with the original sender in *meta*."""
+        ``(content, meta)`` with the original sender in *meta* (None if it was a
+        tracked reply, handed to mango's reply dispatch like a direct one)."""
         # shortcut: an agent hosting both a CoordinatorRole and a DistributedOptimizationRole relays
         # a passing envelope twice; give relay duty to one role when such a setup is needed.
         context = self._parent.context
@@ -246,19 +233,15 @@ class MangoCarrier(Carrier):
             self._schedule(relay())
             return None
         sender = envelope.sender
-        return envelope.content, {
+        inner_meta = {
             **meta,
+            **envelope.meta,
             "sender_addr": sender.protocol_addr,
             "sender_id": sender.aid,
         }
-
-    def _resolve_reply(self, reply: _CarrierReply) -> bool:
-        """Resolve the future for *reply.request_id*. Returns True on match."""
-        future = self._pending.pop(reply.request_id, None)
-        if future is not None and not future.done():
-            future.set_result(reply.content)
-            return True
-        return False
+        if context._bound_agent("routed reply")._handle_tracked_reply(envelope.content, inner_meta):
+            return None
+        return envelope.content, inner_meta
 
     def others(self, participant_id: str) -> list[Any]:
         """Return topology neighbours (or every routable agent with
@@ -341,14 +324,7 @@ class DistributedOptimizationRole(Role):
         self.context.subscribe_message(
             self,
             self._handle_optimization,
-            lambda c, m: (
-                not isinstance(c, (_CarrierReply, _Routed, StartCoordinatedDistributedOptimization))
-            ),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_reply,
-            lambda c, m: isinstance(c, _CarrierReply),
+            lambda c, m: not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization)),
         )
         self.context.subscribe_message(
             self, self._handle_routed, lambda c, m: isinstance(c, _Routed)
@@ -358,31 +334,17 @@ class DistributedOptimizationRole(Role):
         delivered = self._carrier._on_routed(content, meta)
         if delivered is not None:
             inner, inner_meta = delivered
-            if isinstance(inner, _CarrierReply):
-                self._handle_reply(inner, inner_meta)
-            elif not isinstance(inner, StartCoordinatedDistributedOptimization):
+            if not isinstance(inner, StartCoordinatedDistributedOptimization):
                 self._handle_optimization(inner, inner_meta)
 
     def _handle_optimization(self, content: Any, meta: dict) -> None:
         from ..algorithm.core import on_exchange_message
 
-        # Unwrap request if needed (from send_awaitable on other side)
-        if isinstance(content, _CarrierRequest):
-            actual_meta = {**meta, "_request_id": content.request_id}
-            actual_content = content.content
-        else:
-            actual_meta = meta
-            actual_content = content
-
         # Schedule via the agent scheduler so the simulation clock tracks the
         # handler (and any sends it issues); see MangoCarrier._schedule.
         self.context.schedule_instant_task(
-            on_exchange_message(self.algorithm, self._carrier, actual_content, actual_meta)
+            on_exchange_message(self.algorithm, self._carrier, content, meta)
         )
-
-    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
-        if self._carrier is not None:
-            self._carrier._resolve_reply(content)
 
 
 # ---------------------------------------------------------------------------
@@ -435,15 +397,8 @@ class CoordinatorRole(Role):
         )
         self.context.subscribe_message(
             self,
-            self._handle_reply,
-            lambda c, m: isinstance(c, _CarrierReply),
-        )
-        self.context.subscribe_message(
-            self,
             self._handle_other,
-            lambda c, m: (
-                not isinstance(c, (_Routed, _CarrierReply, StartCoordinatedDistributedOptimization))
-            ),
+            lambda c, m: not isinstance(c, (_Routed, StartCoordinatedDistributedOptimization)),
         )
 
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
@@ -470,17 +425,11 @@ class CoordinatorRole(Role):
         # through carrier.wait_for, so discrete stepping advances it.
         self._carrier.spawn(_run())
 
-    def _handle_reply(self, content: _CarrierReply, meta: dict) -> None:
-        if self._carrier is not None:
-            self._carrier._resolve_reply(content)
-
     def _handle_routed(self, content: _Routed, meta: dict) -> None:
         delivered = self._carrier._on_routed(content, meta)
         if delivered is not None:
             inner, inner_meta = delivered
-            if isinstance(inner, _CarrierReply):
-                self._handle_reply(inner, inner_meta)
-            elif isinstance(inner, StartCoordinatedDistributedOptimization):
+            if isinstance(inner, StartCoordinatedDistributedOptimization):
                 self._handle_start(inner, inner_meta)
             else:
                 self._handle_other(inner, inner_meta)
