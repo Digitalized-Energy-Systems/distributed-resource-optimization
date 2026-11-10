@@ -63,7 +63,14 @@ def lam_star(hour):
 IRREGULAR = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3"), ("c", "p0")]
 
 
-async def run(max_iter, alpha=power_step(0.3, 0.6), beta=power_step(0.2, 0.001), edges=IRREGULAR):
+async def run(
+    max_iter,
+    alpha=power_step(0.3, 0.6),
+    beta=power_step(0.2, 0.001),
+    edges=IRREGULAR,
+    demand=D,
+    lam_min=-np.inf,
+):
     # default: irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
     graph = nx.Graph(edges)
     routes = next_hops(graph)
@@ -71,11 +78,12 @@ async def run(max_iter, alpha=power_step(0.3, 0.6), beta=power_step(0.2, 0.001),
     algos = {
         f"p{j}": ConsensusInnovationsAlgorithm(
             lambda alg, carrier: finished.append(alg.k),
-            Quadratic(A[j], B[j], CAP[j], D[j]),
+            Quadratic(A[j], B[j], CAP[j], demand[j]),
             alpha,
             beta,
             eps=1e-6,
             max_iter=max_iter,
+            lam_min=lam_min,
         )
         for j in range(4)
         if f"p{j}" in graph
@@ -129,3 +137,12 @@ async def test_single_participant_stops_when_converged():
     result, algos, finished = await run(max_iter=50_000, edges=[("c", "p0")])
     assert result.stop_reason == "converged"
     assert finished == [result.iterations]
+
+
+async def test_lam_min_floor_on_surplus():
+    # negative demand everywhere (supply surplus, x ≥ 0): no λ balances it, unbounded λ would
+    # fall forever; with the floor every participant ends at λ = 0 with x = 0 and converges
+    result, algos, finished = await run(max_iter=20_000, demand=-D, lam_min=0.0)
+    assert result.stop_reason == "converged"
+    for algo in algos.values():
+        assert np.all(algo.lam == 0.0) and np.all(algo.actor.x == 0.0)

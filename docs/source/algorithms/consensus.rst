@@ -22,6 +22,9 @@ Participant :math:`j` holds :math:`\lambda_j`. In iteration :math:`i = 1, 2, \do
   :math:`i` (:func:`~distributed_resource_optimization.power_step` gives :math:`c / i^p`)
 - decaying steps with :math:`\beta_i / \alpha_i \to \infty` reach the exact solution;
   constant steps converge faster but only to a neighbourhood of it (Kar & Hug 2012, §V)
+- optional ``lam_min``: after each update :math:`\lambda_j \leftarrow \max(\lambda_j,`
+  ``lam_min``:math:`)` (default :math:`-\infty`, the papers' unbounded update) — keeps
+  :math:`\lambda` finite when a surplus cannot be absorbed by any participant
 
 Rounds are synchronous: iteration :math:`k` waits for every peer's :math:`\lambda` of
 iteration :math:`k`.

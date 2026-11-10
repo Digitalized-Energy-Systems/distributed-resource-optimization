@@ -7,7 +7,8 @@ Every participant j holds a vector λ_j and a local response to it. Per iteratio
     \\lambda_j \\leftarrow \\lambda_j - \\beta_i \\sum_{l \\in \\omega_j} (\\lambda_j - \\lambda_l)
                                   - \\alpha_i \\, \\mathrm{innovation}_j(\\lambda_j)
 
-over the participant's peers ω_j (topology neighbours that take part). The innovation is the
+over the participant's peers ω_j (topology neighbours that take part), then projected onto
+λ_j ≥ ``lam_min`` (default −∞: no bound). The innovation is the
 participant's local mismatch for its current λ (supplied by a :class:`ConsensusActor`); the
 consensus term makes the λ_j agree, the innovation drives them to where the mismatches sum to 0.
 Rounds are synchronous: iteration k waits for every peer's λ of iteration k.
@@ -96,6 +97,9 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
     :param beta: Consensus step β_i as a function of the iteration i ≥ 1.
     :param eps: Tolerance on ``max |Δλ|`` for the converged flag.
     :param max_iter: Iteration cap.
+    :param lam_min: Lower bound on λ (scalar or per entry), applied after each update; default
+        −∞ = unbounded (the papers' update). A floor keeps λ finite when no λ can make the
+        mismatches sum to 0 from above (e.g. a supply surplus nobody can absorb).
     """
 
     def __init__(
@@ -106,11 +110,13 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         beta: Callable[[int], float],
         eps: float = 1e-4,
         max_iter: int = 10_000,
+        lam_min: float | np.ndarray = -np.inf,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor = actor
         self.alpha, self.beta = alpha, beta
         self.eps, self.max_iter = eps, max_iter
+        self.lam_min = lam_min
         self.lam: np.ndarray | None = None
         self.k = 0
         self.stopped = False
@@ -142,6 +148,7 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         neighbours = self._inbox.pop(self.k)
         consensus = sum((self.lam - lam_l for lam_l in neighbours), np.zeros_like(self.lam))
         new = self.lam - self.beta(i) * consensus - self.alpha(i) * self.actor.innovation(self.lam)
+        new = np.maximum(new, self.lam_min)
         converged = bool(np.max(np.abs(new - self.lam)) < self.eps) and self.actor.converged()
         self.lam, self.k = new, i
         if self.k >= self.max_iter:
