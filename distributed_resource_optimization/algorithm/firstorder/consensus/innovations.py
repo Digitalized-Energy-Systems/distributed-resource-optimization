@@ -183,11 +183,17 @@ class ConsensusCoordinator(Coordinator):
 
     :param participants: Addresses of all participants.
     :param lam0: Initial λ for every participant (e.g. a flat start).
+    :param settle_s: When all flags say converged, wait this long (carrier clock) and stop only if
+        they still do. Reports reach the coordinator after different delays (multi-hop routes), so a
+        late "not converged" flip can still be on its way; set it to the longest report delay.
+        0 (default) = stop at once (equal delays, e.g. every participant a neighbour).
     """
 
-    def __init__(self, participants: list, lam0: np.ndarray) -> None:
+    def __init__(self, participants: list, lam0: np.ndarray, settle_s: float = 0.0) -> None:
         self.participants = list(participants)
         self.lam0 = np.asarray(lam0, dtype=float)
+        self.settle_s = settle_s
+        self._settling = False
         self.result: ConsensusResult | None = None
         self._flags: dict = {}
         self._done: set = set()
@@ -211,8 +217,23 @@ class ConsensusCoordinator(Coordinator):
             self._done.add(message_data.sender)
         self._k = max(self._k, message_data.k)
         if len(self._done) == len(self.participants):
-            self.result = ConsensusResult("max_iter", self._k)
-        elif all(self._flags.get(p, False) for p in self.participants):
-            self.result = ConsensusResult("converged", self._k)
-        if self.result is not None:
-            self._finished.set_result(self.result)
+            self._finish(ConsensusResult("max_iter", self._k))
+        elif self._all_converged():
+            if self.settle_s <= 0:
+                self._finish(ConsensusResult("converged", self._k))
+            elif not self._settling:
+                self._settling = True
+                carrier.spawn(self._settle(carrier))
+
+    def _all_converged(self) -> bool:
+        return all(self._flags.get(p, False) for p in self.participants)
+
+    async def _settle(self, carrier: "Carrier") -> None:
+        await carrier.sleep(self.settle_s)
+        self._settling = False
+        if not self._finished.done() and self._all_converged():
+            self._finish(ConsensusResult("converged", self._k))
+
+    def _finish(self, result: ConsensusResult) -> None:
+        self.result = result
+        self._finished.set_result(result)

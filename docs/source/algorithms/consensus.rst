@@ -25,6 +25,9 @@ Participant :math:`j` holds :math:`\lambda_j`. In iteration :math:`i = 1, 2, \do
 - optional ``lam_min``: after each update :math:`\lambda_j \leftarrow \max(\lambda_j,`
   ``lam_min``:math:`)` (default :math:`-\infty`, the papers' unbounded update) — keeps
   :math:`\lambda` finite when a surplus cannot be absorbed by any participant
+- optional ``settle_s`` on the coordinator: when all flags say converged it waits ``settle_s``
+  and stops only if they still do — set it to the longest report delay when reports travel
+  different distances (multi-hop routes), so a late "not converged" flip is not missed
 
 Rounds are synchronous: iteration :math:`k` waits for every peer's :math:`\lambda` of
 iteration :math:`k`.

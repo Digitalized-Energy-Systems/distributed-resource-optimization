@@ -76,20 +76,3 @@ async def start_optimization(
 ) -> Any:
     """Delegate to ``coordinator.start_optimization(carrier, message_data, meta)``."""
     return await coordinator.start_optimization(carrier, message_data, meta)
-
-
-# ---------------------------------------------------------------------------
-# CoordinatedDistributedAlgorithm
-# ---------------------------------------------------------------------------
-
-
-class CoordinatedDistributedAlgorithm:
-    """Bundle of a coordinator and its worker algorithms (informational only)."""
-
-    def __init__(
-        self,
-        distributed_algo: list[DistributedAlgorithm],
-        coordinator: Coordinator,
-    ) -> None:
-        self.distributed_algo = distributed_algo
-        self.coordinator = coordinator

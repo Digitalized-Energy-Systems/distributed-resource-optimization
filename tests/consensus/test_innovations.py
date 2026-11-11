@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import networkx as nx
 import numpy as np
 import pytest
@@ -22,6 +24,9 @@ from distributed_resource_optimization import (  # noqa: E402
     ConsensusCoordinator,
     ConsensusInnovationsAlgorithm,
     power_step,
+)
+from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (  # noqa: E402
+    ConsensusReport,
 )
 from distributed_resource_optimization.carrier.mango_carrier import (  # noqa: E402
     CoordinatorRole,
@@ -70,6 +75,7 @@ async def run(
     edges=IRREGULAR,
     demand=D,
     lam_min=-np.inf,
+    settle_s=0.0,
 ):
     # default: irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
     graph = nx.Graph(edges)
@@ -98,7 +104,9 @@ async def run(
         )
         for aid, algo in algos.items()
     }
-    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], np.zeros(2))
+    coordinator = ConsensusCoordinator(
+        [a.addr for a in agents.values()], np.zeros(2), settle_s=settle_s
+    )
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
     )
@@ -146,3 +154,41 @@ async def test_lam_min_floor_on_surplus():
     assert result.stop_reason == "converged"
     for algo in algos.values():
         assert np.all(algo.lam == 0.0) and np.all(algo.actor.x == 0.0)
+
+
+class _Clock:
+    """Stub carrier: sleep waits until the test releases it; spawn runs the coroutine."""
+
+    def __init__(self):
+        self.release = asyncio.Event()
+
+    async def sleep(self, seconds):
+        await self.release.wait()
+        self.release.clear()
+
+    def spawn(self, coroutine):
+        return asyncio.ensure_future(coroutine)
+
+
+async def test_settle_ignores_a_stale_converged_snapshot():
+    # far agent a flips back to "not converged", but near agent b's "converged" report arrives
+    # first (multi-hop delays): the coordinator must not stop on that stale snapshot
+    clock, coord = _Clock(), ConsensusCoordinator(["a", "b"], np.zeros(1), settle_s=1.0)
+    coord._finished = asyncio.get_running_loop().create_future()
+    report = lambda who, ok, k: coord.on_exchange_message(clock, ConsensusReport(who, ok, k), {})  # noqa: E731
+    await report("a", True, 10)
+    await report("b", True, 11)  # all converged → settle starts, no stop yet
+    assert not coord._finished.done()
+    await report("a", False, 10)  # the late flip arrives while settling
+    clock.release.set()
+    await asyncio.sleep(0.01)
+    assert not coord._finished.done()
+    await report("a", True, 12)  # converged again → settle → stop
+    clock.release.set()
+    await asyncio.sleep(0.01)
+    assert coord.result.stop_reason == "converged" and coord.result.iterations == 12
+
+
+async def test_converges_with_settle_time():
+    result, algos, finished = await run(max_iter=20_000, settle_s=0.05)
+    assert result.stop_reason == "converged" and len(finished) == 4

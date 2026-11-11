@@ -154,7 +154,6 @@ from .algorithm.admm.waterfall.core import (
 
 # Algorithm base
 from .algorithm.core import (
-    CoordinatedDistributedAlgorithm,
     Coordinator,
     DistributedAlgorithm,
     OptimizationMessage,
@@ -255,7 +254,6 @@ __all__ = [
     # Algorithm core
     "DistributedAlgorithm",
     "Coordinator",
-    "CoordinatedDistributedAlgorithm",
     "OptimizationMessage",
     "on_exchange_message",
     "start_optimization",
