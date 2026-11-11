@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 
 import networkx as nx
 import numpy as np
@@ -18,6 +19,7 @@ from mango import (  # noqa: E402
     graph_topology,
 )
 from mango.express.topology import AGENT_NODE_KEY  # noqa: E402
+from mango.simulation.communication import PackageResult  # noqa: E402
 
 from distributed_resource_optimization import (  # noqa: E402
     ConsensusActor,
@@ -26,6 +28,7 @@ from distributed_resource_optimization import (  # noqa: E402
     power_step,
 )
 from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (  # noqa: E402
+    ConsensusMessage,
     ConsensusReport,
 )
 from distributed_resource_optimization.carrier.mango_carrier import (  # noqa: E402
@@ -40,6 +43,21 @@ A = [1.0, 2.0, 0.5, 1.0]
 B = [1.0, 0.0, 2.0, 3.0]
 CAP = [10.0, 10.0, 10.0, 1.0]
 D = np.array([[2.0, 1.0], [0.0, 3.0], [3.0, 0.0], [1.0, 1.0]])
+
+
+class _LoseLambda(SimpleCommunicationSimulation):
+    """Loses only the λ exchange (ConsensusMessage); start, reports and stop always arrive."""
+
+    def __init__(self, loss):
+        super().__init__(default_delay_s=0.01, loss_percent=loss, rng=random.Random(0))
+
+    def calculate_communication(self, current_time, messages):
+        result = super().calculate_communication(current_time, messages)
+        result.package_results[:] = [
+            r if isinstance(m.content[0], ConsensusMessage) else PackageResult(True, r.delay_s)
+            for m, r in zip(messages, result.package_results)
+        ]
+        return result
 
 
 class Quadratic(ConsensusActor):
@@ -76,6 +94,8 @@ async def run(
     demand=D,
     lam_min=-np.inf,
     settle_s=0.0,
+    loss=0.0,
+    round_timeout=None,
 ):
     # default: irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
     graph = nx.Graph(edges)
@@ -90,13 +110,12 @@ async def run(
             eps=1e-6,
             max_iter=max_iter,
             lam_min=lam_min,
+            round_timeout=round_timeout,
         )
         for j in range(4)
         if f"p{j}" in graph
     }
-    world = create_world(
-        start_time=0.0, communication_sim=SimpleCommunicationSimulation(default_delay_s=0.01)
-    )
+    world = create_world(start_time=0.0, communication_sim=_LoseLambda(loss))
     agents = {
         aid: world.register(
             agent_composed_of(DistributedOptimizationRole(algo, routes=routes[aid])),
@@ -105,7 +124,10 @@ async def run(
         for aid, algo in algos.items()
     }
     coordinator = ConsensusCoordinator(
-        [a.addr for a in agents.values()], np.zeros(2), settle_s=settle_s
+        [a.addr for a in agents.values()],
+        np.zeros(2),
+        settle_s=settle_s,
+        start_latency=0.03,  # the start reaches p3 over 3 hops
     )
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
@@ -192,3 +214,25 @@ async def test_settle_ignores_a_stale_converged_snapshot():
 async def test_converges_with_settle_time():
     result, algos, finished = await run(max_iter=20_000, settle_s=0.05)
     assert result.stop_reason == "converged" and len(finished) == 4
+
+
+async def test_round_deadline_without_loss_changes_nothing():
+    plain, *_ = await run(max_iter=20_000)
+    timed, algos, _ = await run(max_iter=20_000, round_timeout=0.02)
+    assert timed == plain  # same stop and iteration count
+    assert sum(a.rounds_by_deadline for a in algos.values()) == 0
+
+
+async def test_lossy_rounds_finish_near_the_optimum():
+    # 20 % of the λ messages lost (start/reports/stop reliable): without the round deadline one
+    # lost λ stalls the run; with it a round uses the peers that arrived (KH12 §IV, ω_q(t)), and
+    # decaying steps stay close to the optimum (Theorem 5 setting)
+    result, algos, finished = await run(max_iter=20_000, loss=0.2, round_timeout=0.02)
+    assert len(finished) == 4
+    expected = [lam_star(0), lam_star(1)]
+    for algo in algos.values():
+        np.testing.assert_allclose(algo.lam, expected, atol=2e-2)
+    total = sum(algo.actor.x for algo in algos.values())
+    np.testing.assert_allclose(total, D.sum(axis=0), atol=5e-2)
+    assert sum(a.rounds_by_deadline for a in algos.values()) > 0
+    assert sum(a.missing_edges for a in algos.values()) > 0

@@ -60,6 +60,7 @@ class ConsensusStart(OptimizationMessage):
     lam: np.ndarray
     participants: list
     coordinator: Any
+    t0: float = 0.0  # carrier time at which round 0 starts for everyone (round deadlines)
 
 
 @dataclass
@@ -100,6 +101,11 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
     :param lam_min: Lower bound on λ (scalar or per entry), applied after each update; default
         −∞ = unbounded (the papers' update). A floor keeps λ finite when no λ can make the
         mismatches sum to 0 from above (e.g. a supply surplus nobody can absorb).
+    :param round_timeout: Round deadline (carrier clock) for lossy links: if some peers' λ of
+        the current iteration have not arrived after this long, iterate with those that did —
+        the missing ones are failed links of that iteration (Kar & Hug 2012 §IV, ω_q(t)); a λ of a
+        finished iteration arriving later is dropped. ``None`` (default) = wait for every peer.
+        ``rounds_by_deadline`` / ``missing_edges`` count how often and how many were missing.
     """
 
     def __init__(
@@ -111,6 +117,7 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         eps: float = 1e-4,
         max_iter: int = 10_000,
         lam_min: float | np.ndarray = -np.inf,
+        round_timeout: float | None = None,
     ) -> None:
         self.finish_callback = finish_callback
         self.actor = actor
@@ -124,6 +131,9 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         self._peers: list = []
         self._inbox: dict[int, list[np.ndarray]] = defaultdict(list)
         self._converged = False
+        self.round_timeout = round_timeout
+        self.rounds_by_deadline = 0
+        self.missing_edges = 0
 
     async def on_exchange_message(self, carrier: "Carrier", message_data: Any, meta: Any) -> None:
         if self.stopped:
@@ -133,19 +143,28 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
             self.lam = np.array(message_data.lam, dtype=float)
             self._peers = [a for a in carrier.others("") if a in message_data.participants]
             self._send_lam(carrier)
+            if self.round_timeout is not None and self._peers:
+                carrier.spawn(self._deadlines(carrier))
         elif isinstance(message_data, ConsensusMessage):
-            self._inbox[message_data.k].append(message_data.lam)
+            if message_data.k >= self.k:  # a λ of a finished (deadline) round is dropped
+                self._inbox[message_data.k].append(message_data.lam)
         else:  # the coordinator's end of the run (OptimizationFinishedMessage)
             self._stop(carrier)
             return
-        while self._start is not None and len(self._inbox[self.k]) == len(self._peers):
+        self._advance(carrier)
+
+    def _advance(self, carrier: "Carrier") -> None:
+        """Iterate while the current round is complete (every peer's λ is in)."""
+        while (
+            self._start is not None
+            and not self.stopped
+            and len(self._inbox[self.k]) == len(self._peers)
+        ):
             self._iterate(carrier)
-            if self.stopped:
-                return
 
     def _iterate(self, carrier: "Carrier") -> None:
         i = self.k + 1
-        neighbours = self._inbox.pop(self.k)
+        neighbours = self._inbox.pop(self.k, [])  # [] = every peer's λ lost (deadline round)
         consensus = sum((self.lam - lam_l for lam_l in neighbours), np.zeros_like(self.lam))
         new = self.lam - self.beta(i) * consensus - self.alpha(i) * self.actor.innovation(self.lam)
         new = np.maximum(new, self.lam_min)
@@ -169,6 +188,22 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         for peer in self._peers:
             carrier.send_to_other(ConsensusMessage(self.lam.copy(), self.k), peer)
 
+    async def _deadlines(self, carrier: "Carrier") -> None:
+        """One timer per participant: round k ends at the same carrier time for everyone,
+        t0 + (k+1)·round_timeout (KH12's common iteration index t), so a λ that is only late is
+        never cut off and participants do not drift apart. Asleep until the current round's end;
+        if that round is still open then, iterate with the peers that arrived."""
+        while not self.stopped:
+            k = self.k
+            end = self._start.t0 + (k + 1) * self.round_timeout
+            await carrier.sleep(max(0.0, end - carrier.now()))
+            if self.stopped or self.k != k:
+                continue  # round finished in time (or the run ended): wait for the current one
+            self.rounds_by_deadline += 1
+            self.missing_edges += len(self._peers) - len(self._inbox[k])
+            self._iterate(carrier)
+            self._advance(carrier)
+
     def _report(self, carrier: "Carrier", converged: bool, done: bool = False) -> None:
         report = ConsensusReport(carrier.get_address(), converged, self.k, done)
         carrier.send_to_other(report, self._start.coordinator)
@@ -187,12 +222,21 @@ class ConsensusCoordinator(Coordinator):
         they still do. Reports reach the coordinator after different delays (multi-hop routes), so a
         late "not converged" flip can still be on its way; set it to the longest report delay.
         0 (default) = stop at once (equal delays, e.g. every participant a neighbour).
+    :param start_latency: Longest delay of the start message to a participant; round 0 of the
+        participants' round deadlines (``round_timeout``) starts that long after sending.
     """
 
-    def __init__(self, participants: list, lam0: np.ndarray, settle_s: float = 0.0) -> None:
+    def __init__(
+        self,
+        participants: list,
+        lam0: np.ndarray,
+        settle_s: float = 0.0,
+        start_latency: float = 0.0,
+    ) -> None:
         self.participants = list(participants)
         self.lam0 = np.asarray(lam0, dtype=float)
         self.settle_s = settle_s
+        self.start_latency = start_latency
         self._settling = False
         self.result: ConsensusResult | None = None
         self._flags: dict = {}
@@ -202,7 +246,8 @@ class ConsensusCoordinator(Coordinator):
 
     async def start_optimization(self, carrier: "Carrier", message_data: Any, meta: Any):
         self._finished = asyncio.get_event_loop().create_future()
-        start = ConsensusStart(self.lam0, self.participants, carrier.get_address())
+        t0 = carrier.now() + self.start_latency  # round 0 starts once every start has arrived
+        start = ConsensusStart(self.lam0, self.participants, carrier.get_address(), t0)
         for p in self.participants:
             carrier.send_to_other(start, p)
         await carrier.wait_for(self._finished)

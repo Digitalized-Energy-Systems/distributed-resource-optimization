@@ -28,6 +28,11 @@ Participant :math:`j` holds :math:`\lambda_j`. In iteration :math:`i = 1, 2, \do
 - optional ``settle_s`` on the coordinator: when all flags say converged it waits ``settle_s``
   and stops only if they still do — set it to the longest report delay when reports travel
   different distances (multi-hop routes), so a late "not converged" flip is not missed
+- optional ``round_timeout`` (lossy links, Kar & Hug 2012 §IV): round *k* ends for every
+  participant at ``t0 + (k+1)·round_timeout`` (``t0`` from the start message, set by the
+  coordinator's ``start_latency``); peers whose λ has not arrived by then are failed links of that
+  round (ω_q(t)); a late λ of a finished round is dropped. ``rounds_by_deadline`` /
+  ``missing_edges`` count them. Default ``None`` = wait for every peer
 
 Rounds are synchronous: iteration :math:`k` waits for every peer's :math:`\lambda` of
 iteration :math:`k`.
