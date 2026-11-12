@@ -58,11 +58,12 @@ Usage example::
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 from uuid import uuid4
 
 import networkx as nx
+import numpy as np
 from mango import AgentAddress, Role, on_message
 from mango import sender_addr as mango_sender_addr
 from mango.util.scheduling import sleeping_wait
@@ -105,6 +106,57 @@ def unwrap(content: Any) -> Any:
     return content.content if isinstance(content, _Routed) else content
 
 
+def json_codec(*message_types: type):
+    """mango's JSON codec for real (TCP/MQTT) containers, extended to the DRO messages.
+
+    Registers numpy arrays, the carrier's and consensus' message dataclasses and any further
+    dataclass *message_types* (shallow: field by field; nested objects go through the codec
+    again). Replaces mango 2.4's AgentAddress serializer, whose JSON round trip turns the
+    ``(host, port)`` tuple into a list — an unhashable address that no longer equals the
+    original, which breaks address-keyed state across containers.
+    """
+    from mango.messages.codecs import JSON
+
+    from ..algorithm.firstorder.consensus.innovations import (
+        ConsensusMessage,
+        ConsensusReport,
+        ConsensusResult,
+        ConsensusStart,
+    )
+
+    codec = JSON()
+    type_id, _ = codec._serializers[AgentAddress]  # mango private: no public way to replace it
+
+    def address(d: dict) -> AgentAddress:
+        p = d["protocol_addr"]
+        return AgentAddress(tuple(p) if isinstance(p, list) else p, d["aid"])
+
+    codec._deserializers[type_id] = address
+    codec.add_serializer(np.ndarray, lambda a: [a.dtype.str, a.tolist()], _array)
+    types = (
+        StartCoordinatedDistributedOptimization,
+        OptimizationFinishedMessage,
+        _Routed,
+        ConsensusStart,
+        ConsensusMessage,
+        ConsensusReport,
+        ConsensusResult,
+        *message_types,
+    )
+    for t in types:
+        codec.add_serializer(
+            t,
+            lambda o: {f.name: getattr(o, f.name) for f in fields(o)},
+            lambda d, t=t: t(**d),
+        )
+    return codec
+
+
+def _array(data: list) -> np.ndarray:
+    dtype, values = data
+    return np.asarray(values, dtype=dtype)
+
+
 def next_hops(graph: nx.Graph) -> dict[Any, dict[Any, Any]]:
     """Per node: destination → next hop on a shortest path (BFS, unweighted).
 
@@ -135,6 +187,9 @@ class MangoCarrier(Carrier):
                    messages to non-neighbours are relayed along it.
     :param address_all: :meth:`others` returns every routable agent, not only
                         the topology neighbours (used by the coordinator).
+    :param addresses: aid → full :class:`~mango.AgentAddress` of the routable agents. Needed
+                      with ``address_all`` when agents live in several containers; without it
+                      a non-neighbour is assumed to share this agent's container.
     """
 
     def __init__(
@@ -143,11 +198,13 @@ class MangoCarrier(Carrier):
         include_self: bool = False,
         routes: dict[str, str] | None = None,
         address_all: bool = False,
+        addresses: dict[str, AgentAddress] | None = None,
     ) -> None:
         self._parent = parent
         self._include_self = include_self
         self._routes = routes or {}
         self._address_all = address_all
+        self._addresses = addresses or {}
 
     # ------------------------------------------------------------------
     # Carrier interface
@@ -257,7 +314,9 @@ class MangoCarrier(Carrier):
             known = {a.aid for a in neighbors} | {self.get_address().aid}
             protocol_addr = self.get_address().protocol_addr
             neighbors += [
-                AgentAddress(protocol_addr, aid) for aid in self._routes if aid not in known
+                self._addresses.get(aid) or AgentAddress(protocol_addr, aid)
+                for aid in self._routes
+                if aid not in known
             ]
         if self._include_self:
             neighbors.append(self._parent.context.addr)
@@ -373,6 +432,8 @@ class CoordinatorRole(Role):
                          the ADMM participants).
     :param routes: Passed to :class:`MangoCarrier`; with routes the coordinator
                    addresses every routable agent, not only its neighbours.
+    :param addresses: Passed to :class:`MangoCarrier`: aid → full address of the routable
+                      agents, needed when they live in other containers.
     """
 
     def __init__(
@@ -380,16 +441,20 @@ class CoordinatorRole(Role):
         coordinator: "Coordinator",
         include_self: bool = False,
         routes: dict[str, str] | None = None,
+        addresses: dict[str, AgentAddress] | None = None,
     ) -> None:
         super().__init__()
         self.coordinator = coordinator
         self._include_self = include_self
         self._routes = routes
+        self._addresses = addresses
         self._carrier: MangoCarrier | None = None
         self._done_future: asyncio.Future | None = None
 
     def setup(self) -> None:
-        self._carrier = MangoCarrier(self, self._include_self, self._routes, address_all=True)
+        self._carrier = MangoCarrier(
+            self, self._include_self, self._routes, address_all=True, addresses=self._addresses
+        )
 
     @on_message(StartCoordinatedDistributedOptimization)
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:

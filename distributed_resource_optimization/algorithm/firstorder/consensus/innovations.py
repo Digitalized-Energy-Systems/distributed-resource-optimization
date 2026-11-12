@@ -170,7 +170,8 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         consensus = sum((self.lam - lam_l for lam_l in neighbours), np.zeros_like(self.lam))
         new = self.lam - self.beta(i) * consensus - self.alpha(i) * self.actor.innovation(self.lam)
         new = np.maximum(new, self.lam_min)
-        converged = bool(np.max(np.abs(new - self.lam)) < self.eps) and self.actor.converged()
+        # a plain bool: an actor may return numpy.bool, which no message codec can encode
+        converged = bool(np.max(np.abs(new - self.lam)) < self.eps and self.actor.converged())
         self.lam, self.k = new, i
         if self.k >= self.max_iter:
             self._report(carrier, converged, done=True)

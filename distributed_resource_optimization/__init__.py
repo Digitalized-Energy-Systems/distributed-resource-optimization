@@ -235,6 +235,7 @@ try:
         MangoCarrier,
         OptimizationFinishedMessage,
         StartCoordinatedDistributedOptimization,
+        json_codec,
         next_hops,
         unwrap,
     )
@@ -370,4 +371,5 @@ if _MANGO_AVAILABLE:
         "OptimizationFinishedMessage",
         "next_hops",
         "unwrap",
+        "json_codec",
     ]
