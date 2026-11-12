@@ -58,7 +58,7 @@ Usage example::
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -68,7 +68,7 @@ from mango import AgentAddress, Role, on_message
 from mango import sender_addr as mango_sender_addr
 from mango.util.scheduling import sleeping_wait
 
-from ..algorithm.core import ControlMessage, Coordinator, DistributedAlgorithm
+from ..algorithm.core import ControlMessage, Coordinator, DistributedAlgorithm, OptimizationMessage
 from .core import Carrier
 
 # ---------------------------------------------------------------------------
@@ -109,20 +109,15 @@ def unwrap(content: Any) -> Any:
 def json_codec(*message_types: type):
     """mango's JSON codec for real (TCP/MQTT) containers, extended to the DRO messages.
 
-    Registers numpy arrays, the carrier's and consensus' message dataclasses and any further
-    dataclass *message_types* (shallow: field by field; nested objects go through the codec
-    again). Replaces mango 2.4's AgentAddress serializer, whose JSON round trip turns the
-    ``(host, port)`` tuple into a list — an unhashable address that no longer equals the
-    original, which breaks address-keyed state across containers.
+    Registers numpy arrays, every loaded dataclass that subclasses :class:`OptimizationMessage` or
+    :class:`ControlMessage` (the carrier's and each algorithm's messages: the carrier names no
+    algorithm, an algorithm marks its messages) and any further dataclass *message_types*
+    (shallow: field by field; nested objects go through the codec again). Replaces mango 2.4's
+    AgentAddress serializer, whose JSON round trip turns the ``(host, port)`` tuple into a list —
+    an unhashable address that no longer equals the original, which breaks address-keyed state
+    across containers.
     """
     from mango.messages.codecs import JSON
-
-    from ..algorithm.firstorder.consensus.innovations import (
-        ConsensusMessage,
-        ConsensusReport,
-        ConsensusResult,
-        ConsensusStart,
-    )
 
     codec = JSON()
     type_id, _ = codec._serializers[AgentAddress]  # mango private: no public way to replace it
@@ -133,23 +128,24 @@ def json_codec(*message_types: type):
 
     codec._deserializers[type_id] = address
     codec.add_serializer(np.ndarray, lambda a: [a.dtype.str, a.tolist()], _array)
-    types = (
-        StartCoordinatedDistributedOptimization,
-        OptimizationFinishedMessage,
-        _Routed,
-        ConsensusStart,
-        ConsensusMessage,
-        ConsensusReport,
-        ConsensusResult,
-        *message_types,
-    )
-    for t in types:
+    types = {_Routed, *_dataclasses(OptimizationMessage), *_dataclasses(ControlMessage)}
+    for t in types | set(message_types):
         codec.add_serializer(
             t,
             lambda o: {f.name: getattr(o, f.name) for f in fields(o)},
             lambda d, t=t: t(**d),
         )
     return codec
+
+
+def _dataclasses(base: type) -> set[type]:
+    """All dataclass subclasses of *base*, recursively (loaded modules only)."""
+    found = set()
+    for sub in base.__subclasses__():
+        if is_dataclass(sub):
+            found.add(sub)
+        found |= _dataclasses(sub)
+    return found
 
 
 def _array(data: list) -> np.ndarray:

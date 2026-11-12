@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..core import Coordinator
+from ..core import Coordinator, OptimizationMessage
 
 if TYPE_CHECKING:
     from ...carrier.core import Carrier
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ADMMStart:
+class ADMMStart(OptimizationMessage):
     """Sent to the coordinator to begin a new ADMM run.
 
     :param data: Algorithm-specific input (e.g. :class:`ADMMSharingData` or a
@@ -45,7 +45,7 @@ class ADMMStart:
 
 
 @dataclass
-class ADMMMessage:
+class ADMMMessage(OptimizationMessage):
     """Sent by the coordinator to each participant to request an x-update.
 
     :param v: Scaled consensus/sharing vector (the local QP reference point).
@@ -57,7 +57,7 @@ class ADMMMessage:
 
 
 @dataclass
-class ADMMAnswer:
+class ADMMAnswer(OptimizationMessage):
     """Reply from a participant after solving its local update.
 
     :param x: Local solution vector.

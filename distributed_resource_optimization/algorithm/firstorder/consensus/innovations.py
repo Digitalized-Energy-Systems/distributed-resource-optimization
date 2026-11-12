@@ -82,9 +82,10 @@ class ConsensusReport(OptimizationMessage, ControlMessage):
 
 
 @dataclass
-class ConsensusResult:
+class ConsensusResult(OptimizationMessage):
     """What the coordinator saw: ``stop_reason`` "converged" or "max_iter", and the carrier time
-    of the stop (``time``; under a simulation the simulated time to solution)."""
+    of the stop (``time``; under a simulation the simulated time to solution). Travels inside
+    the carrier's finish message, hence a protocol message (JSON codec)."""
 
     stop_reason: str
     iterations: int
