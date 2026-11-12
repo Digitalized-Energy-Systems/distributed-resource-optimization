@@ -31,7 +31,7 @@ Two carriers are included:
 | Carrier | When to use |
 |---------|-------------|
 | **SimpleCarrier** | In-process asyncio simulation — zero overhead, ideal for prototyping and testing |
-| **MangoCarrier** | Networked multi-agent deployments via mango-agents (≥ 2.4.0); `routes` (`next_hops`) relay messages hop by hop on sparse topologies, replies route back |
+| **MangoCarrier** | Networked multi-agent deployments via mango-agents (≥ 2.4.0); `routes` (`next_hops`) relay messages hop by hop on sparse topologies, replies route back; across several real containers give the coordinator `addresses={aid: AgentAddress}` and the containers `codec=json_codec()` (numpy + DRO messages; fixes mango 2.4's AgentAddress JSON round trip) |
 
 > **Note:** the package is still experimental. API may change between minor versions.
 
