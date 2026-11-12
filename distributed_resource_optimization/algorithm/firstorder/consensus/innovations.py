@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from ...core import Coordinator, DistributedAlgorithm, OptimizationMessage
+from ...core import ControlMessage, Coordinator, DistributedAlgorithm, OptimizationMessage
 
 if TYPE_CHECKING:
     from ....carrier.core import Carrier
@@ -54,7 +54,7 @@ def power_step(c: float, exponent: float) -> Callable[[int], float]:
 
 
 @dataclass
-class ConsensusStart(OptimizationMessage):
+class ConsensusStart(OptimizationMessage, ControlMessage):
     """Kick-off from the coordinator: initial λ, who takes part, where to report."""
 
     lam: np.ndarray
@@ -72,7 +72,7 @@ class ConsensusMessage(OptimizationMessage):
 
 
 @dataclass
-class ConsensusReport(OptimizationMessage):
+class ConsensusReport(OptimizationMessage, ControlMessage):
     """Participant → coordinator: its converged flag flipped, or it hit ``max_iter`` (*done*)."""
 
     sender: Any

@@ -67,7 +67,7 @@ from mango import AgentAddress, Role, on_message
 from mango import sender_addr as mango_sender_addr
 from mango.util.scheduling import sleeping_wait
 
-from ..algorithm.core import Coordinator, DistributedAlgorithm
+from ..algorithm.core import ControlMessage, Coordinator, DistributedAlgorithm
 from .core import Carrier
 
 # ---------------------------------------------------------------------------
@@ -76,14 +76,14 @@ from .core import Carrier
 
 
 @dataclass
-class StartCoordinatedDistributedOptimization:
+class StartCoordinatedDistributedOptimization(ControlMessage):
     """Sent to a :class:`CoordinatorRole` to kick off a coordinated run."""
 
     input: Any
 
 
 @dataclass
-class OptimizationFinishedMessage:
+class OptimizationFinishedMessage(ControlMessage):
     """Broadcast by the coordinator to each participant when the run ends."""
 
     result: Any
@@ -97,6 +97,12 @@ class _Routed:
     receiver: AgentAddress
     sender: AgentAddress
     meta: dict = field(default_factory=dict)  # mango tracking_id / reply, restored at the end
+
+
+def unwrap(content: Any) -> Any:
+    """The message inside a routed (multi-hop) envelope, else *content* itself — e.g. for a
+    communication simulation that inspects what it delivers."""
+    return content.content if isinstance(content, _Routed) else content
 
 
 def next_hops(graph: nx.Graph) -> dict[Any, dict[Any, Any]]:
@@ -337,12 +343,10 @@ class DistributedOptimizationRole(Role):
         ),
     )
     def _handle_optimization(self, content: Any, meta: dict) -> None:
-        from ..algorithm.core import on_exchange_message
-
         # Schedule via the agent scheduler so the simulation clock tracks the
         # handler (and any sends it issues); see MangoCarrier._schedule.
         self.context.schedule_instant_task(
-            on_exchange_message(self.algorithm, self._carrier, content, meta)
+            self.algorithm.on_exchange_message(self._carrier, content, meta)
         )
 
 
@@ -389,13 +393,11 @@ class CoordinatorRole(Role):
 
     @on_message(StartCoordinatedDistributedOptimization)
     def _handle_start(self, content: StartCoordinatedDistributedOptimization, meta: dict) -> None:
-        from ..algorithm.core import start_optimization
-
         loop = asyncio.get_event_loop()
         self._done_future = loop.create_future()
 
         async def _run() -> None:
-            results = await start_optimization(self.coordinator, self._carrier, content.input, meta)
+            results = await self.coordinator.start_optimization(self._carrier, content.input, meta)
             neighbours = self._carrier.others("coordinator")
             # Per-participant list (e.g. ADMMGenericCoordinator) -> fan out the
             # matching slice; a single aggregate result (e.g. CPAdmmResult) ->

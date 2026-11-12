@@ -91,3 +91,30 @@ async def test_sharing_admm_on_a_chain():
     expected = np.array([0.06667, 0.33333, -0.66667])
     for actor in actors:
         assert np.allclose(actor.x, expected, atol=1e-2)
+
+
+def test_control_messages_are_marked_and_unwrapped():
+    from mango import AgentAddress
+
+    from distributed_resource_optimization import (
+        ConsensusMessage,
+        ConsensusReport,
+        ConsensusStart,
+        ControlMessage,
+        OptimizationFinishedMessage,
+        StartCoordinatedDistributedOptimization,
+        unwrap,
+    )
+    from distributed_resource_optimization.carrier.mango_carrier import _Routed
+
+    control = [
+        ConsensusStart(np.zeros(1), [], None),
+        ConsensusReport(None, True, 1),
+        StartCoordinatedDistributedOptimization(None),
+        OptimizationFinishedMessage(None),
+    ]
+    assert all(isinstance(m, ControlMessage) for m in control)
+    lam = ConsensusMessage(np.zeros(1), 1)  # the algorithm's own payload
+    assert not isinstance(lam, ControlMessage)
+    a = AgentAddress("c", "a")
+    assert unwrap(_Routed(control[0], a, a)) is control[0] and unwrap(lam) is lam

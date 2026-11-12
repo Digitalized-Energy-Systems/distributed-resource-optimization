@@ -154,11 +154,10 @@ from .algorithm.admm.waterfall.core import (
 
 # Algorithm base
 from .algorithm.core import (
+    ControlMessage,
     Coordinator,
     DistributedAlgorithm,
     OptimizationMessage,
-    on_exchange_message,
-    start_optimization,
 )
 
 # Consensus
@@ -236,6 +235,8 @@ try:
         MangoCarrier,
         OptimizationFinishedMessage,
         StartCoordinatedDistributedOptimization,
+        next_hops,
+        unwrap,
     )
 
     _MANGO_AVAILABLE = True
@@ -255,8 +256,7 @@ __all__ = [
     "DistributedAlgorithm",
     "Coordinator",
     "OptimizationMessage",
-    "on_exchange_message",
-    "start_optimization",
+    "ControlMessage",
     # COHDA
     "ScheduleSelection",
     "SystemConfig",
@@ -368,4 +368,6 @@ if _MANGO_AVAILABLE:
         "CoordinatorRole",
         "StartCoordinatedDistributedOptimization",
         "OptimizationFinishedMessage",
+        "next_hops",
+        "unwrap",
     ]

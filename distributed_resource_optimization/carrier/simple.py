@@ -77,13 +77,11 @@ class SimpleCarrier(Carrier):
         meta: dict,
     ) -> None:
         """Route an incoming message to the right handler."""
-        from ..algorithm.core import on_exchange_message
-
         msg_id = meta.get("message_id")
         if msg_id is not None and msg_id in target._uuid_to_handler:
             await target._uuid_to_handler[msg_id](target, content, meta)
         else:
-            await on_exchange_message(target.actor, target, content, meta)
+            await target.actor.on_exchange_message(target, content, meta)
 
     def _task_done(self, task: asyncio.Task) -> None:
         """Callback invoked when a dispatch task finishes."""
@@ -230,18 +228,16 @@ async def start_coordinated_optimization(
 
     Creates a shared :class:`ActorContainer`, registers all actor carriers
     and a coordinator carrier, then delegates to
-    :func:`~...algorithm.core.start_optimization`.
+    the coordinator's ``start_optimization``.
 
     :param actors: List of algorithm participants.
     :param coordinator: The coordinator (e.g. an
                         :class:`~...admm.core.ADMMGenericCoordinator`).
     :param start_message: The start payload (e.g.
                           :class:`~...admm.core.ADMMStart`).
-    :returns: Whatever :func:`start_optimization` returns (coordinator-specific).
+    :returns: Whatever the coordinator's ``start_optimization`` returns.
     """
-    from ..algorithm.core import start_optimization
-
     container = ActorContainer()
     _carriers = [SimpleCarrier(container, actor) for actor in actors]
     coordinator_carrier = SimpleCarrier(container, coordinator)
-    return await start_optimization(coordinator, coordinator_carrier, start_message, {})
+    return await coordinator.start_optimization(coordinator_carrier, start_message, {})

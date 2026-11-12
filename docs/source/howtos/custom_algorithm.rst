@@ -137,4 +137,7 @@ See Also
   :class:`~distributed_resource_optimization.Coordinator`
 - :class:`~distributed_resource_optimization.Carrier`,
   :class:`~distributed_resource_optimization.OptimizationMessage`
+- :class:`~distributed_resource_optimization.ControlMessage` — mark your start / stop / report
+  messages with it (a second base class) so callers can tell them from the algorithm's own
+  payload, e.g. keep them reliable on lossy links; ``unwrap(content)`` opens a routed envelope
 - :doc:`custom_carrier`
