@@ -183,6 +183,10 @@ class _Clock:
 
     def __init__(self):
         self.release = asyncio.Event()
+        self.t = 0.0
+
+    def now(self):
+        return self.t
 
     async def sleep(self, seconds):
         await self.release.wait()
@@ -206,9 +210,11 @@ async def test_settle_ignores_a_stale_converged_snapshot():
     await asyncio.sleep(0.01)
     assert not coord._finished.done()
     await report("a", True, 12)  # converged again → settle → stop
+    clock.t = 3.5
     clock.release.set()
     await asyncio.sleep(0.01)
     assert coord.result.stop_reason == "converged" and coord.result.iterations == 12
+    assert coord.result.time == 3.5  # carrier time of the stop
 
 
 async def test_converges_with_settle_time():

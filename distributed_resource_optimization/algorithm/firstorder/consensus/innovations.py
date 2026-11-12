@@ -83,10 +83,12 @@ class ConsensusReport(OptimizationMessage):
 
 @dataclass
 class ConsensusResult:
-    """What the coordinator saw: ``stop_reason`` "converged" or "max_iter"."""
+    """What the coordinator saw: ``stop_reason`` "converged" or "max_iter", and the carrier time
+    of the stop (``time``; under a simulation the simulated time to solution)."""
 
     stop_reason: str
     iterations: int
+    time: float = 0.0
 
 
 class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
@@ -262,10 +264,10 @@ class ConsensusCoordinator(Coordinator):
             self._done.add(message_data.sender)
         self._k = max(self._k, message_data.k)
         if len(self._done) == len(self.participants):
-            self._finish(ConsensusResult("max_iter", self._k))
+            self._finish(ConsensusResult("max_iter", self._k, carrier.now()))
         elif self._all_converged():
             if self.settle_s <= 0:
-                self._finish(ConsensusResult("converged", self._k))
+                self._finish(ConsensusResult("converged", self._k, carrier.now()))
             elif not self._settling:
                 self._settling = True
                 carrier.spawn(self._settle(carrier))
@@ -277,7 +279,7 @@ class ConsensusCoordinator(Coordinator):
         await carrier.sleep(self.settle_s)
         self._settling = False
         if not self._finished.done() and self._all_converged():
-            self._finish(ConsensusResult("converged", self._k))
+            self._finish(ConsensusResult("converged", self._k, carrier.now()))
 
     def _finish(self, result: ConsensusResult) -> None:
         self.result = result

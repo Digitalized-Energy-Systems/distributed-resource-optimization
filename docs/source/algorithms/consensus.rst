@@ -50,7 +50,8 @@ Protocol
    every flip of that flag to the coordinator
    (:class:`~distributed_resource_optimization.ConsensusReport`).
 4. When all participants are converged the coordinator returns a
-   :class:`~distributed_resource_optimization.ConsensusResult`; with the mango carrier its
+   :class:`~distributed_resource_optimization.ConsensusResult` (stop reason, iterations and the
+   carrier ``time`` of the stop — simulated time under a mango simulation); with the mango carrier its
    ``OptimizationFinishedMessage`` stops the participants. Each participant also stops on
    its own after ``max_iter`` iterations and then calls ``finish_callback``.
 
