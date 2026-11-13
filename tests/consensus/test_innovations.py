@@ -96,7 +96,11 @@ async def run(
     settle_s=0.0,
     loss=0.0,
     round_timeout=None,
+    host=None,
 ):
+    # host: the coordinator role sits on that participant's agent instead of a leaf "c"
+    if host is not None:
+        edges = [e for e in edges if "c" not in e]
     # default: irregular graph p0–p1–p2–p3 plus p1–p3; coordinator "c" a leaf on p0
     graph = nx.Graph(edges)
     routes = next_hops(graph)
@@ -129,12 +133,17 @@ async def run(
         settle_s=settle_s,
         start_latency=0.03,  # the start reaches p3 over 3 hops
     )
-    agents["c"] = world.register(
-        agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
-    )
+    if host is None:
+        agents["c"] = world.register(
+            agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
+        )
+    else:
+        agents["c"] = agents[host]
+        agents[host].add_role(CoordinatorRole(coordinator, include_self=True, routes=routes[host]))
     topo = graph_topology(graph)
     for aid, agent in agents.items():
-        topo.graph.nodes[aid][AGENT_NODE_KEY].add(agent)
+        if aid in graph:
+            topo.graph.nodes[aid][AGENT_NODE_KEY].add(agent)
     topo.inject()
     async with world:
         agents["c"].handle_message(StartCoordinatedDistributedOptimization(None), {})
@@ -153,6 +162,15 @@ async def test_converges_to_exact_optimum_and_stops():
         np.testing.assert_allclose(algo.lam, expected, atol=1e-2)
     total = sum(algo.actor.x for algo in algos.values())
     np.testing.assert_allclose(total, D.sum(axis=0), atol=5e-2)
+
+
+async def test_coordinator_on_a_participant_agent():
+    # the host's participant role also receives the peers' reports and must not stop on them
+    result, algos, finished = await run(max_iter=20_000, host="p0")
+    assert result.stop_reason == "converged"
+    assert len(finished) == 4
+    for algo in algos.values():
+        np.testing.assert_allclose(algo.lam, [lam_star(0), lam_star(1)], atol=1e-2)
 
 
 async def test_max_iter_stops_everyone():

@@ -151,6 +151,10 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         elif isinstance(message_data, ConsensusMessage):
             if message_data.k >= self.k:  # a λ of a finished (deadline) round is dropped
                 self._inbox[message_data.k].append(message_data.lam)
+        elif isinstance(message_data, ConsensusReport):
+            # a peer's report to a coordinator hosted on this participant's agent: not for the
+            # participant; only the coordinator's end of the run stops it
+            return
         else:  # the coordinator's end of the run (OptimizationFinishedMessage)
             self._stop(carrier)
             return
