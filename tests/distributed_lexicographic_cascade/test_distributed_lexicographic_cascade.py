@@ -705,7 +705,11 @@ async def test_coordinator_never_receives_capacity_data():
     assert "cap_vec" not in init_field_names
     # The per-iteration ADMMMessage carries only the shared correction (v)
     # and the penalty rho — no per-CP capacity or target.
-    assert set(ADMMMessage.__dataclass_fields__.keys()) == {"v", "rho"}
+    assert set(ADMMMessage.__dataclass_fields__.keys()) == {
+        "v",
+        "rho",
+        "k",
+    }  # k: iteration index only (S6a)
 
 
 @pytest.mark.asyncio
