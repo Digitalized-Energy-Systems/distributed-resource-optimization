@@ -123,9 +123,29 @@ class Carrier(ABC):
             return await awaitable.wait()
         return await awaitable
 
-    async def gather(self, *awaitables: Any) -> list[Any]:
-        """Await all *awaitables* through this carrier's park point."""
-        return await self.wait_for(asyncio.gather(*awaitables))
+    async def gather(self, *awaitables: Any, deadline: float | None = None) -> list[Any]:
+        """Await all *awaitables* through this carrier's park point.
+
+        With *deadline* (carrier clock) stop waiting then: the awaitables not done by then are
+        cancelled and give ``None`` (a reply lost on a lossy link).
+        """
+        if deadline is None:
+            return await self.wait_for(asyncio.gather(*awaitables))
+        # 2026-11-16 D-134: a cancelled send_awaitable future ignores a late reply; its mango
+        # handler stays registered. shortcut: one stale handler per lost reply, pop them if
+        # memory ever matters (popping lets a late reply fall through to normal dispatch).
+        futures = [asyncio.ensure_future(a) for a in awaitables]
+        timer = asyncio.ensure_future(self.sleep(max(0.0, deadline - self.now())))
+        pending = set(futures)
+        # no asyncio.gather around the futures: cancelling one logs "exception never retrieved"
+        while pending and not timer.done():
+            await self.wait_for(
+                asyncio.wait({*pending, timer}, return_when=asyncio.FIRST_COMPLETED)
+            )
+            pending = {f for f in pending if not f.done()}
+        for task in (timer, *pending):
+            task.cancel()
+        return [f.result() if f.done() and not f.cancelled() else None for f in futures]
 
     async def race(self, *awaitables: Any) -> None:
         """Wait until the first of *awaitables* resolves, then cancel the rest.

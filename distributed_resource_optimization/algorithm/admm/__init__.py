@@ -12,6 +12,7 @@ from .core import (
     ADMMStart,
     create_admm_start,
 )
+from .exchange_admm import ADMMExchangeGlobalActor, create_exchange_admm_coordinator
 from .flex_actor import ADMMFlexActor, create_admm_flex_actor_one_to_many
 from .sharing_admm import (
     ADMMSharingData,
@@ -34,6 +35,8 @@ __all__ = [
     "ADMMConsensusGlobalActor",
     "create_consensus_target_reach_admm_coordinator",
     "create_admm_start_consensus",
+    "ADMMExchangeGlobalActor",
+    "create_exchange_admm_coordinator",
     "ADMMSharingData",
     "ADMMSharingGlobalActor",
     "ADMMTargetDistanceObjective",

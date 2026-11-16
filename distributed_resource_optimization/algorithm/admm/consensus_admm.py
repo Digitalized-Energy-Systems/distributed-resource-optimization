@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMStart
+from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMStart, _norm
 
 
 @dataclass
@@ -74,8 +74,12 @@ class ADMMConsensusGlobalActor(ADMMGlobalActor):
     ) -> np.ndarray:
         return -z[i] + u[i]
 
+    # 2026-11-13 Q-E5 (D-121): stacked 2-norms (Boyd et al. 2011 §3.3), were max-norms
     def primal_residual(self, x: list[np.ndarray], z: list[np.ndarray]) -> float:
-        return float(max(np.linalg.norm(xi - zi) for xi, zi in zip(x, z)))
+        return _norm([xi - zi for xi, zi in zip(x, z)])
+
+    def dual_residual(self, z, z_old, rho, x=None, x_old=None) -> float:
+        return rho * _norm([zi - zo for zi, zo in zip(z, z_old)])
 
 
 # ---------------------------------------------------------------------------

@@ -63,7 +63,8 @@ async def test_flex_admm_sharing_priority_third():
     # Actors 0 and 1 should be near zero; actor 2 should carry most of the load
     assert np.allclose(actors[0].x, [0, 0, 0], atol=1e-2)
     assert np.allclose(actors[1].x, [0, 0, 0], atol=1e-2)
-    assert np.allclose(actors[2].x, [-3.983, 0, 3.983], atol=1e-2)
+    # true optimum (abs/rel tol 1e-9); the old max-norm stop rule ended at -3.983 (D-121)
+    assert np.allclose(actors[2].x, [-4.0, 0, 4.0], atol=1e-2)
 
 
 @pytest.mark.asyncio
