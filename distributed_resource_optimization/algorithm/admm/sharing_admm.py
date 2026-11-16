@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import cvxpy as cp
 import numpy as np
 
-from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMGlobalObjective, ADMMStart
+from .core import ADMMGenericCoordinator, ADMMGlobalActor, ADMMGlobalObjective, ADMMStart, _norm
 
 # ---------------------------------------------------------------------------
 # Global objective (currently informational only)
@@ -157,9 +157,22 @@ class ADMMSharingGlobalActor(ADMMGlobalActor):
         x_avg = sum(x) / len(x)
         return -x[i] + x_avg - z + u
 
+    # 2026-11-13 Q-E5 (D-121): Boyd et al. 2011 eq. 3.12 for the sharing form (§7.3) with the
+    # stacked z_i = x_i - x̄ + z̄: ||r|| = √N·||x̄ - z̄||, s_i = ρ(z_i - z_i_old); was a max-norm
     def primal_residual(self, x: list[np.ndarray], z: np.ndarray) -> float:
-        x_avg = sum(x) / len(x)
-        return float(np.max(np.abs(x_avg - z)))
+        return float(np.sqrt(len(x)) * np.linalg.norm(sum(x) / len(x) - z))
+
+    def dual_residual(self, z, z_old, rho, x=None, x_old=None) -> float:
+        return rho * _norm([_stacked(x, z, i) - _stacked(x_old, z_old, i) for i in range(len(x))])
+
+    def eps_scales(self, x, z, u, rho) -> tuple[float, float]:
+        stacked_z = [_stacked(x, z, i) for i in range(len(x))]
+        return max(_norm(x), _norm(stacked_z)), rho * np.sqrt(len(x)) * float(np.linalg.norm(u))
+
+
+def _stacked(x: list[np.ndarray], z: np.ndarray, i: int) -> np.ndarray:
+    """Participant i's z_i of the sharing form (x̄ and z̄ are the averages)."""
+    return x[i] - sum(x) / len(x) + z
 
 
 # ---------------------------------------------------------------------------

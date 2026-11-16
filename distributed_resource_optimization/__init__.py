@@ -83,6 +83,10 @@ from .algorithm.admm.core import (
     ADMMStart,
     create_admm_start,
 )
+from .algorithm.admm.exchange_admm import (
+    ADMMExchangeGlobalActor,
+    create_exchange_admm_coordinator,
+)
 from .algorithm.admm.flex_actor import (
     ADMMFlexActor,
     create_admm_flex_actor_one_to_many,
@@ -295,6 +299,8 @@ __all__ = [
     "create_admm_start_consensus",
     "ADMMSharingData",
     "ADMMSharingGlobalActor",
+    "ADMMExchangeGlobalActor",
+    "create_exchange_admm_coordinator",
     "ADMMTargetDistanceObjective",
     "create_admm_sharing_data",
     "create_sharing_admm_start",

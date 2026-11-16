@@ -28,8 +28,10 @@ from mango import (  # noqa: E402
 from distributed_resource_optimization import (  # noqa: E402
     create_admm_flex_actor_one_to_many,
     create_admm_sharing_data,
+    create_exchange_admm_coordinator,  # noqa: E402
     create_sharing_target_distance_admm_coordinator,
 )
+from distributed_resource_optimization.algorithm.admm import core as admm_core  # noqa: E402
 from distributed_resource_optimization.algorithm.admm.sharing_admm import (  # noqa: E402
     create_admm_start,
 )
@@ -97,3 +99,43 @@ async def test_sharing_admm_coordinator_completes_under_discrete_stepping():
     expected = np.array([0.06667, 0.33333, -0.66667])
     for actor in actors:
         assert np.allclose(actor.x, expected, atol=1e-2)
+
+
+@pytest.mark.parametrize("drop", [0, 1])
+async def test_exchange_admm_round_deadline_under_discrete_stepping(drop):
+    """Round deadline on the simulation clock (D-134): a dropped reply ends its round at the
+    deadline (drop=1); a lossless run misses nothing. round_timeout has slack over the round
+    trip (2·delay): a reply due exactly at the deadline is a tie mango's step order decides."""
+    from tests.admm.test_exchange_admm import actors, optimum
+
+    parts = actors(drop)
+    follower_agents = [agent_composed_of(DistributedOptimizationRole(a)) for a in parts]
+    delay_s = 1.0
+    coordinator = create_exchange_admm_coordinator(
+        abs_tol=1e-6, rel_tol=1e-6, max_iters=5000, round_timeout=3 * delay_s
+    )
+    coordinator_role = CoordinatorRole(coordinator)
+    coord_agent = agent_composed_of(coordinator_role)
+    comm = SimpleCommunicationSimulation(default_delay_s=delay_s)
+
+    async with run_with_simulation(coord_agent, *follower_agents, communication_sim=comm) as world:
+        with create_topology() as topo:
+            n_coord = topo.add_node(coord_agent)
+            for fa in follower_agents:
+                topo.add_edge(n_coord, topo.add_node(fa))
+        await world.send_message(
+            StartCoordinatedDistributedOptimization(admm_core.create_admm_start(None, 2)),
+            receiver_addr=coord_agent.addr,
+            sender_id=None,
+        )
+        for _ in range(20 * _MAX_EVENT_STEPS):
+            fut = coordinator_role._done_future
+            if fut is not None and fut.done():
+                break
+            await step_simulation(world, step_size_s=DISCRETE_EVENT)
+        else:
+            raise AssertionError("coordinator did not finish within the step budget")
+        await coordinator_role.wait_done()
+
+    assert coordinator.missing_replies == drop
+    assert np.allclose([p.x for p in parts], optimum(True), atol=1e-3)
