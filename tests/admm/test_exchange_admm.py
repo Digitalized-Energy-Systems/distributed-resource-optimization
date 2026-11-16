@@ -60,7 +60,7 @@ async def test_exchange_admm_reaches_closed_form_optimum(surplus, mu):
 
     x = np.array([p.x for p in parts])
     assert np.allclose(x, optimum(surplus), atol=1e-3)
-    assert coordinator.iterations < 5000  # stopped by eq. 3.12, not by the budget
+    assert coordinator.converged and coordinator.iterations < 5000  # eq. 3.12 stopped it
     if surplus:
         assert x[:, 0].sum() > 1.0 and abs(x[:, 1].sum()) < 1e-3  # surplus only in element 0
 

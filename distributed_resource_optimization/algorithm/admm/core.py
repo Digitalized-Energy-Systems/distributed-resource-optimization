@@ -50,10 +50,13 @@ class ADMMMessage(OptimizationMessage):
 
     :param v: Scaled consensus/sharing vector (the local QP reference point).
     :param rho: ADMM penalty parameter.
+    :param k: Iteration of the coordinator's loop (1, 2, …) — a participant that missed a
+        lossy scatter still knows which iteration it answers.
     """
 
     v: np.ndarray
     rho: float
+    k: int = 0
 
 
 @dataclass
@@ -262,6 +265,8 @@ class ADMMGenericCoordinator(Coordinator):
         self.tau = tau
         self.round_timeout = round_timeout
         self.iterations = 0
+        self.converged = False  # the last run stopped by the residual test, not max_iters
+        self.stop_time: float | None = None  # carrier time at which the last run stopped
         self.missing_replies = 0  # replies not in by their round deadline (round_timeout)
 
     async def start_optimization(
@@ -309,7 +314,7 @@ class ADMMGenericCoordinator(Coordinator):
             futures: list[asyncio.Future] = []
             for i, addr in enumerate(participant_addrs):
                 correction = actor.actor_correction(x, z, u, i)
-                fut = carrier.send_awaitable(ADMMMessage(v=correction, rho=rho), addr)
+                fut = carrier.send_awaitable(ADMMMessage(v=correction, rho=rho, k=k), addr)
                 futures.append(fut)
 
             # Await all replies simultaneously (carrier park point: the
@@ -344,6 +349,7 @@ class ADMMGenericCoordinator(Coordinator):
                 eps_dual = np.sqrt(m * n) * self.abs_tol + self.rel_tol * dual_scale
                 stop = bool(r_norm <= eps_pri and s_norm <= eps_dual)
 
+            self.converged = bool(stop)
             if stop:
                 logger.debug("ADMM converged in %d iterations.", k)
                 break
@@ -365,6 +371,7 @@ class ADMMGenericCoordinator(Coordinator):
                 )
 
         self.rho = rho  # persist adapted penalty for callers reusing this loop
+        self.stop_time = carrier.now()
         return x, z, u
 
 
