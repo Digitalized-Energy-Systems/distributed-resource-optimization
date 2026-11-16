@@ -17,11 +17,12 @@ resources. Algorithms are implemented independently of any particular communicat
 backend — a pluggable *carrier* abstraction lets you run the same algorithm code in a
 single asyncio process or across a real network via [mango-agents](https://github.com/OFFIS-DAI/mango).
 
-Four algorithm families are available:
+Five algorithm families are available:
 
 | Algorithm | Problem type | Coordination |
 |-----------|-------------|--------------|
 | **ADMM Sharing** | Continuous resource allocation, sum-to-target | Coordinator required |
+| **ADMM Exchange** | Continuous exchange, sum to zero (or ≥ 0 with a free surplus) | Coordinator required |
 | **ADMM Consensus** | Agents converge to a shared target vector | Coordinator required |
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Consensus + innovations** | Agree on a shared vector λ; local mismatches sum to zero | Coordinator starts and stops |

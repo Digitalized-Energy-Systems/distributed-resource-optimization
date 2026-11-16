@@ -31,6 +31,21 @@ The ADMM iterations with dual variable :math:`u` and penalty :math:`\rho` are:
 Use :func:`~distributed_resource_optimization.create_sharing_target_distance_admm_coordinator`
 and :func:`~distributed_resource_optimization.create_admm_start`.
 
+Exchange
+~~~~~~~~
+
+The exchange problem (Boyd et al. 2011, §7.3.2) is sharing with :math:`g` the indicator of
+:math:`\sum_i x_i = 0`, or with ``surplus=True`` of :math:`\sum_i x_i \ge 0`:
+
+.. math::
+
+   z^{k+1} = 0 \quad\text{or}\quad z^{k+1} = \max(\bar{x}^{\,k+1} + u^k,\, 0)
+
+Use :func:`~distributed_resource_optimization.create_exchange_admm_coordinator`
+(``surplus``, plus the coordinator parameters below) and start it with
+``create_admm_start(None, length)``; all iterates start at zero. Participants answer
+``ADMMMessage(v, rho)`` with :math:`\arg\min f_i(x) + \tfrac{\rho}{2}\lVert x + v\rVert^2`.
+
 Consensus
 ~~~~~~~~~
 
@@ -102,6 +117,21 @@ Coordinator Parameters
    * - ``rel_tol``
      - ``1e-3``
      - Relative primal/dual residual tolerance
+   * - ``mu``
+     - ``None``
+     - Residual balancing (Boyd et al. 2011, eq. 3.13): ``rho`` is multiplied by ``tau`` when
+       the primal residual exceeds ``mu`` times the dual one, divided when the reverse holds
+   * - ``tau``
+     - ``2.0``
+     - Factor of the residual balancing
+   * - ``round_timeout``
+     - ``None``
+     - Lossy links: a round ends at the latest this long after its scatter (carrier clock); a
+       participant whose reply is missing keeps its last ``x``
+
+The stop test is Boyd et al. 2011, eq. 3.12, with stacked 2-norms of the primal and dual
+residuals. After a run the coordinator holds ``iterations``, ``converged``, ``stop_time`` and
+``missing_replies``.
 
 Complete Example — ADMM Sharing
 ---------------------------------
@@ -123,7 +153,7 @@ Complete Example — ADMM Sharing
    [...]
    >>> np.allclose(flex1.x, [0, 0, 0], atol=1e-2)
    True
-   >>> np.allclose(flex3.x, [-3.983, 0, 3.983], atol=1e-2)
+   >>> np.allclose(flex3.x, [-4.0, 0, 4.0], atol=1e-2)
    True
 
 Complete Example — ADMM Consensus
@@ -150,8 +180,8 @@ Complete Example — ADMM Consensus
 
    If ADMM diverges or converges slowly:
 
-   - Reduce ``rho`` when primal residuals dominate.
-   - Increase ``rho`` when dual residuals dominate.
+   - Increase ``rho`` when primal residuals dominate.
+   - Reduce ``rho`` when dual residuals dominate (or set ``mu`` to balance them automatically).
    - Tighten ``abs_tol`` / ``rel_tol`` for higher precision.
    - Increase ``max_iters`` if the warning "reached max iterations" appears.
 

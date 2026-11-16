@@ -94,7 +94,7 @@ The simplest way.  Internally wraps everything in a ``SimpleCarrier``.
    >>> start = create_admm_start(create_admm_sharing_data([-4, 0, 6], [5, 1, 1]))
    >>> asyncio.run(start_coordinated_optimization([flex1, flex2, flex3], coordinator, start))
    [...]
-   >>> np.allclose(flex3.x, [-3.983, 0, 3.983], atol=1e-2)
+   >>> np.allclose(flex3.x, [-4.0, 0, 4.0], atol=1e-2)
    True
 
 
