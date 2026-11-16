@@ -135,7 +135,16 @@ class Carrier(ABC):
         # handler stays registered. shortcut: one stale handler per lost reply, pop them if
         # memory ever matters (popping lets a late reply fall through to normal dispatch).
         futures = [asyncio.ensure_future(a) for a in awaitables]
-        await self.race(asyncio.gather(*futures), self.sleep(max(0.0, deadline - self.now())))
+        timer = asyncio.ensure_future(self.sleep(max(0.0, deadline - self.now())))
+        pending = set(futures)
+        # no asyncio.gather around the futures: cancelling one logs "exception never retrieved"
+        while pending and not timer.done():
+            await self.wait_for(
+                asyncio.wait({*pending, timer}, return_when=asyncio.FIRST_COMPLETED)
+            )
+            pending = {f for f in pending if not f.done()}
+        for task in (timer, *pending):
+            task.cancel()
         return [f.result() if f.done() and not f.cancelled() else None for f in futures]
 
     async def race(self, *awaitables: Any) -> None:

@@ -101,11 +101,13 @@ async def test_sharing_admm_coordinator_completes_under_discrete_stepping():
         assert np.allclose(actor.x, expected, atol=1e-2)
 
 
-@pytest.mark.parametrize("drop", [0, 1])
+@pytest.mark.parametrize("drop", [(), (20,)])
 async def test_exchange_admm_round_deadline_under_discrete_stepping(drop):
     """Round deadline on the simulation clock (D-134): a dropped reply ends its round at the
-    deadline (drop=1); a lossless run misses nothing. round_timeout has slack over the round
-    trip (2·delay): a reply due exactly at the deadline is a tie mango's step order decides."""
+    deadline; a lossless run misses nothing. round_timeout has slack over the round trip
+    (2·delay): a reply due exactly at the deadline is a tie mango's step order decides. The
+    deadline counts from the round's scatter (D-137): a loss in round 20 costs one
+    round_timeout, not the slack of the 19 clean rounds before it."""
     from tests.admm.test_exchange_admm import actors, optimum
 
     parts = actors(drop)
@@ -137,5 +139,8 @@ async def test_exchange_admm_round_deadline_under_discrete_stepping(drop):
             raise AssertionError("coordinator did not finish within the step budget")
         await coordinator_role.wait_done()
 
-    assert coordinator.missing_replies == drop
+    assert coordinator.missing_replies == len(drop)
+    clean = coordinator.iterations - len(drop)
+    # the start message takes one delay; a clean round 2, a round ended by its deadline 3
+    assert coordinator.stop_time == pytest.approx((1 + 2 * clean + 3 * len(drop)) * delay_s)
     assert np.allclose([p.x for p in parts], optimum(True), atol=1e-3)

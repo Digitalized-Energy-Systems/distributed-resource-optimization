@@ -239,9 +239,10 @@ class ADMMGenericCoordinator(Coordinator):
     :param mu: Residual balancing (Boyd et al. 2011 eq. 3.13): ρ·τ when ||r|| > μ||s||,
         ρ/τ when ||s|| > μ||r||, the scaled dual u rescaled inversely. None = off.
     :param tau: Factor of the residual balancing (default 2).
-    :param round_timeout: Lossy links: round k ends at the latest at t0 + k·round_timeout
-        (carrier clock, t0 = run start); a participant whose reply is missing then keeps its
-        last x. None = wait for every reply. Give it slack over the longest round trip: a reply
+    :param round_timeout: Lossy links: a round ends at the latest round_timeout after its
+        scatter (carrier clock); a participant whose reply is missing then keeps its last x,
+        and a round without any reply is not tested for convergence. None = wait for every
+        reply. Give it slack over the longest round trip: a reply
         due exactly at the deadline is a tie (under mango stepping the step order decides).
     """
 
@@ -307,7 +308,6 @@ class ADMMGenericCoordinator(Coordinator):
         )
         z = actor.init_z(n, m)
         u = actor.init_u(n, m)
-        t0 = carrier.now()
 
         for k in range(1, self.max_iters + 1):
             # 1. Send ADMMMessage to all participants in parallel, collect futures
@@ -319,8 +319,10 @@ class ADMMGenericCoordinator(Coordinator):
 
             # Await all replies simultaneously (carrier park point: the
             # replies arrive as messages, possibly in a later sim step)
-            # 2026-11-16 D-134: lossy runs end the round at its deadline, a missing x_i stays
-            deadline = None if self.round_timeout is None else t0 + k * self.round_timeout
+            # 2026-11-16 D-134: lossy runs end the round at its deadline, a missing x_i stays;
+            # D-137: the deadline counts from this round's scatter (a grid t0 + k·round banked
+            # the slack of every clean round and one late loss then waited for all of it)
+            deadline = None if self.round_timeout is None else carrier.now() + self.round_timeout
             replies = await carrier.gather(*futures, deadline=deadline)
             aux = [getattr(reply, "aux", None) for reply in replies]
             x_old = list(x)
@@ -342,6 +344,8 @@ class ADMMGenericCoordinator(Coordinator):
             r_norm = actor.primal_residual(x, z)
             s_norm = actor.dual_residual(z, z_old, rho, x=x, x_old=x_old)
             stop = actor.should_stop(r_norm, s_norm, aux, self.abs_tol)
+            if replies and all(reply is None for reply in replies):
+                stop = False  # nothing arrived: at the flat start r = s = 0 would "converge"
             if stop is None:
                 # 2026-11-13 Q-E5 (D-121): eq. 3.12 with 2-norms (was max-norms)
                 primal_scale, dual_scale = actor.eps_scales(x, z, u, rho)
