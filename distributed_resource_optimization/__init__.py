@@ -11,6 +11,8 @@ Algorithms
 * **Consensus + innovations** — participants agree on a shared vector λ while
   local innovation terms drive it to where their mismatches sum to zero
   (Kar & Hug 2012; Hug, Kar & Wu 2015).
+* **DEED-ADMM** — peer ADMM with a distributed gradient tracker; neighbours
+  exchange (λ, ξ) each iteration (Zhu et al. 2025).
 * **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
   horizon.
 
@@ -83,6 +85,9 @@ from .algorithm.admm.core import (
     ADMMStart,
     create_admm_start,
 )
+
+# DEED-ADMM (Zhu et al. 2025)
+from .algorithm.admm.deed_admm import DEEDADMMAlgorithm, DEEDMessage, DEEDParticipant
 from .algorithm.admm.exchange_admm import (
     ADMMExchangeGlobalActor,
     create_exchange_admm_coordinator,
@@ -314,6 +319,10 @@ __all__ = [
     "ConsensusReport",
     "ConsensusResult",
     "ConsensusStart",
+    # DEED-ADMM
+    "DEEDADMMAlgorithm",
+    "DEEDMessage",
+    "DEEDParticipant",
     "power_step",
     # Diffusion
     "DiffusionActor",

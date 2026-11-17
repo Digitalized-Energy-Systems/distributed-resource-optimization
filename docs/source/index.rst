@@ -89,6 +89,15 @@ Algorithms
 
       :doc:`algorithms/consensus`
 
+   .. grid-item-card::
+      :shadow: sm
+
+      **DEED-ADMM**
+      ^^^
+      Peer ADMM with a distributed gradient tracker: neighbours exchange (λ, ξ).
+
+      :doc:`algorithms/deed_admm`
+
 ----
 
 Quick look
@@ -203,6 +212,7 @@ Where to go next
    algorithms/admm
    algorithms/cohda
    algorithms/consensus
+   algorithms/deed_admm
 
 .. toctree::
    :hidden:

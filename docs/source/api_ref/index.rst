@@ -34,6 +34,9 @@ ADMM
 .. automodule:: distributed_resource_optimization.algorithm.admm.sharing_admm
    :members:
 
+.. automodule:: distributed_resource_optimization.algorithm.admm.deed_admm
+   :members:
+
 Consensus
 ---------
 
