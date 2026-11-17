@@ -14,6 +14,6 @@ Whenever new code is written here, first invoke the ponytail skill (`ponytail:po
   of `main` was moved out to energy-scheduling-benchmark (decision A2, done 2026-11-03).
 - Use mango 2.4 features (topology, communication sim, scheduling, `@on_message`, tracked
   replies) before writing own code; what is native vs. own: workspace
-  `docs/mango-2.4-features.md` → Status 2026-11-09.
+  `docs/mango-evaluation.md` (native, gaps, considered and not used).
 
 Repo split (all three): see `README.md` § Scope of this package.
