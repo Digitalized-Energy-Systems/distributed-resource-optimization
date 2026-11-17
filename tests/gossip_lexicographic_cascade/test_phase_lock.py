@@ -227,7 +227,9 @@ async def _run(
 
 def _tier_timeouts(caplog) -> int:
     return sum(
-        1 for rec in caplog.records if re.search(r"timed out at tier \d+ iter \d+", rec.getMessage())
+        1
+        for rec in caplog.records
+        if re.search(r"timed out at tier \d+ iter \d+", rec.getMessage())
     )
 
 

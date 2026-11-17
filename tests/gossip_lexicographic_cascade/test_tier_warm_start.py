@@ -90,8 +90,11 @@ async def _two_rounds(*, per_tier: bool, drop_peer_in_round_2: bool = False):
 
     participants = [
         create_gossip_cascade_participant(
-            c.cp_id, c.capacity_by_sector, on_commit=make_cb(c.cp_id),
-            warm_start=not per_tier, warm_start_per_tier=per_tier,
+            c.cp_id,
+            c.capacity_by_sector,
+            on_commit=make_cb(c.cp_id),
+            warm_start=not per_tier,
+            warm_start_per_tier=per_tier,
         )
         for c in cps
     ]
@@ -105,9 +108,15 @@ async def _two_rounds(*, per_tier: bool, drop_peer_in_round_2: bool = False):
             current[0] = round_id - 1
             members = ids[:-1] if (drop_peer_in_round_2 and round_id == 2) else ids
             start = create_gossip_cascade_start(
-                round_id=round_id, participants=members, demands=round_demands,
-                iter_timeout_s=_ITER_TIMEOUT_S, round_timeout_s=8.0, tier_fair_deadline=True,
-                phase_tolerant_wait=True, rho_rescale_first=True, **_FIXED_RHO,
+                round_id=round_id,
+                participants=members,
+                demands=round_demands,
+                iter_timeout_s=_ITER_TIMEOUT_S,
+                round_timeout_s=8.0,
+                tier_fair_deadline=True,
+                phase_tolerant_wait=True,
+                rho_rescale_first=True,
+                **_FIXED_RHO,
             )
             await world.send_message(start, receiver_addr=agents[0].addr, sender_id=None)
             await _drive(world, rounds[current[0]], len(members))
@@ -121,7 +130,9 @@ async def test_per_tier_seed_restarts_the_next_round_near_its_answer():
     cold = solve_cp_distributed_lexicographic_cascade(cps, _second_round(demands), **_FIXED_RHO)
     assert all(v[1] for v in second.values()), second
     for cp in cps:
-        assert second[cp.cp_id][0] == pytest.approx(float(exact.factor_by_cp[cp.cp_id][0]), abs=1e-2)
+        assert second[cp.cp_id][0] == pytest.approx(
+            float(exact.factor_by_cp[cp.cp_id][0]), abs=1e-2
+        )
     assert max(v[2] for v in second.values()) <= 0.5 * cold.iterations
     assert max(v[2] for v in second.values()) <= 0.5 * max(v[2] for v in first.values())
 
@@ -142,4 +153,6 @@ async def test_changed_membership_falls_back_to_a_cold_dual():
     exact = solve_cp_distributed_lexicographic_cascade(survivors, _second_round(demands), **_EXACT)
     assert all(v[1] for v in second.values()), second
     for cp in survivors:
-        assert second[cp.cp_id][0] == pytest.approx(float(exact.factor_by_cp[cp.cp_id][0]), abs=1e-2)
+        assert second[cp.cp_id][0] == pytest.approx(
+            float(exact.factor_by_cp[cp.cp_id][0]), abs=1e-2
+        )
