@@ -85,6 +85,26 @@ class GossipCascadeStart(OptimizationMessage):
     # first tier spend it all. False reproduces the single-deadline behaviour
     # bit-for-bit.
     tier_fair_deadline: bool = False
+    # Keep every peer's Iter under its (tier, iter) and let each iteration
+    # consume exactly the peers' same-iteration contributions, instead of
+    # counting only Iters that arrive while we sit in that iteration. The
+    # initiator broadcasts Init and runs iteration 0 in the same instant, so
+    # it starts a hop ahead of everyone; with the arrival-time count the two
+    # sides lock one iteration apart forever and every iteration on every
+    # side pays the full iter_timeout_s. Buffering by phase keeps the iterate
+    # sequence the synchronous one under any link timing (a slow peer costs
+    # hops, never a timeout), and the stopping test uses every CP's
+    # previous-iteration r_change (carried in the Iter) so peers leave a tier
+    # together. False reproduces the arrival-time count and the local-only
+    # stopping test bit-for-bit.
+    phase_tolerant_wait: bool = False
+    # Rescale (rho, u) on this iteration's residuals BEFORE the r-update that
+    # produces the next broadcast, clamped to the reference kernel's
+    # [rho/1e6, rho*1e6], as the kernel does; otherwise the broadcast x_i is
+    # computed against the pre-rescale dual and, with adaptive_rho, the gossip
+    # iterate sequence can limit-cycle where the kernel converges. False keeps
+    # the unclamped r-update-first order bit-for-bit.
+    rho_rescale_first: bool = False
 
 
 @dataclass
@@ -114,6 +134,8 @@ class GossipCascadeInit(OptimizationMessage):
     normalize: bool = False
     r_regularization_relative: bool = False
     tier_fair_deadline: bool = False
+    phase_tolerant_wait: bool = False
+    rho_rescale_first: bool = False
 
 
 @dataclass
@@ -124,7 +146,9 @@ class GossipIter(OptimizationMessage):
     :param x_i: Contribution ``r_i · c_i`` on the round's sector
         ordering, shape ``(n_sec, horizon)``.
     :param rho: Sender's current adaptive :math:`\\rho` (kept in sync).
-    :param r_change: ``max_k |r_i^k_new - r_i^k_prev|``; diagnostics only.
+    :param r_change: ``max_k |r_i^k_new - r_i^k_prev|`` of the sender's
+        previous iteration; part of the stopping test under
+        ``phase_tolerant_wait``, diagnostics otherwise.
     :param done: Sender has committed; stop waiting for its Iters.
     """
 
@@ -165,6 +189,8 @@ class _RoundCtx:
     iter_timeout_s: float
     round_timeout_s: float
     tier_fair_deadline: bool
+    phase_tolerant_wait: bool
+    rho_rescale_first: bool
     inner_iters_max: int
     inner_abs_tol: float
     all_tiers: list[int]
@@ -183,8 +209,13 @@ class _RoundCtx:
     u: np.ndarray = field(default_factory=lambda: np.zeros(0))
     theta: np.ndarray = field(default_factory=lambda: np.zeros(0))
     rho_f: float = 1.0
+    last_r_change: float = 0.0
     # Gossip bookkeeping.
     last_x_per_peer: dict[str, np.ndarray] = field(default_factory=dict)
+    # (tier, iter) -> cp_id -> (x_i, r_change); phases behind ours are pruned.
+    iters_by_phase: dict[tuple[int, int], dict[str, tuple[np.ndarray, float]]] = field(
+        default_factory=dict
+    )
     reported_this_iter: set = field(default_factory=set)
     done_peers: set = field(default_factory=set)
     iter_ready: asyncio.Event | None = None
@@ -209,6 +240,12 @@ class GossipParticipant(DistributedAlgorithm):
         ``round_timeout_s / iter_timeout_s`` iterations a cold start cannot
         converge for realistic N, so every commit is an early partial iterate;
         carry-over lets successive rounds continue one another.
+    :param warm_start_per_tier: Seed every tier from the state the same tier
+        converged to in the previous committed round, not just tier 0 from
+        the round's end. Each tier is its own sharing-ADMM problem with its
+        own dual, so the end-of-round state is a poor start for the top of
+        the next ladder; a per-tier snapshot restarts each tier at its
+        previous fixed point, and consecutive rounds usually differ little.
     """
 
     def __init__(
@@ -218,12 +255,15 @@ class GossipParticipant(DistributedAlgorithm):
         *,
         on_commit: Callable[[np.ndarray, bool, int], None] | None = None,
         warm_start: bool = False,
+        warm_start_per_tier: bool = False,
     ) -> None:
         self.cp_id = cp_id
         self._capacity_by_sector = dict(capacity_by_sector)
         self._on_commit = on_commit
         self.warm_start = bool(warm_start)
+        self.warm_start_per_tier = bool(warm_start_per_tier)
         self._warm_state: dict[str, Any] | None = None
+        self._warm_tiers: dict[int, dict[str, Any]] = {}
         self._ctx: _RoundCtx | None = None  # None until first Init/Start
         self._run_task: asyncio.Task | None = None
         # Monotone token: a _begin_round suspended in its cancel-await aborts
@@ -282,6 +322,8 @@ class GossipParticipant(DistributedAlgorithm):
             iter_timeout_s=start.iter_timeout_s,
             round_timeout_s=start.round_timeout_s,
             tier_fair_deadline=start.tier_fair_deadline,
+            phase_tolerant_wait=start.phase_tolerant_wait,
+            rho_rescale_first=start.rho_rescale_first,
             inner_iters_max=start.inner_iters_max,
             inner_abs_tol=start.inner_abs_tol,
             minimize_usage=start.minimize_usage,
@@ -328,11 +370,17 @@ class GossipParticipant(DistributedAlgorithm):
         ctx.last_x_per_peer[msg.cp_id] = x_i
         if msg.done:
             ctx.done_peers.add(msg.cp_id)
+        phase = (int(msg.tier_index), int(msg.iter_k))
+        if ctx.phase_tolerant_wait:
+            ctx.iters_by_phase.setdefault(phase, {})[msg.cp_id] = (x_i, float(msg.r_change))
         # Advance the loop once every live peer has reported this iter.
-        if msg.tier_index == ctx.tier_index and msg.iter_k == ctx.iter_k:
+        counted = phase == (ctx.tier_index, ctx.iter_k)
+        if counted:
             ctx.reported_this_iter.add(msg.cp_id)
+        released = msg.done and ctx.phase_tolerant_wait
+        if (counted or released) and ctx.iter_ready is not None:
             live = (set(ctx.participants) - {self.cp_id}) - ctx.done_peers
-            if ctx.reported_this_iter >= live and ctx.iter_ready is not None:
+            if ctx.reported_this_iter >= live:
                 ctx.iter_ready.set()
 
     # ------------------------------------------------------------------
@@ -409,6 +457,8 @@ class GossipParticipant(DistributedAlgorithm):
             iter_timeout_s=float(init.iter_timeout_s),
             round_timeout_s=float(init.round_timeout_s),
             tier_fair_deadline=bool(init.tier_fair_deadline),
+            phase_tolerant_wait=bool(init.phase_tolerant_wait),
+            rho_rescale_first=bool(init.rho_rescale_first),
             inner_iters_max=int(init.inner_iters_max),
             inner_abs_tol=float(init.inner_abs_tol),
             all_tiers=all_tiers,
@@ -439,17 +489,25 @@ class GossipParticipant(DistributedAlgorithm):
         and a stale dual can pin r at its clip bound for several ~10-iteration
         rounds — an over-commit transient landing exactly at failure time.
         """
-        ws = self._warm_state
-        if ws is None or int(ws["horizon"]) != ctx.horizon:
-            return
-        if not all(np.all(np.isfinite(ws[k])) for k in ("r", "z", "u")):
+        if not self._apply_snapshot(ctx, self._warm_state):
             self._warm_state = None
-            return
+
+    def _apply_tier_warm_state(self, ctx: _RoundCtx, tier_pos: int) -> None:
+        if not self._apply_snapshot(ctx, self._warm_tiers.get(tier_pos)):
+            self._warm_tiers.pop(tier_pos, None)
+
+    @staticmethod
+    def _apply_snapshot(ctx: _RoundCtx, ws: dict[str, Any] | None) -> bool:
+        """Seed *ctx* from *ws*; False when the snapshot is unusable."""
+        if ws is None or int(ws["horizon"]) != ctx.horizon:
+            return True
+        if not all(np.all(np.isfinite(ws[k])) for k in ("r", "z", "u")):
+            return False
         ctx.r = np.clip(np.asarray(ws["r"], dtype=float).copy(), 0.0, 1.0)
         # x_self consistent with the warm r under the CURRENT capacity frame.
         ctx.x_self = ctx.r[np.newaxis, :] * ctx.cap_vec[:, np.newaxis]
         if sorted(ctx.participants) != ws.get("participants"):
-            return  # consensus frame changed: keep r, drop stale duals/rho
+            return True  # consensus frame changed: keep r, drop stale duals/rho
         # z/u are MW in the SAVING round's normalised frame; if this round's
         # demands changed the characteristic scale, carrying them over raw
         # would inject a wrongly-scaled dual.
@@ -464,9 +522,14 @@ class GossipParticipant(DistributedAlgorithm):
         rho_f = float(ws.get("rho_f", ctx.rho_f))
         if rho_f > 0.0 and math.isfinite(rho_f):
             ctx.rho_f = rho_f
+        return True
 
     def _save_warm_state(self, ctx: _RoundCtx) -> None:
-        self._warm_state = {
+        self._warm_state = self._snapshot(ctx)
+
+    @staticmethod
+    def _snapshot(ctx: _RoundCtx) -> dict[str, Any]:
+        return {
             "sectors": list(ctx.sectors),
             "participants": sorted(ctx.participants),
             "horizon": int(ctx.horizon),
@@ -489,6 +552,7 @@ class GossipParticipant(DistributedAlgorithm):
         N = len(ctx.participants)
         converged_total = True
         total_iters = 0
+        tier_snapshots: dict[int, dict[str, Any]] = {}
 
         try:
             tier_loop_count = max(len(ctx.all_tiers), 1)
@@ -500,6 +564,8 @@ class GossipParticipant(DistributedAlgorithm):
                 slack_max = ctx.base_supply - ctx.theta
                 sigma = np.zeros_like(D_tau)
                 converged_round = False
+                if self.warm_start_per_tier:
+                    self._apply_tier_warm_state(ctx, tier_pos)
                 # One shared round deadline starves the tail of the ladder: the
                 # budget is carrier-clock time, and under a simulation clock each
                 # iteration costs a message round-trip, so the whole cascade gets
@@ -528,12 +594,20 @@ class GossipParticipant(DistributedAlgorithm):
                         )
                         break
                     ctx.iter_k = iter_k
-                    ctx.reported_this_iter = set()
+                    live_peers_now = set(ctx.participants) - {self.cp_id} - ctx.done_peers
+                    here = (tier_pos, iter_k)
+                    if ctx.phase_tolerant_wait:
+                        for phase in [ph for ph in ctx.iters_by_phase if ph < here]:
+                            del ctx.iters_by_phase[phase]
+                        ctx.reported_this_iter = set(ctx.iters_by_phase.get(here, {}))
+                    else:
+                        ctx.reported_this_iter = set()
                     ctx.iter_ready = asyncio.Event()
 
                     # No live peers left to wait for → skip the timeout.
-                    live_peers_now = set(ctx.participants) - {self.cp_id} - ctx.done_peers
-                    if not live_peers_now:
+                    if not live_peers_now or (
+                        ctx.phase_tolerant_wait and ctx.reported_this_iter >= live_peers_now
+                    ):
                         ctx.iter_ready.set()
 
                     # Broadcast own current x_i.
@@ -544,7 +618,7 @@ class GossipParticipant(DistributedAlgorithm):
                         cp_id=self.cp_id,
                         x_i=ctx.x_self.copy(),
                         rho=ctx.rho_f,
-                        r_change=0.0,
+                        r_change=ctx.last_r_change,
                         done=False,
                     )
                     for addr in carrier.others(self.cp_id):
@@ -559,10 +633,18 @@ class GossipParticipant(DistributedAlgorithm):
                             carrier.sleep(ctx.iter_timeout_s),
                         )
 
-                    # x_bar = mean of own x_self + peers' last-known x.
+                    # x_bar = mean of own x_self + peers' x for this phase,
+                    # held over from their last-known x where it is missing.
+                    same_phase = ctx.iters_by_phase.get(here, {})
+                    r_change_prev = ctx.last_r_change
                     x_sum = ctx.x_self.copy()
                     for cp in ctx.participants:
                         if cp == self.cp_id:
+                            continue
+                        reported = same_phase.get(cp)
+                        if reported is not None:
+                            x_sum = x_sum + reported[0]
+                            r_change_prev = max(r_change_prev, reported[1])
                             continue
                         last = ctx.last_x_per_peer.get(cp)
                         if last is not None:
@@ -587,6 +669,13 @@ class GossipParticipant(DistributedAlgorithm):
                     # Shared scaled-dual update.
                     ctx.u = ctx.u + x_bar_new - ctx.z
 
+                    primal_res = float(np.max(np.abs(x_bar_new - ctx.z))) if ctx.z.size else 0.0
+                    dual_res = ctx.rho_f * (
+                        float(np.max(np.abs(ctx.z - z_prev))) if ctx.z.size else 0.0
+                    )
+                    if ctx.rho_rescale_first:
+                        self._adapt_rho(ctx, primal_res, dual_res)
+
                     # Own r-update (closed form). minimize_usage -> ridge
                     # toward 0 (drop the alpha r_prev term) for min-usage /
                     # no overshoot; else proximal toward r_prev. See kernel.
@@ -607,15 +696,18 @@ class GossipParticipant(DistributedAlgorithm):
                             ctx.x_self[:, k] = r_k * ctx.cap_vec
                     # else: zero-capacity CP contributes nothing.
 
-                    # Residuals + local convergence.
-                    primal_res = float(np.max(np.abs(x_bar_new - ctx.z))) if ctx.z.size else 0.0
-                    dual_res = ctx.rho_f * (
-                        float(np.max(np.abs(ctx.z - z_prev))) if ctx.z.size else 0.0
-                    )
                     r_change = float(np.max(np.abs(ctx.r - r_prev))) if ctx.r.size else 0.0
+                    ctx.last_r_change = r_change
                     ctx.x_bar = x_bar_new
                     total_iters += 1
 
+                    # The kernel stops a tier on the largest r_change over ALL
+                    # CPs; a local-only test lets a CP whose r sits at a bound
+                    # leave early and strand the rest, so the phase-tolerant
+                    # path tests every CP's previous-iteration r_change (its
+                    # own and the ones its peers carried in) instead.
+                    if ctx.phase_tolerant_wait:
+                        r_change = r_change_prev
                     if (
                         primal_res < ctx.inner_abs_tol
                         and dual_res < ctx.inner_abs_tol
@@ -624,18 +716,14 @@ class GossipParticipant(DistributedAlgorithm):
                         converged_round = True
                         break
 
-                    # Adaptive rho (Boyd 3.4.1 residual balancing).
-                    if ctx.adaptive_rho:
-                        if primal_res > ctx.rho_mu * dual_res:
-                            ctx.rho_f *= ctx.rho_tau
-                            ctx.u /= ctx.rho_tau
-                        elif dual_res > ctx.rho_mu * primal_res:
-                            ctx.rho_f /= ctx.rho_tau
-                            ctx.u *= ctx.rho_tau
+                    if not ctx.rho_rescale_first:
+                        self._adapt_rho(ctx, primal_res, dual_res)
 
                 if not converged_round:
                     converged_total = False
                 ctx.theta = ctx.theta + sigma
+                if self.warm_start_per_tier:
+                    tier_snapshots[tier_pos] = self._snapshot(ctx)
 
             # Round complete — tell peers to stop waiting on us.
             done_msg = GossipIter(
@@ -653,6 +741,8 @@ class GossipParticipant(DistributedAlgorithm):
 
             if self.warm_start:
                 self._save_warm_state(ctx)
+            if self.warm_start_per_tier:
+                self._warm_tiers = tier_snapshots
             if self._on_commit is not None:
                 self._on_commit(ctx.r.copy(), converged_total, total_iters)
         except asyncio.CancelledError:
@@ -663,6 +753,25 @@ class GossipParticipant(DistributedAlgorithm):
                 self.cp_id,
                 exc,
             )
+
+    @staticmethod
+    def _adapt_rho(ctx: _RoundCtx, primal_res: float, dual_res: float) -> None:
+        """Boyd 3.4.1 residual balancing. Under ``rho_rescale_first`` it
+        carries the reference kernel's clamp: balancing keeps cranking rho
+        while the dual residual sits at zero (every r at a bound), and warm
+        start would hand that rho to the next round."""
+        if not ctx.adaptive_rho:
+            return
+        if ctx.rho_rescale_first:
+            rho_lo, rho_hi = ctx.rho_init * 1.0e-6, ctx.rho_init * 1.0e6
+        else:
+            rho_lo, rho_hi = 0.0, math.inf
+        if primal_res > ctx.rho_mu * dual_res and ctx.rho_f * ctx.rho_tau <= rho_hi:
+            ctx.rho_f *= ctx.rho_tau
+            ctx.u /= ctx.rho_tau
+        elif dual_res > ctx.rho_mu * primal_res and ctx.rho_f / ctx.rho_tau >= rho_lo:
+            ctx.rho_f /= ctx.rho_tau
+            ctx.u *= ctx.rho_tau
 
     # ------------------------------------------------------------------
     # Public read-only accessors (for tests + the SCARE role)
@@ -691,6 +800,7 @@ def create_gossip_cascade_participant(
     *,
     on_commit: Callable[[np.ndarray, bool, int], None] | None = None,
     warm_start: bool = False,
+    warm_start_per_tier: bool = False,
 ) -> GossipParticipant:
     """Create a :class:`GossipParticipant` for the cross-sector cascade."""
     return GossipParticipant(
@@ -698,6 +808,7 @@ def create_gossip_cascade_participant(
         capacity_by_sector=capacity_by_sector,
         on_commit=on_commit,
         warm_start=warm_start,
+        warm_start_per_tier=warm_start_per_tier,
     )
 
 
@@ -720,6 +831,8 @@ def create_gossip_cascade_start(
     iter_timeout_s: float = 0.3,
     round_timeout_s: float = 8.0,
     tier_fair_deadline: bool = False,
+    phase_tolerant_wait: bool = False,
+    rho_rescale_first: bool = False,
 ) -> GossipCascadeStart:
     """Build the in-process kickoff message for the initiator's participant.
 
@@ -733,6 +846,11 @@ def create_gossip_cascade_start(
     :param iter_timeout_s: Wait for peer Iters before using held-over values.
     :param round_timeout_s: Hard round cap; on expiry commit the current
         iterate (feasible-suboptimal).
+    :param phase_tolerant_wait: Buffer peers' Iters by (tier, iter) so an
+        iteration consumes exactly its peers' same-iteration values; see
+        :class:`GossipCascadeStart`.
+    :param rho_rescale_first: Rescale (rho, u) before the r-update, in the
+        reference kernel's order; see :class:`GossipCascadeStart`.
     """
     return GossipCascadeStart(
         round_id=int(round_id),
@@ -752,4 +870,6 @@ def create_gossip_cascade_start(
         iter_timeout_s=float(iter_timeout_s),
         round_timeout_s=float(round_timeout_s),
         tier_fair_deadline=bool(tier_fair_deadline),
+        phase_tolerant_wait=bool(phase_tolerant_wait),
+        rho_rescale_first=bool(rho_rescale_first),
     )
