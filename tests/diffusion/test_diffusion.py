@@ -1,4 +1,4 @@
-"""Diffusion (adapt-then-combine) in a mango world: balance at the fixed point, stop, passes, loss."""
+"""Diffusion (de Azevedo et al. 2017) in a mango world: IS pass, optimization with nudge, loss."""
 
 from __future__ import annotations
 
@@ -33,16 +33,16 @@ from distributed_resource_optimization.carrier.mango_carrier import (  # noqa: E
     next_hops,
 )
 
-# x_j(λ) = clip((λ − b_j)/a_j, 0, cap_j); demand d_j per hour; ∇J_j = x_j − d_j
-A = [1.0, 2.0, 0.5, 1.0]
-B = [1.0, 0.0, 2.0, 3.0]
-CAP = [10.0, 10.0, 10.0, 1.0]
-D = np.array([[2.0, 1.0], [0.0, 3.0], [3.0, 0.0], [1.0, 1.0]])
+# J_j(w) = b_j w + c_j w² (p3 has no cost: uninformed); local demand d_j per period
+B = [10.0, 20.0, 15.0, 0.0]
+C = [0.5, 0.25, 1.0, 0.0]
+D = np.array([[30.0, 10.0], [0.0, 40.0], [20.0, 5.0], [10.0, 25.0]])
+ACTIVE = [0, 1, 2]
 IRREGULAR = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3")]
 
 
-class _LosePhi(SimpleCommunicationSimulation):
-    """Loses only the φ exchange; start, reports and stop always arrive."""
+class _LoseValues(SimpleCommunicationSimulation):
+    """Loses only the diffusion exchange; start, reports and stop always arrive."""
 
     def __init__(self, loss):
         super().__init__(default_delay_s=0.01, loss_percent=loss, rng=random.Random(0))
@@ -57,55 +57,45 @@ class _LosePhi(SimpleCommunicationSimulation):
 
 
 class Quadratic(DiffusionActor):
-    def __init__(self, a, b, cap, d, flag_passes=0):
-        self.a, self.b, self.cap, self.d = a, b, cap, d
-        self.flag_passes, self.restarts = flag_passes, 0
-        self.x = None
+    def __init__(self, b, c, d):
+        self.b, self.c, self.d = b, c, d
 
-    def gradient(self, lam):
-        self.x = np.clip((lam - self.b) / self.a, 0.0, self.cap)
-        return self.x - self.d
+    def measure(self, periods):
+        return self.d
 
-    def flags(self):
-        return self.restarts < self.flag_passes
-
-    def restart(self):
-        self.restarts += 1
+    def gradient(self, w_own):
+        return self.b + 2 * self.c * w_own
 
 
-def lam_star(hour):
-    total = D[:, hour].sum()
-    lo, hi = 0.0, 100.0
-    for _ in range(200):
-        mid = (lo + hi) / 2
-        supply = sum(np.clip((mid - b) / a, 0, c) for a, b, c in zip(A, B, CAP))
-        lo, hi = (mid, hi) if supply < total else (lo, mid)
-    return lo
+def optimum():
+    """Equal marginal cost λ with Σ w = Σ d over the active participants, per period."""
+    inv = sum(1 / (2 * C[j]) for j in ACTIVE)
+    lam = (D.sum(axis=0) + sum(B[j] / (2 * C[j]) for j in ACTIVE)) / inv
+    return np.array([(lam - B[j]) / (2 * C[j]) for j in ACTIVE])
 
 
 async def run(
-    max_iter=20_000,
-    steps=(0.3,) * 4,
-    edges=IRREGULAR,
-    flag_passes=(0, 0, 0, 0),
-    final_stop=True,
-    loss=0.0,
-    round_timeout=None,
+    max_iter=3000, step=0.01, step_is=0.0, edges=IRREGULAR, loss=0.0, round_timeout=None, lazy=True
 ):
     graph = nx.Graph(edges)
+    graph.add_nodes_from([f"p{j}" for j in range(4)])
+    n = dict(graph.degree)
     graph.add_edge("p0", "c")  # coordinator: a leaf on p0
     routes = next_hops(graph)
-    peers = graph.copy()
-    peers.remove_node("c")
-    world = create_world(start_time=0.0, communication_sim=_LosePhi(loss))
+    world = create_world(start_time=0.0, communication_sim=_LoseValues(loss))
     finished, algos, agents = [], {}, {}
-    for j, aid in enumerate(sorted(peers)):
+    for j in range(4):
+        aid = f"p{j}"
         algos[aid] = DiffusionAlgorithm(
             lambda alg, carrier: finished.append(alg.k),
-            Quadratic(A[j], B[j], CAP[j], D[j], flag_passes[j]),
-            steps[j],
+            Quadratic(B[j], C[j], D[j]),
             {},  # filled once the addresses exist
-            eps=1e-8,
+            own=j,
+            active=ACTIVE,
+            entries=4,
+            step=step,
+            step_is=step_is,
+            eps_is=1e-9,
             max_iter=max_iter,
             round_timeout=round_timeout,
         )
@@ -113,12 +103,13 @@ async def run(
             agent_composed_of(DistributedOptimizationRole(algos[aid], routes=routes[aid])),
             suggested_aid=aid,
         )
-    n = dict(peers.degree)
-    for aid, algo in algos.items():  # Ces eq. (19)
-        algo.weights = {agents[j].addr: 2 / (n[aid] + n[j] + 1) for j in peers[aid]}
-    coordinator = DiffusionCoordinator(
-        [a.addr for a in agents.values()], np.zeros(2), start_latency=0.03, final_stop=final_stop
-    )
+    for aid, algo in algos.items():  # de Azevedo eq. (12); lazy = (I + A)/2, eigenvalues ≥ 0
+        algo.weights = {
+            agents[j].addr: (0.5 if lazy else 1.0) / max(n[aid], n[j])
+            for j in graph[aid]
+            if j != "c"
+        }
+    coordinator = DiffusionCoordinator([a.addr for a in agents.values()], np.zeros(2), 0.0, 0.03)
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
     )
@@ -133,68 +124,41 @@ async def run(
     return coordinator, algos, finished
 
 
-def mismatch(algos):
-    return sum(a.actor.x - a.actor.d for a in algos.values())
+def own(algos):
+    return np.array([algos[f"p{j}"].value[j] for j in ACTIVE])
 
 
-async def test_equal_steps_balance_exactly_near_the_optimum():
-    coordinator, algos, finished = await run()
-    assert coordinator.result.stop_reason == "converged" and len(finished) == 4
-    # doubly-stochastic W + equal ε: Σ_j (x_j − d_j) = 0 at the fixed point (Yuan eq. 11, q ∝ ε)
-    np.testing.assert_allclose(mismatch(algos), 0.0, atol=1e-6)
-    # constant steps: the λ_j stay spread by O(ε) around λ* (Yuan eq. 14)
-    for algo in algos.values():
-        np.testing.assert_allclose(algo.lam, [lam_star(0), lam_star(1)], atol=0.5)
-
-
-async def test_unequal_steps_balance_the_weighted_sum():
-    steps = (0.3, 0.1, 0.2, 0.4)
-    coordinator, algos, _ = await run(steps=steps)
-    assert coordinator.result.stop_reason == "converged"
-    weighted = sum(s * (a.actor.x - a.actor.d) for s, a in zip(steps, algos.values()))
-    np.testing.assert_allclose(weighted, 0.0, atol=1e-6)
-    assert np.max(np.abs(mismatch(algos))) > 1e-3  # off the plain balance (D-204, a result)
-
-
-async def test_max_iter_stops_everyone():
-    coordinator, _, finished = await run(max_iter=5)
-    assert coordinator.result.stop_reason == "max_iter" and coordinator.result.iterations == 5
-    assert finished == [5, 5, 5, 5]
-
-
-async def test_flags_start_new_passes_and_k_counts_all():
-    one, *_ = await run()
-    coordinator, algos, finished = await run(flag_passes=(0, 2, 0, 1))
-    assert coordinator.result.stop_reason == "converged" and coordinator.pass_no == 2
-    assert [a.actor.restarts for a in algos.values()] == [2, 2, 2, 2]  # every actor restarts
-    assert coordinator.result.iterations > 2 * one.result.iterations  # three passes counted
-    np.testing.assert_allclose(mismatch(algos), 0.0, atol=1e-6)
-
-
-async def test_final_stop_off_runs_to_max_iter_but_passes_still_end():
-    coordinator, algos, finished = await run(
-        max_iter=3000, flag_passes=(1, 0, 0, 0), final_stop=False
-    )
-    assert coordinator.result.stop_reason == "max_iter" and finished == [3000] * 4
+async def test_is_pass_then_optimum_with_one_step():
+    coordinator, algos, finished = await run(max_iter=6000)
+    assert coordinator.result.stop_reason == "max_iter" and finished == [6000] * 4
     assert coordinator.pass_no == 1
+    for algo in algos.values():  # IS: P_N = n·x = Σ d (eq. 10)
+        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
+        np.testing.assert_allclose(algo.value.sum(axis=0), D.sum(axis=0), atol=1e-6)
+        assert np.all(algo.value[3] == 0)  # the uninformed entry stays 0
+    # one μ: equal marginal costs; the own entries sit O(μ) below the mean estimate
+    # (μ = 0.01 here: up to 1.9 off; 0.1 / 0.01 / 0.001 gave 7.7 / 0.81 / 0.12 with Σφ)
+    np.testing.assert_allclose(own(algos), optimum(), atol=2.0)
 
 
-async def test_single_participant_converges_and_stops():
-    coordinator, algos, finished = await run(edges=[])
-    assert coordinator.result.stop_reason == "converged"
-    assert finished == [coordinator.result.iterations]
+async def test_printed_nudge_diverges_with_negative_eigenvalues():
+    # eq. (21) as printed (D-227): with eq. (12) weights this graph has an eigenvalue < 0, so
+    # the estimate's sum error grows as (A − I)^k — a result of the paper's update
+    _, algos, _ = await run(max_iter=3000, lazy=False)
+    assert not all(
+        np.all(np.isfinite(a.value)) and np.abs(a.value).max() < 1e6 for a in algos.values()
+    )
 
 
-async def test_round_deadline_without_loss_changes_nothing():
-    plain, *_ = await run()
-    timed, algos, _ = await run(round_timeout=0.02)
-    assert timed.result.iterations == plain.result.iterations
-    assert sum(a.rounds_by_deadline for a in algos.values()) == 0
+async def test_is_step_damps_the_averaging():
+    coordinator, algos, _ = await run(step_is=0.5)
+    assert coordinator.pass_no == 1
+    for algo in algos.values():
+        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
 
 
 async def test_lossy_rounds_finish():
-    # 20 % of the φ lost: a missing φ_j's weight goes to self; the run still ends
-    coordinator, algos, finished = await run(max_iter=3000, loss=0.2, round_timeout=0.02)
+    coordinator, algos, finished = await run(max_iter=1000, loss=0.2, round_timeout=0.02)
     assert len(finished) == 4
     assert sum(a.rounds_by_deadline for a in algos.values()) > 0
     assert sum(a.missing_edges for a in algos.values()) > 0

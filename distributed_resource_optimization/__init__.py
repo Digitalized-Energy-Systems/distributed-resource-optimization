@@ -13,8 +13,8 @@ Algorithms
   (Kar & Hug 2012; Hug, Kar & Wu 2015).
 * **DEED-ADMM** — peer ADMM with a distributed gradient tracker; neighbours
   exchange (λ, ξ) each iteration (Zhu et al. 2025).
-* **Diffusion** — adapt-then-combine diffusion with given combination weights and
-  a pass loop for flags (Ces et al. 2025 §3.3; Yuan et al. 2019).
+* **Diffusion** — combine-then-adapt diffusion with an information sharing pass
+  and a sum-keeping "nudge" (de Azevedo et al. 2017).
 
 Carriers
 --------
