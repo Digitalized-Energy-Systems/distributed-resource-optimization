@@ -1,19 +1,24 @@
 """Diffusion, combine-then-adapt, with a sum constraint (de Azevedo et al. 2017, §III).
 
-Two passes over the same peer-to-peer rounds and combination weights a_ij (given per peer,
-a_ii = 1 − Σ_j a_ij):
+Every round each participant sends one packet to its neighbours (Fig. 10) and runs two diffusion
+processes on what it received:
 
-1. **Information sharing** (eq. 13): every participant starts from a local quantity x_i⁰
-   (:meth:`DiffusionActor.measure`) and iterates φ_i = Σ_j a_ij x_j, x_i = φ_i − μ_IS·ŝ_i with ŝ_i the
-   change of φ_i since the previous round; x_i tends to the mean. A participant is *converged* when
-   ``max |Δx_i| ≤ eps_is``; once all are (coordinator), the target is n·x_i (eq. 10: P_N = x·n).
-2. **Optimization** (eqs. 16, 19–21): every participant holds an estimate w_i of all n entries
-   (one row per participant, one column per period), starts at 0 and per round combines
-   φ_i = Σ_j a_ij w_j. A participant whose entry is *active* adapts its own entry by
-   Δ = −μ·∇J_i(φ_i[own]) (:meth:`DiffusionActor.gradient`) and spreads the "nudge"
-   target − Σ w_i,k−1 − Δ equally over the other active entries, so the estimate keeps the sum
-   (eq. 19); an inactive one only combines. The run ends at ``max_iter`` (counted over both
-   passes; the paper tracks forever).
+* **Information sharing** (eq. 13): x_i starts at a local quantity (:meth:`DiffusionActor.measure`);
+  φ_i = Σ_j a_ij x_j, x_i = φ_i − μ_IS·ŝ_i with ŝ_i the change of φ_i since the previous round, so
+  x_i tends to the mean. Convergence by flags among neighbours (§III): a participant's flag is
+  ``max |Δx_i| ≤ eps_is``; its counter c_i = 1 + min(own and the neighbours' counters) while the flag
+  holds, else 0. Past the network diameter d it proposes a reset round, the earliest proposal is
+  flooded, and at that round every participant sets the target n·x_i (eq. 10) and restarts x_i from
+  its measurement ("the information sharing process restarts", Fig. 5).
+* **Optimization** (eqs. 16, 19–21), from the first reset on: an estimate w_i of all n entries
+  (row per participant, column per period), w⁰ = 0; φ_i = Σ_j a_ij w_j, the own entry steps
+  −μ·∇J_i(φ_i[own]) (:meth:`DiffusionActor.gradient`) and the "nudge" target − Σ w_i,k−1 − Δ is split
+  equally over the other active entries; an inactive (uninformed) participant only combines.
+
+Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) from the degrees in the packets,
+a_ii = 1 − Σ_j a_ij, built on the fly (§III-A). n = the participants in the flooded ID database
+(entries older than d rounds are dropped); a neighbour silent for more than d rounds is dropped
+and the weights follow (§III-A). The run ends at ``max_iter`` (the paper tracks forever).
 """
 
 # 2026-11-23 D-225: generic CTA + nudge (de Azevedo 2017); replaces the Ces-based ATC (D-211)
@@ -21,23 +26,29 @@ a_ii = 1 − Σ_j a_ij):
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
 from ...core import OptimizationMessage
-from ..consensus.innovations import ConsensusCoordinator, ConsensusReport, ConsensusStart
+from ..consensus.innovations import ConsensusReport, ConsensusStart
 
 if TYPE_CHECKING:
     from ....carrier.core import Carrier
+
+
+def metropolis(n_i: int, n_j: int) -> float:
+    """Eq. (12) as printed (2026-11-23 D-216): a_ij = 1/max(n_i, n_j), n = connections (no +1;
+    even rings then have eigenvalue −1 — 1/(1+max) is the noted alternative)."""
+    return 1 / max(n_i, n_j)
 
 
 class DiffusionActor:
     """Local problem of one participant."""
 
     def measure(self, periods: int) -> np.ndarray:
-        """x_i⁰ of the information sharing pass (one value per period)."""
+        """x_i of the information sharing at every (re)start (one value per period)."""
         return np.zeros(periods)
 
     def gradient(self, w_own: np.ndarray) -> np.ndarray:
@@ -46,29 +57,19 @@ class DiffusionActor:
 
 
 @dataclass
-class DiffusionStart(ConsensusStart):
-    """Kick-off of pass *pass_no* (0 = information sharing, 1 = optimization)."""
-
-    pass_no: int = 0
-
-
-@dataclass
 class DiffusionMessage(OptimizationMessage):
-    """State (x or w) of *sender* in round *k* of pass *pass_no*; *iterations* = the sender's
-    iterations of both passes so far."""
+    """One packet of round *k* (Fig. 10): the information sharing state *x*, the estimate *w*
+    (None before the optimization starts), the sender's degree (eq. 12), convergence counter and
+    proposed reset round (§III flags), and its ID database {id: last round seen} (§III-A)."""
 
-    value: np.ndarray
+    x: np.ndarray
+    w: np.ndarray | None
     k: int
     sender: Any
-    pass_no: int = 0
-    iterations: int = 0
-
-
-@dataclass
-class DiffusionReport(ConsensusReport):
-    """A consensus report plus the pass it belongs to."""
-
-    pass_no: int = 0
+    degree: int
+    count: int
+    reset: int | None
+    seen: dict = field(default_factory=dict)
 
 
 class DiffusionAlgorithm:
@@ -76,66 +77,72 @@ class DiffusionAlgorithm:
 
     :param finish_callback: ``(algorithm, carrier)``, called once when the participant stops.
     :param actor: The local problem (:class:`DiffusionActor`).
-    :param weights: a_ij per peer address; a_ii = 1 − Σ.
     :param own: Index of the participant's entry in w.
     :param active: Indices of the entries that adapt and take nudges (e.g. dispatchable units).
-    :param entries: Number of entries of w (n).
-    :param step: μ of the optimization pass.
-    :param step_is: μ of the information sharing pass (0 = plain averaging).
-    :param eps_is: Precision that ends the information sharing pass (``max |Δx| ≤ eps_is``).
-    :param max_iter: Iteration cap over both passes.
-    :param round_timeout: Round deadline (carrier clock) for lossy links, as in consensus: a
-        missing peer's weight goes to self. ``None`` = wait for every peer.
+    :param entries: Number of entries of w.
+    :param step: μ of the optimization.
+    :param step_is: μ of the information sharing (0 = plain averaging).
+    :param eps_is: Precision of the information sharing flag (``max |Δx| ≤ eps_is``).
+    :param diameter: d of the communication graph (flags, ID database, silent neighbours).
+    :param max_iter: Iteration cap.
+    :param round_timeout: Round deadline (carrier clock) for lossy links, as in consensus: a missing
+        packet's weights go to self that round. ``None`` = wait for every neighbour.
     """
 
     def __init__(
         self,
         finish_callback: Callable,
         actor: DiffusionActor,
-        weights: dict,
         own: int,
         active: list[int],
         entries: int,
         step: float,
         step_is: float = 0.0,
         eps_is: float = 1e-4,
+        diameter: int = 1,
         max_iter: int = 10_000,
         round_timeout: float | None = None,
     ) -> None:
-        self.finish_callback, self.actor, self.weights = finish_callback, actor, weights
+        self.finish_callback, self.actor = finish_callback, actor
         self.own, self.entries = own, entries
         self.others = [j for j in active if j != own]
         self.is_active = own in active
         self.step, self.step_is, self.eps_is = step, step_is, eps_is
-        self.max_iter, self.round_timeout = max_iter, round_timeout
-        self.value: np.ndarray | None = None  # x (pass 0) or w (pass 1)
+        self.d, self.max_iter, self.round_timeout = diameter, max_iter, round_timeout
+        self.x: np.ndarray | None = None
+        self.w: np.ndarray | None = None
         self.target: np.ndarray | None = None
+        self.resets = 0  # information sharing convergences (each one sets the target)
         self._phi_prev: np.ndarray | None = None
-        self.k = 0  # iterations of both passes
-        self.r = 0  # round within the pass
-        self.pass_no = -1
+        self.count, self.reset_at = 0, None
+        self.seen: dict[str, int] = {}
+        self.k = 0
         self.stopped = False
-        self._start: DiffusionStart | None = None
+        self._start: ConsensusStart | None = None
         self._peers: list = []
-        self._inbox: dict[tuple[int, int], list[DiffusionMessage]] = defaultdict(list)
-        self._converged = False
+        self._heard: dict = {}
+        self._inbox: dict[int, list[DiffusionMessage]] = defaultdict(list)
         self.rounds_by_deadline = 0
         self.missing_edges = 0
 
     async def on_exchange_message(self, carrier: "Carrier", message_data: Any, meta: Any) -> None:
         if self.stopped:
             return
-        if isinstance(message_data, DiffusionStart):
-            if message_data.pass_no <= self.pass_no:
+        if isinstance(message_data, ConsensusStart):
+            if self._start is not None:
                 return
-            first = self._start is None
-            self._begin(carrier, message_data)
-            if first and self.round_timeout is not None and self._peers:
+            self._start = message_data
+            self._me = str(carrier.get_address())
+            self._peers = [a for a in carrier.others("") if a in message_data.participants]
+            self._heard = dict.fromkeys(self._peers, 0)
+            self.x = np.asarray(self.actor.measure(len(message_data.lam)), dtype=float)
+            self.seen = {self._me: 0}
+            self._send(carrier)
+            if self.round_timeout is not None and self._peers:
                 carrier.spawn(self._deadlines(carrier))
         elif isinstance(message_data, DiffusionMessage):
-            # an older pass or a finished (deadline) round is dropped; a newer pass is kept
-            if (message_data.pass_no, message_data.k) >= (self.pass_no, self.r):
-                self._inbox[message_data.pass_no, message_data.k].append(message_data)
+            if message_data.k >= self.k:  # a packet of a finished (deadline) round is dropped
+                self._inbox[message_data.k].append(message_data)
         elif isinstance(message_data, ConsensusReport):
             return  # a peer's report to a coordinator on this agent (see consensus)
         else:  # the coordinator's end of the run (OptimizationFinishedMessage)
@@ -143,64 +150,92 @@ class DiffusionAlgorithm:
             return
         self._advance(carrier)
 
-    def _begin(self, carrier: "Carrier", start: DiffusionStart) -> None:
-        periods = len(start.lam)
-        if start.pass_no == 0:
-            self.value = np.asarray(self.actor.measure(periods), dtype=float)
-        else:  # eq. (10): P_N = x·n; w⁰ = 0 (S8a plan, D-222)
-            self.target = self.value * len(start.participants)
-            self.value = np.zeros((self.entries, periods))
-        self._start, self.pass_no, self.r = start, start.pass_no, 0
-        self._peers = [a for a in carrier.others("") if a in start.participants]
-        self._phi_prev, self._converged = None, False
-        self._send(carrier)
-
     def _send(self, carrier: "Carrier") -> None:
         message = DiffusionMessage(
-            self.value.copy(), self.r, carrier.get_address(), self.pass_no, self.k
+            self.x.copy(),
+            None if self.w is None else self.w.copy(),
+            self.k,
+            carrier.get_address(),
+            len(self._peers),
+            self.count,
+            self.reset_at,
+            dict(self.seen),
         )
         for peer in self._peers:
             carrier.send_to_other(message, peer)
 
     def _advance(self, carrier: "Carrier") -> None:
-        """Iterate while the current round is complete; alone, until the IS pass ends."""
+        """Iterate while the current round is complete (alone: every round at once)."""
         while (
             self._start is not None
             and not self.stopped
-            and len(self._inbox[self.pass_no, self.r]) == len(self._peers)
+            and len(self._current(self.k)) == len(self._peers)
         ):
-            if self._iterate(carrier) and not self._peers:
-                return  # alone: wait for the coordinator's next pass
+            self._iterate(carrier)
 
-    def _iterate(self, carrier: "Carrier") -> bool:
-        """One round; returns True if it sent a report."""
-        received = self._inbox.pop((self.pass_no, self.r), [])
-        a = [self.weights[m.sender] for m in received]
-        # combine; weights of missing peers (deadline rounds) go to self (as DEED-ADMM Z8)
-        phi = (1.0 - sum(a)) * self.value + sum(
-            (aj * m.value for aj, m in zip(a, received)), np.zeros_like(self.value)
+    def _current(self, k: int) -> list[DiffusionMessage]:
+        """Round *k*'s packets from current neighbours (a dropped one's are ignored)."""
+        return [m for m in self._inbox[k] if m.sender in self._peers]
+
+    @staticmethod
+    def _combine(own: np.ndarray, values: list, weights: list) -> np.ndarray:
+        # a missing packet's weight goes to self (deadline rounds; as DEED-ADMM Z8)
+        return (1.0 - sum(weights)) * own + sum(
+            (a * v for a, v in zip(weights, values)), np.zeros_like(own)
         )
-        old = self.value
-        if self.pass_no == 0:  # eq. (13): ŝ = change of φ since the previous round
-            s = 0.0 if self._phi_prev is None else phi - self._phi_prev
-            self._phi_prev, self.value = phi, phi - self.step_is * s
-        else:
-            self.value = self._adapt(phi, old)
-        # a new pass reaches the participants at different times; max keeps k equal (max_iter)
-        self.k = max([self.k, *(m.iterations for m in received)]) + 1
-        self.r += 1
+
+    def _iterate(self, carrier: "Carrier") -> None:
+        received = self._current(self.k)
+        del self._inbox[self.k]
+        n_i = len(self._peers)
+        a = [metropolis(n_i, m.degree) for m in received]  # from the packets' degrees
+        for m in received:
+            self._heard[m.sender] = self.k
+            for i, r in m.seen.items():
+                self.seen[i] = max(self.seen.get(i, -1), r)
+        # information sharing, eq. (13): ŝ = change of φ since the previous round
+        phi = self._combine(self.x, [m.x for m in received], a)
+        s = 0.0 if self._phi_prev is None else phi - self._phi_prev
+        x, self._phi_prev = phi - self.step_is * s, phi
+        flag = bool(np.max(np.abs(x - self.x)) <= self.eps_is)
+        self.count = 1 + min([self.count, *(m.count for m in received)]) if flag else 0
+        self.x = x
+        # optimization, eqs. (16), (20), (21): with the packets that carry an estimate
+        if self.w is not None:
+            got = [(aj, m.w) for aj, m in zip(a, received) if m.w is not None]
+            phi_w = self._combine(self.w, [v for _, v in got], [aj for aj, _ in got])
+            self.w = self._adapt(phi_w, self.w)
+        self.k += 1
+        self.seen[self._me] = self.k
+        self.seen = {i: r for i, r in self.seen.items() if self.k - r <= self.d}
+        # 2026-11-23 D-228: flags among neighbours (§III); past d the earliest reset round wins
+        proposals = [m.reset for m in received if m.reset is not None and m.reset >= self.k]
+        if self.reset_at is not None and self.reset_at >= self.k:
+            proposals.append(self.reset_at)
+        if self.count > self.d:
+            proposals.append(self.k + self.d + 1)
+        self.reset_at = min(proposals, default=None)
+        if self.reset_at == self.k:
+            self._reset()
+        if self.round_timeout is not None:  # §III-A: drop a neighbour silent for > d rounds
+            self._peers = [p for p in self._peers if self.k - self._heard[p] <= self.d]
         if self.k >= self.max_iter:
-            self._report(carrier, False, done=True)
+            report = ConsensusReport(carrier.get_address(), False, self.k, True)
+            carrier.send_to_other(report, self._start.coordinator)
             self._stop(carrier)
-            return True
-        reported = False
-        if self.pass_no == 0:
-            converged = bool(np.max(np.abs(self.value - old)) <= self.eps_is)
-            if converged != self._converged:
-                self._converged, reported = converged, True
-                self._report(carrier, converged)
+            return
         self._send(carrier)
-        return reported
+
+    def _reset(self) -> None:
+        """Information sharing converged everywhere: P_N = x·n (eq. 10), restart x (Fig. 5);
+        the first one starts the optimization at w⁰ = 0 (D-222)."""
+        # 2026-11-23 D-229: the IS restarts and runs alongside the optimization (Fig. 5/10)
+        self.target = self.x * len(self.seen)
+        self.x = np.asarray(self.actor.measure(len(self.x)), dtype=float)
+        self._phi_prev, self.count, self.reset_at = None, 0, None
+        self.resets += 1
+        if self.w is None:
+            self.w = np.zeros((self.entries, len(self.x)))
 
     def _adapt(self, phi: np.ndarray, old: np.ndarray) -> np.ndarray:
         """Eqs. (16), (20), (21): gradient step on the own entry, nudge on the other active ones."""
@@ -221,51 +256,18 @@ class DiffusionAlgorithm:
         return w
 
     async def _deadlines(self, carrier: "Carrier") -> None:
-        """Round r of a pass ends at t0 + (r+1)·round_timeout for everyone (as consensus)."""
+        """Round k ends at t0 + (k+1)·round_timeout for everyone (as consensus)."""
         while not self.stopped:
-            current = (self.pass_no, self.r)
-            end = self._start.t0 + (self.r + 1) * self.round_timeout
+            k = self.k
+            end = self._start.t0 + (k + 1) * self.round_timeout
             await carrier.sleep(max(0.0, end - carrier.now()))
-            if self.stopped or (self.pass_no, self.r) != current:
+            if self.stopped or self.k != k:
                 continue
             self.rounds_by_deadline += 1
-            self.missing_edges += len(self._peers) - len(self._inbox[current])
+            self.missing_edges += len(self._peers) - len(self._current(k))
             self._iterate(carrier)
             self._advance(carrier)
-
-    def _report(self, carrier: "Carrier", converged: bool, done=False) -> None:
-        report = DiffusionReport(carrier.get_address(), converged, self.k, done, self.pass_no)
-        carrier.send_to_other(report, self._start.coordinator)
 
     def _stop(self, carrier: "Carrier") -> None:
         self.stopped = True
         self.finish_callback(self, carrier)
-
-
-class DiffusionCoordinator(ConsensusCoordinator):
-    """The consensus coordinator with two passes: when all participants have converged in the
-    information sharing pass it starts the optimization pass; that pass has no stop rule, the
-    run ends when all reach ``max_iter``."""
-
-    pass_no = 0
-
-    def _start_message(self, carrier: "Carrier", t0: float) -> DiffusionStart:
-        return DiffusionStart(self.lam0, self.participants, carrier.get_address(), t0, self.pass_no)
-
-    async def on_exchange_message(self, carrier: "Carrier", message_data: Any, meta: Any) -> None:
-        if (
-            isinstance(message_data, DiffusionReport)
-            and message_data.pass_no != self.pass_no
-            and not message_data.done
-        ):
-            return  # a late report of an earlier pass
-        await super().on_exchange_message(carrier, message_data, meta)
-
-    def _converged(self, carrier: "Carrier") -> None:
-        # 2026-11-23 D-217: IS converged → optimization pass (Fig. 5, eq. 10)
-        if self.pass_no == 0:
-            self.pass_no = 1
-            self._flags.clear()
-            start = self._start_message(carrier, carrier.now() + self.start_latency)
-            for p in self.participants:
-                carrier.send_to_other(start, p)

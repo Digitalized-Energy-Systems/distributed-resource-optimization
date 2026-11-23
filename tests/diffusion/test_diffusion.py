@@ -1,4 +1,5 @@
-"""Diffusion (de Azevedo et al. 2017) in a mango world: IS pass, optimization with nudge, loss."""
+"""Diffusion (de Azevedo et al. 2017) in a mango world: information sharing with neighbour flags
+and restarts, optimization with the nudge, ID database, silent neighbours, loss."""
 
 from __future__ import annotations
 
@@ -21,10 +22,13 @@ from mango.express.topology import AGENT_NODE_KEY  # noqa: E402
 from mango.simulation.communication import PackageResult  # noqa: E402
 
 from distributed_resource_optimization import (  # noqa: E402
+    ConsensusCoordinator,
     DiffusionActor,
     DiffusionAlgorithm,
-    DiffusionCoordinator,
     DiffusionMessage,
+)
+from distributed_resource_optimization.algorithm.firstorder.diffusion import (  # noqa: E402
+    diffusion as module,
 )
 from distributed_resource_optimization.carrier.mango_carrier import (  # noqa: E402
     CoordinatorRole,
@@ -41,18 +45,23 @@ ACTIVE = [0, 1, 2]
 IRREGULAR = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3")]
 
 
-class _LoseValues(SimpleCommunicationSimulation):
-    """Loses only the diffusion exchange; start, reports and stop always arrive."""
+class _Lose(SimpleCommunicationSimulation):
+    """Loses only diffusion packets: a share of all, or every packet of *silent*."""
 
-    def __init__(self, loss):
+    def __init__(self, loss, silent=None):
         super().__init__(default_delay_s=0.01, loss_percent=loss, rng=random.Random(0))
+        self.silent = silent
 
     def calculate_communication(self, current_time, messages):
         result = super().calculate_communication(current_time, messages)
-        result.package_results[:] = [
-            r if isinstance(m.content[0], DiffusionMessage) else PackageResult(True, r.delay_s)
-            for m, r in zip(messages, result.package_results)
-        ]
+        out = []
+        for m, r in zip(messages, result.package_results):
+            packet = isinstance(m.content[0], DiffusionMessage)
+            if packet and m.content[0].sender.aid == self.silent:
+                out.append(PackageResult(False, r.delay_s))
+            else:
+                out.append(r if packet else PackageResult(True, r.delay_s))
+        result.package_results[:] = out
         return result
 
 
@@ -74,42 +83,39 @@ def optimum():
     return np.array([(lam - B[j]) / (2 * C[j]) for j in ACTIVE])
 
 
-async def run(
-    max_iter=3000, step=0.01, step_is=0.0, edges=IRREGULAR, loss=0.0, round_timeout=None, lazy=True
-):
-    graph = nx.Graph(edges)
-    graph.add_nodes_from([f"p{j}" for j in range(4)])
-    n = dict(graph.degree)
+@pytest.fixture
+def lazy(monkeypatch):
+    """(I + A)/2: eigenvalues ≥ 0, so the printed nudge (D-226) is stable."""
+    monkeypatch.setattr(module, "metropolis", lambda n_i, n_j: 0.5 / max(n_i, n_j))
+
+
+async def run(max_iter=4000, step=0.01, step_is=0.0, loss=0.0, silent=None, timeout=None):
+    graph = nx.Graph(IRREGULAR)
+    diameter = nx.diameter(graph)
     graph.add_edge("p0", "c")  # coordinator: a leaf on p0
     routes = next_hops(graph)
-    world = create_world(start_time=0.0, communication_sim=_LoseValues(loss))
+    world = create_world(start_time=0.0, communication_sim=_Lose(loss, silent))
     finished, algos, agents = [], {}, {}
     for j in range(4):
         aid = f"p{j}"
         algos[aid] = DiffusionAlgorithm(
             lambda alg, carrier: finished.append(alg.k),
             Quadratic(B[j], C[j], D[j]),
-            {},  # filled once the addresses exist
             own=j,
             active=ACTIVE,
             entries=4,
             step=step,
             step_is=step_is,
             eps_is=1e-9,
+            diameter=diameter,
             max_iter=max_iter,
-            round_timeout=round_timeout,
+            round_timeout=timeout,
         )
         agents[aid] = world.register(
             agent_composed_of(DistributedOptimizationRole(algos[aid], routes=routes[aid])),
             suggested_aid=aid,
         )
-    for aid, algo in algos.items():  # de Azevedo eq. (12); lazy = (I + A)/2, eigenvalues ≥ 0
-        algo.weights = {
-            agents[j].addr: (0.5 if lazy else 1.0) / max(n[aid], n[j])
-            for j in graph[aid]
-            if j != "c"
-        }
-    coordinator = DiffusionCoordinator([a.addr for a in agents.values()], np.zeros(2), 0.0, 0.03)
+    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], np.zeros(2), 0.0, 0.03)
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
     )
@@ -125,40 +131,52 @@ async def run(
 
 
 def own(algos):
-    return np.array([algos[f"p{j}"].value[j] for j in ACTIVE])
+    return np.array([algos[f"p{j}"].w[j] for j in ACTIVE])
 
 
-async def test_is_pass_then_optimum_with_one_step():
-    coordinator, algos, finished = await run(max_iter=6000)
-    assert coordinator.result.stop_reason == "max_iter" and finished == [6000] * 4
-    assert coordinator.pass_no == 1
-    for algo in algos.values():  # IS: P_N = n·x = Σ d (eq. 10)
-        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
-        np.testing.assert_allclose(algo.value.sum(axis=0), D.sum(axis=0), atol=1e-6)
-        assert np.all(algo.value[3] == 0)  # the uninformed entry stays 0
+def test_eq12_as_printed():
+    assert module.metropolis(2, 3) == 1 / 3 and module.metropolis(1, 1) == 1.0
+
+
+async def test_flags_restarts_and_optimum(lazy):
+    coordinator, algos, finished = await run()
+    assert coordinator.result.stop_reason == "max_iter" and finished == [4000] * 4
+    resets = {a.resets for a in algos.values()}
+    assert len(resets) == 1 and resets.pop() > 1  # one reset round for all, and it restarts
+    for algo in algos.values():
+        assert len(algo.seen) == 4  # ID database: n learnt by flooding (§III-A)
+        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)  # P_N = n·x̄
+        np.testing.assert_allclose(algo.w.sum(axis=0), D.sum(axis=0), atol=1e-6)
+        assert np.all(algo.w[3] == 0)  # the uninformed entry stays 0
     # one μ: equal marginal costs; the own entries sit O(μ) below the mean estimate
-    # (μ = 0.01 here: up to 1.9 off; 0.1 / 0.01 / 0.001 gave 7.7 / 0.81 / 0.12 with Σφ)
     np.testing.assert_allclose(own(algos), optimum(), atol=2.0)
+
+
+async def test_is_step_damps_the_averaging(lazy):
+    _, algos, _ = await run(max_iter=500, step_is=0.5)
+    for algo in algos.values():
+        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
 
 
 async def test_printed_nudge_diverges_with_negative_eigenvalues():
     # eq. (21) as printed (D-226): with eq. (12) weights this graph has an eigenvalue < 0, so
     # the estimate's sum error grows as (A − I)^k — a result of the paper's update
-    _, algos, _ = await run(max_iter=3000, lazy=False)
-    assert not all(
-        np.all(np.isfinite(a.value)) and np.abs(a.value).max() < 1e6 for a in algos.values()
-    )
+    _, algos, _ = await run(max_iter=3000)
+    assert not all(np.all(np.isfinite(a.w)) and np.abs(a.w).max() < 1e6 for a in algos.values())
 
 
-async def test_is_step_damps_the_averaging():
-    coordinator, algos, _ = await run(step_is=0.5)
-    assert coordinator.pass_no == 1
-    for algo in algos.values():
-        np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
+async def test_silent_neighbour_is_dropped(lazy):
+    # p3 never gets a packet through: its neighbours drop it after d rounds (§III-A), the ID
+    # database forgets it, and the others' degrees (eq. 12) follow
+    _, algos, finished = await run(max_iter=300, silent="p3", timeout=0.02)
+    assert len(finished) == 4
+    for aid in ("p1", "p2"):
+        assert all(p.aid != "p3" for p in algos[aid]._peers)
+        assert len(algos[aid].seen) == 3
 
 
-async def test_lossy_rounds_finish():
-    coordinator, algos, finished = await run(max_iter=1000, loss=0.2, round_timeout=0.02)
+async def test_lossy_rounds_finish(lazy):
+    _, algos, finished = await run(max_iter=1000, loss=0.2, timeout=0.02)
     assert len(finished) == 4
     assert sum(a.rounds_by_deadline for a in algos.values()) > 0
     assert sum(a.missing_edges for a in algos.values()) > 0
