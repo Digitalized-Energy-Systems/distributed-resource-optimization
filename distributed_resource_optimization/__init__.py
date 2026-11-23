@@ -13,8 +13,8 @@ Algorithms
   (Kar & Hug 2012; Hug, Kar & Wu 2015).
 * **DEED-ADMM** — peer ADMM with a distributed gradient tracker; neighbours
   exchange (λ, ξ) each iteration (Zhu et al. 2025).
-* **Diffusion** — distributed adapt-then-combine diffusion over a scheduling
-  horizon.
+* **Diffusion** — combine-then-adapt diffusion with information sharing and a
+  sum-keeping "nudge" in one packet per round (de Azevedo et al. 2017).
 
 Carriers
 --------
@@ -186,9 +186,6 @@ from .algorithm.firstorder.diffusion.diffusion import (
     DiffusionActor,
     DiffusionAlgorithm,
     DiffusionMessage,
-    NoDiffusionActor,
-    create_diffusion_participant,
-    create_diffusion_start,
 )
 
 # Distributed QP (gossip primal-dual)
@@ -326,11 +323,8 @@ __all__ = [
     "power_step",
     # Diffusion
     "DiffusionActor",
-    "NoDiffusionActor",
-    "DiffusionMessage",
     "DiffusionAlgorithm",
-    "create_diffusion_participant",
-    "create_diffusion_start",
+    "DiffusionMessage",
     # Distributed QP (gossip primal-dual)
     "LedgerEntry",
     "GossipQPMessage",
