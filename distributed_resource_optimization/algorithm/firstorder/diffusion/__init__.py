@@ -1,17 +1,17 @@
 from .diffusion import (
     DiffusionActor,
     DiffusionAlgorithm,
+    DiffusionCoordinator,
     DiffusionMessage,
-    NoDiffusionActor,
-    create_diffusion_participant,
-    create_diffusion_start,
+    DiffusionReport,
+    DiffusionStart,
 )
 
 __all__ = [
     "DiffusionActor",
-    "NoDiffusionActor",
-    "DiffusionMessage",
     "DiffusionAlgorithm",
-    "create_diffusion_participant",
-    "create_diffusion_start",
+    "DiffusionCoordinator",
+    "DiffusionMessage",
+    "DiffusionReport",
+    "DiffusionStart",
 ]

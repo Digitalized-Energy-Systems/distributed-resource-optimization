@@ -255,7 +255,7 @@ class ConsensusCoordinator(Coordinator):
     async def start_optimization(self, carrier: "Carrier", message_data: Any, meta: Any):
         self._finished = asyncio.get_event_loop().create_future()
         t0 = carrier.now() + self.start_latency  # round 0 starts once every start has arrived
-        start = ConsensusStart(self.lam0, self.participants, carrier.get_address(), t0)
+        start = self._start_message(carrier, t0)
         for p in self.participants:
             carrier.send_to_other(start, p)
         await carrier.wait_for(self._finished)
@@ -273,7 +273,7 @@ class ConsensusCoordinator(Coordinator):
             self._finish(ConsensusResult("max_iter", self._k, carrier.now()))
         elif self._all_converged():
             if self.settle_s <= 0:
-                self._finish(ConsensusResult("converged", self._k, carrier.now()))
+                self._converged(carrier)
             elif not self._settling:
                 self._settling = True
                 carrier.spawn(self._settle(carrier))
@@ -285,7 +285,15 @@ class ConsensusCoordinator(Coordinator):
         await carrier.sleep(self.settle_s)
         self._settling = False
         if not self._finished.done() and self._all_converged():
-            self._finish(ConsensusResult("converged", self._k, carrier.now()))
+            self._converged(carrier)
+
+    def _start_message(self, carrier: "Carrier", t0: float) -> ConsensusStart:
+        return ConsensusStart(self.lam0, self.participants, carrier.get_address(), t0)
+
+    def _converged(self, carrier: "Carrier") -> None:
+        """All participants converged (after ``settle_s``): end the run (a subclass may
+        start another pass instead, e.g. diffusion's flag loop)."""
+        self._finish(ConsensusResult("converged", self._k, carrier.now()))
 
     def _finish(self, result: ConsensusResult) -> None:
         self.result = result
