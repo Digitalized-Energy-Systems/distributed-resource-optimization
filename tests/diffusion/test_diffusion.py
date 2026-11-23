@@ -142,7 +142,7 @@ async def test_is_pass_then_optimum_with_one_step():
 
 
 async def test_printed_nudge_diverges_with_negative_eigenvalues():
-    # eq. (21) as printed (D-227): with eq. (12) weights this graph has an eigenvalue < 0, so
+    # eq. (21) as printed (D-226): with eq. (12) weights this graph has an eigenvalue < 0, so
     # the estimate's sum error grows as (A − I)^k — a result of the paper's update
     _, algos, _ = await run(max_iter=3000, lazy=False)
     assert not all(

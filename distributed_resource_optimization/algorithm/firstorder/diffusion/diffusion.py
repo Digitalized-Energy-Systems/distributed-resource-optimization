@@ -210,7 +210,7 @@ class DiffusionAlgorithm:
         w = phi.copy()
         delta = -self.step * gradient
         w[self.own] += delta
-        # 2026-11-23 D-227: eq. (21) as printed (previous estimate's sum): the sum error follows
+        # 2026-11-23 D-226: eq. (21) as printed (previous estimate's sum): the sum error follows
         # e_k = (A − I)e_{k−1}, so it grows where A has an eigenvalue < 0 (a result, not fixed)
         nudge = self.target - old.sum(axis=0) - delta
         # 2026-11-23 D-223: equal split (Fig. 8); alone, the own entry keeps the sum
