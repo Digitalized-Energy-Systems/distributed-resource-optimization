@@ -17,8 +17,9 @@ processes on what it received:
 
 Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) from the degrees in the packets,
 a_ii = 1 − Σ_j a_ij, built on the fly (§III-A). n = the participants of the start message (the
-paper floods an ID database, §III-A); a neighbour silent for more than d rounds is dropped and the
-weights follow (§III-A). The run ends at ``max_iter`` (the paper tracks forever).
+paper floods an ID database, §III-A); the neighbours and weights stay fixed for the run (§III-A's
+d-round drop of a silent node is not used: lost packets are not nodes leaving). The run ends at
+``max_iter`` (the paper tracks forever).
 """
 
 # 2026-11-23 D-225: generic CTA + nudge (de Azevedo 2017); replaces the Ces-based ATC (D-211)
@@ -85,10 +86,11 @@ class DiffusionAlgorithm(DistributedAlgorithm):
     :param step: μ of the optimization.
     :param step_is: μ of the information sharing (0 = plain averaging).
     :param eps_is: Precision of the information sharing flag (``max |Δx| ≤ eps_is``).
-    :param diameter: d of the communication graph (flags, silent neighbours).
+    :param diameter: d of the communication graph (flags).
     :param max_iter: Iteration cap.
     :param round_timeout: Round deadline (carrier clock) for lossy links, as in consensus: a missing
-        packet's weights go to self that round. ``None`` = wait for every neighbour.
+        packet's weights go to self that round; no neighbour is ever dropped (2026-11-24 D-240).
+        ``None`` = wait for every neighbour.
     """
 
     def __init__(
@@ -121,7 +123,6 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self.stopped = False
         self._start: ConsensusStart | None = None
         self._peers: list = []
-        self._heard: dict = {}
         self._inbox: dict[int, list[DiffusionMessage]] = defaultdict(list)
         self.rounds_by_deadline = 0
         self.missing_edges = 0
@@ -134,7 +135,6 @@ class DiffusionAlgorithm(DistributedAlgorithm):
                 return
             self._start = message_data
             self._peers = [a for a in carrier.others("") if a in message_data.participants]
-            self._heard = dict.fromkeys(self._peers, 0)
             self.x = np.asarray(self.actor.measure(), dtype=float)
             self._send(carrier)
             if self.round_timeout is not None and self._peers:
@@ -167,13 +167,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         while (
             self._start is not None
             and not self.stopped
-            and len(self._current(self.k)) == len(self._peers)
+            and len(self._inbox[self.k]) == len(self._peers)
         ):
             self._iterate(carrier)
-
-    def _current(self, k: int) -> list[DiffusionMessage]:
-        """Round *k*'s packets from current neighbours (a dropped one's are ignored)."""
-        return [m for m in self._inbox[k] if m.sender in self._peers]
 
     @staticmethod
     def _combine(own: np.ndarray, values: list, weights: list) -> np.ndarray:
@@ -183,12 +179,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         )
 
     def _iterate(self, carrier: "Carrier") -> None:
-        received = self._current(self.k)
-        del self._inbox[self.k]
+        received = self._inbox.pop(self.k, [])  # [] = every packet lost (deadline round)
         n_i = len(self._peers)
         a = [metropolis(n_i, m.degree) for m in received]  # from the packets' degrees
-        for m in received:
-            self._heard[m.sender] = self.k
         # information sharing, eq. (13): ŝ = change of φ since the previous round
         phi = self._combine(self.x, [m.x for m in received], a)
         s = 0.0 if self._phi_prev is None else phi - self._phi_prev
@@ -211,8 +204,6 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         self.reset_at = min(proposals, default=None)
         if self.reset_at == self.k:
             self._reset()
-        if self.round_timeout is not None:  # §III-A: drop a neighbour silent for > d rounds
-            self._peers = [p for p in self._peers if self.k - self._heard[p] <= self.d]
         if self.k >= self.max_iter:
             report = ConsensusReport(carrier.get_address(), False, self.k, True)
             carrier.send_to_other(report, self._start.coordinator)
@@ -259,7 +250,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
             if self.stopped or self.k != k:
                 continue
             self.rounds_by_deadline += 1
-            self.missing_edges += len(self._peers) - len(self._current(k))
+            self.missing_edges += len(self._peers) - len(self._inbox[k])
             self._iterate(carrier)
             self._advance(carrier)
 

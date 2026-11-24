@@ -1,5 +1,5 @@
 """Diffusion (de Azevedo et al. 2017) in a mango world: information sharing with neighbour flags
-and restarts, optimization with the nudge, silent neighbours, loss."""
+and restarts, optimization with the nudge, loss."""
 
 from __future__ import annotations
 
@@ -46,22 +46,17 @@ IRREGULAR = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p1", "p3")]
 
 
 class _Lose(SimpleCommunicationSimulation):
-    """Loses only diffusion packets: a share of all, or every packet of *silent*."""
+    """Loses a share of the diffusion packets only."""
 
-    def __init__(self, loss, silent=None):
+    def __init__(self, loss):
         super().__init__(default_delay_s=0.01, loss_percent=loss, rng=random.Random(0))
-        self.silent = silent
 
     def calculate_communication(self, current_time, messages):
         result = super().calculate_communication(current_time, messages)
-        out = []
-        for m, r in zip(messages, result.package_results):
-            packet = isinstance(m.content[0], DiffusionMessage)
-            if packet and m.content[0].sender.aid == self.silent:
-                out.append(PackageResult(False, r.delay_s))
-            else:
-                out.append(r if packet else PackageResult(True, r.delay_s))
-        result.package_results[:] = out
+        result.package_results[:] = [
+            r if isinstance(m.content[0], DiffusionMessage) else PackageResult(True, r.delay_s)
+            for m, r in zip(messages, result.package_results)
+        ]
         return result
 
 
@@ -89,12 +84,12 @@ def lazy(monkeypatch):
     monkeypatch.setattr(module, "metropolis", lambda n_i, n_j: 0.5 / max(n_i, n_j))
 
 
-async def run(max_iter=4000, step=0.01, step_is=0.0, loss=0.0, silent=None, timeout=None):
-    graph = nx.Graph(IRREGULAR)
+async def run(max_iter=4000, step=0.01, step_is=0.0, loss=0.0, timeout=None, edges=IRREGULAR):
+    graph = nx.Graph(edges)
     diameter = nx.diameter(graph)
     graph.add_edge("p0", "c")  # coordinator: a leaf on p0
     routes = next_hops(graph)
-    world = create_world(start_time=0.0, communication_sim=_Lose(loss, silent))
+    world = create_world(start_time=0.0, communication_sim=_Lose(loss))
     finished, algos, agents = [], {}, {}
     for j in range(4):
         aid = f"p{j}"
@@ -164,13 +159,14 @@ async def test_printed_nudge_diverges_with_negative_eigenvalues():
     assert not all(np.all(np.isfinite(a.w)) and np.abs(a.w).max() < 1e6 for a in algos.values())
 
 
-async def test_silent_neighbour_is_dropped(lazy):
-    # p3 never gets a packet through: its neighbours drop it after d rounds (§III-A) and their
-    # degrees (eq. 12) follow
-    _, algos, finished = await run(max_iter=300, silent="p3", timeout=0.02)
+async def test_loss_drops_no_neighbour(lazy):
+    # D-240: complete graph (d = 1), 5 % loss — every node keeps all its neighbours (the d-round
+    # drop cut every link within 400 rounds, audit 2026-11-24)
+    complete = list(nx.complete_graph([f"p{j}" for j in range(4)]).edges)
+    _, algos, finished = await run(max_iter=400, loss=0.05, timeout=0.02, edges=complete)
     assert len(finished) == 4
-    for aid in ("p1", "p2"):
-        assert all(p.aid != "p3" for p in algos[aid]._peers)
+    assert all(len(a._peers) == 3 for a in algos.values())
+    assert sum(a.missing_edges for a in algos.values()) > 0
 
 
 async def test_lossy_rounds_finish(lazy):
