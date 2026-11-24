@@ -15,8 +15,9 @@ processes on what it received:
   −μ·∇J_i(φ_i[own]) (:meth:`DiffusionActor.gradient`) and the "nudge" target − Σ w_i,k−1 − Δ is split
   equally over the other active entries; an inactive (uninformed) participant only combines.
 
-Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) from the degrees in the packets,
-a_ii = 1 − Σ_j a_ij, built on the fly (§III-A). n = the participants of the start message (the
+Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) with n_i = |N_i| (the
+neighbourhood incl. i, eqs. 12/13) from the degrees in the packets, a_ii = 1 − Σ_j a_ij, built
+on the fly (§III-A). n = the participants of the start message (the
 paper floods an ID database, §III-A); the neighbours and weights stay fixed for the run (§III-A's
 d-round drop of a silent node is not used: lost packets are not nodes leaving). The run ends at
 ``max_iter`` (the paper tracks forever).
@@ -41,8 +42,8 @@ if TYPE_CHECKING:
 
 
 def metropolis(n_i: int, n_j: int) -> float:
-    """Eq. (12) as printed (2026-11-23 D-216): a_ij = 1/max(n_i, n_j), n = connections (no +1;
-    even rings then have eigenvalue −1 — 1/(1+max) is the noted alternative)."""
+    """Eq. (12) as printed (2026-11-23 D-216): a_ij = 1/max(n_i, n_j), n = |N| incl. the node
+    itself (2026-11-24 D-241; = Xiao–Boyd [40] 1/(1 + max degree))."""
     return 1 / max(n_i, n_j)
 
 
@@ -180,8 +181,9 @@ class DiffusionAlgorithm(DistributedAlgorithm):
 
     def _iterate(self, carrier: "Carrier") -> None:
         received = self._inbox.pop(self.k, [])  # [] = every packet lost (deadline round)
-        n_i = len(self._peers)
-        a = [metropolis(n_i, m.degree) for m in received]  # from the packets' degrees
+        # 2026-11-24 D-241: n = |N| includes the node (eq. 12's N_j\{j}, eq. 13's sum over N_i)
+        n_i = len(self._peers) + 1
+        a = [metropolis(n_i, m.degree + 1) for m in received]  # from the packets' degrees
         # information sharing, eq. (13): ŝ = change of φ since the previous round
         phi = self._combine(self.x, [m.x for m in received], a)
         s = 0.0 if self._phi_prev is None else phi - self._phi_prev

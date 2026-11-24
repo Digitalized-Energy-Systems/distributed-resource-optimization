@@ -142,8 +142,9 @@ async def test_flags_restarts_and_optimum(lazy):
         np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)  # P_N = n·x̄
         np.testing.assert_allclose(algo.w.sum(axis=0), D.sum(axis=0), atol=1e-6)
         assert np.all(algo.w[3] == 0)  # the uninformed entry stays 0
-    # one μ: equal marginal costs; the own entries sit O(μ) below the mean estimate
-    np.testing.assert_allclose(own(algos), optimum(), atol=2.0)
+    # one μ: equal marginal costs; the own entries sit O(μ) below the mean estimate (D-241's
+    # larger self-weights: offset up to 2.6)
+    np.testing.assert_allclose(own(algos), optimum(), atol=3.0)
 
 
 async def test_is_step_damps_the_averaging(lazy):
@@ -153,9 +154,10 @@ async def test_is_step_damps_the_averaging(lazy):
 
 
 async def test_printed_nudge_diverges_with_negative_eigenvalues():
-    # eq. (21) as printed (D-226): with eq. (12) weights this graph has an eigenvalue < 0, so
-    # the estimate's sum error grows as (A − I)^k — a result of the paper's update
-    _, algos, _ = await run(max_iter=3000)
+    # eq. (21) as printed (D-226): with eq. (12) weights an even ring has an eigenvalue < 0
+    # (−1/3, D-241), so the estimate's sum error grows as (A − D)^k (×1.22 here) — a result
+    ring = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p3", "p0")]
+    _, algos, _ = await run(max_iter=3000, edges=ring)
     assert not all(np.all(np.isfinite(a.w)) and np.abs(a.w).max() < 1e6 for a in algos.values())
 
 
