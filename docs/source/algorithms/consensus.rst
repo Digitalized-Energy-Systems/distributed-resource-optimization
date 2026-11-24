@@ -46,7 +46,8 @@ Protocol
 2. Participants exchange :class:`~distributed_resource_optimization.ConsensusMessage`\ s
    with their peers and iterate.
 3. A participant is *converged* when :math:`\max|\Delta\lambda| <` ``eps`` and its actor's
-   :meth:`~distributed_resource_optimization.ConsensusActor.converged` is true; it reports
+   :meth:`~distributed_resource_optimization.ConsensusActor.converged` is true, checked after the
+   innovation at the new :math:`\lambda` (HKW15 Fig. 3: :math:`P^{(i+1)}` vs :math:`P^{(i)}`); it reports
    every flip of that flag to the coordinator
    (:class:`~distributed_resource_optimization.ConsensusReport`).
 4. When all participants are converged the coordinator returns a
