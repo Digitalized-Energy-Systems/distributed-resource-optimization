@@ -35,11 +35,12 @@ Per round :math:`k`:
   :math:`c_i = 1 + \min(c_i, c_j)` while it holds; past the diameter :math:`d` the earliest
   proposed reset round is flooded, and in that round every participant sets
   :math:`P_N = n\,x_i` (eq. 10) and restarts :math:`x_i` from its measurement; the first reset
-  starts the optimization at :math:`w = 0`
-- :math:`n` comes from an ID database flooded in the packets (entries older than :math:`d`
-  rounds dropped)
+  starts the optimization at :math:`w = 0`; :math:`\nabla J_i` is only asked of active
+  participants
+- :math:`n` = the participants of the start message (the paper floods an ID database, §III-A;
+  like :math:`d` it is known at setup)
 - one packet per edge per round (:class:`~distributed_resource_optimization.DiffusionMessage`):
-  :math:`x`, :math:`w`, degree, counter, reset proposal, ID database
+  :math:`x`, :math:`w`, degree, counter, reset proposal
 - eq. (21) is taken as printed (the previous estimate's sum): the sum error follows
   :math:`e_k = (A - I)e_{k-1}`, so it grows where :math:`A` has a negative eigenvalue; with one
   :math:`\mu` for all the fixed point has equal gradients up to an :math:`O(\mu)` offset
@@ -50,9 +51,9 @@ Per round :math:`k`:
 Stop and protocol
 -----------------
 
-A :class:`~distributed_resource_optimization.ConsensusCoordinator` starts the run (its ``lam0``
-gives the number of periods) and ends it once every participant reports ``max_iter``; there is no
-convergence stop (the paper tracks continuously).
+A :class:`~distributed_resource_optimization.ConsensusCoordinator` (``lam0 = ()``; the number
+of periods is the length of the measurement) starts the run and ends it once every participant
+reports ``max_iter``; there is no convergence stop (the paper tracks continuously).
 
 .. code-block:: python
 

@@ -225,7 +225,8 @@ class ConsensusCoordinator(Coordinator):
     """Starts the participants and ends the run once all report converged (or all hit max_iter).
 
     :param participants: Addresses of all participants.
-    :param lam0: Initial λ for every participant (e.g. a flat start).
+    :param lam0: Initial λ for every participant (e.g. a flat start); ``()`` for an algorithm
+        without one (diffusion, 2026-11-24 D-238). Required, so a forgotten λ fails here.
     :param settle_s: When all flags say converged, wait this long (carrier clock) and stop only if
         they still do. Reports reach the coordinator after different delays (multi-hop routes), so a
         late "not converged" flip can still be on its way; set it to the longest report delay.

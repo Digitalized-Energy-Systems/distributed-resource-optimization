@@ -1,5 +1,5 @@
 """Diffusion (de Azevedo et al. 2017) in a mango world: information sharing with neighbour flags
-and restarts, optimization with the nudge, ID database, silent neighbours, loss."""
+and restarts, optimization with the nudge, silent neighbours, loss."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class Quadratic(DiffusionActor):
     def __init__(self, b, c, d):
         self.b, self.c, self.d = b, c, d
 
-    def measure(self, periods):
+    def measure(self):
         return self.d
 
     def gradient(self, w_own):
@@ -115,7 +115,7 @@ async def run(max_iter=4000, step=0.01, step_is=0.0, loss=0.0, silent=None, time
             agent_composed_of(DistributedOptimizationRole(algos[aid], routes=routes[aid])),
             suggested_aid=aid,
         )
-    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], np.zeros(2), 0.0, 0.03)
+    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], (), start_latency=0.03)
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
     )
@@ -144,7 +144,6 @@ async def test_flags_restarts_and_optimum(lazy):
     resets = {a.resets for a in algos.values()}
     assert len(resets) == 1 and resets.pop() > 1  # one reset round for all, and it restarts
     for algo in algos.values():
-        assert len(algo.seen) == 4  # ID database: n learnt by flooding (§III-A)
         np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)  # P_N = n·x̄
         np.testing.assert_allclose(algo.w.sum(axis=0), D.sum(axis=0), atol=1e-6)
         assert np.all(algo.w[3] == 0)  # the uninformed entry stays 0
@@ -166,13 +165,12 @@ async def test_printed_nudge_diverges_with_negative_eigenvalues():
 
 
 async def test_silent_neighbour_is_dropped(lazy):
-    # p3 never gets a packet through: its neighbours drop it after d rounds (§III-A), the ID
-    # database forgets it, and the others' degrees (eq. 12) follow
+    # p3 never gets a packet through: its neighbours drop it after d rounds (§III-A) and their
+    # degrees (eq. 12) follow
     _, algos, finished = await run(max_iter=300, silent="p3", timeout=0.02)
     assert len(finished) == 4
     for aid in ("p1", "p2"):
         assert all(p.aid != "p3" for p in algos[aid]._peers)
-        assert len(algos[aid].seen) == 3
 
 
 async def test_lossy_rounds_finish(lazy):

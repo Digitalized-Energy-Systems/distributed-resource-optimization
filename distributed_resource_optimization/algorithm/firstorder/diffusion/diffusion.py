@@ -16,22 +16,23 @@ processes on what it received:
   equally over the other active entries; an inactive (uninformed) participant only combines.
 
 Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) from the degrees in the packets,
-a_ii = 1 − Σ_j a_ij, built on the fly (§III-A). n = the participants in the flooded ID database
-(entries older than d rounds are dropped); a neighbour silent for more than d rounds is dropped
-and the weights follow (§III-A). The run ends at ``max_iter`` (the paper tracks forever).
+a_ii = 1 − Σ_j a_ij, built on the fly (§III-A). n = the participants of the start message (the
+paper floods an ID database, §III-A); a neighbour silent for more than d rounds is dropped and the
+weights follow (§III-A). The run ends at ``max_iter`` (the paper tracks forever).
 """
 
 # 2026-11-23 D-225: generic CTA + nudge (de Azevedo 2017); replaces the Ces-based ATC (D-211)
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from ...core import OptimizationMessage
+from ...core import DistributedAlgorithm, OptimizationMessage
 from ..consensus.innovations import ConsensusReport, ConsensusStart
 
 if TYPE_CHECKING:
@@ -44,23 +45,24 @@ def metropolis(n_i: int, n_j: int) -> float:
     return 1 / max(n_i, n_j)
 
 
-class DiffusionActor:
+class DiffusionActor(ABC):
     """Local problem of one participant."""
 
-    def measure(self, periods: int) -> np.ndarray:
+    # 2026-11-24 D-238: the measurement sets the number of periods (no start-λ length)
+    @abstractmethod
+    def measure(self) -> np.ndarray:
         """x_i of the information sharing at every (re)start (one value per period)."""
-        return np.zeros(periods)
 
+    @abstractmethod
     def gradient(self, w_own: np.ndarray) -> np.ndarray:
-        """∇J_i at the own entry *w_own* (one value per period)."""
-        return np.zeros_like(w_own)
+        """∇J_i at the own entry *w_own* (one value per period); only active participants."""
 
 
 @dataclass
 class DiffusionMessage(OptimizationMessage):
     """One packet of round *k* (Fig. 10): the information sharing state *x*, the estimate *w*
     (None before the optimization starts), the sender's degree (eq. 12), convergence counter and
-    proposed reset round (§III flags), and its ID database {id: last round seen} (§III-A)."""
+    proposed reset round (§III flags)."""
 
     x: np.ndarray
     w: np.ndarray | None
@@ -69,10 +71,10 @@ class DiffusionMessage(OptimizationMessage):
     degree: int
     count: int
     reset: int | None
-    seen: dict = field(default_factory=dict)
 
 
-class DiffusionAlgorithm:
+# 2026-11-24 D-236: a DistributedAlgorithm like the other algorithms
+class DiffusionAlgorithm(DistributedAlgorithm):
     """One diffusion participant.
 
     :param finish_callback: ``(algorithm, carrier)``, called once when the participant stops.
@@ -83,7 +85,7 @@ class DiffusionAlgorithm:
     :param step: μ of the optimization.
     :param step_is: μ of the information sharing (0 = plain averaging).
     :param eps_is: Precision of the information sharing flag (``max |Δx| ≤ eps_is``).
-    :param diameter: d of the communication graph (flags, ID database, silent neighbours).
+    :param diameter: d of the communication graph (flags, silent neighbours).
     :param max_iter: Iteration cap.
     :param round_timeout: Round deadline (carrier clock) for lossy links, as in consensus: a missing
         packet's weights go to self that round. ``None`` = wait for every neighbour.
@@ -115,7 +117,6 @@ class DiffusionAlgorithm:
         self.resets = 0  # information sharing convergences (each one sets the target)
         self._phi_prev: np.ndarray | None = None
         self.count, self.reset_at = 0, None
-        self.seen: dict[str, int] = {}
         self.k = 0
         self.stopped = False
         self._start: ConsensusStart | None = None
@@ -132,11 +133,9 @@ class DiffusionAlgorithm:
             if self._start is not None:
                 return
             self._start = message_data
-            self._me = str(carrier.get_address())
             self._peers = [a for a in carrier.others("") if a in message_data.participants]
             self._heard = dict.fromkeys(self._peers, 0)
-            self.x = np.asarray(self.actor.measure(len(message_data.lam)), dtype=float)
-            self.seen = {self._me: 0}
+            self.x = np.asarray(self.actor.measure(), dtype=float)
             self._send(carrier)
             if self.round_timeout is not None and self._peers:
                 carrier.spawn(self._deadlines(carrier))
@@ -159,7 +158,6 @@ class DiffusionAlgorithm:
             len(self._peers),
             self.count,
             self.reset_at,
-            dict(self.seen),
         )
         for peer in self._peers:
             carrier.send_to_other(message, peer)
@@ -191,8 +189,6 @@ class DiffusionAlgorithm:
         a = [metropolis(n_i, m.degree) for m in received]  # from the packets' degrees
         for m in received:
             self._heard[m.sender] = self.k
-            for i, r in m.seen.items():
-                self.seen[i] = max(self.seen.get(i, -1), r)
         # information sharing, eq. (13): ŝ = change of φ since the previous round
         phi = self._combine(self.x, [m.x for m in received], a)
         s = 0.0 if self._phi_prev is None else phi - self._phi_prev
@@ -206,8 +202,6 @@ class DiffusionAlgorithm:
             phi_w = self._combine(self.w, [v for _, v in got], [aj for aj, _ in got])
             self.w = self._adapt(phi_w, self.w)
         self.k += 1
-        self.seen[self._me] = self.k
-        self.seen = {i: r for i, r in self.seen.items() if self.k - r <= self.d}
         # 2026-11-23 D-228: flags among neighbours (§III); past d the earliest reset round wins
         proposals = [m.reset for m in received if m.reset is not None and m.reset >= self.k]
         if self.reset_at is not None and self.reset_at >= self.k:
@@ -230,8 +224,9 @@ class DiffusionAlgorithm:
         """Information sharing converged everywhere: P_N = x·n (eq. 10), restart x (Fig. 5);
         the first one starts the optimization at w⁰ = 0 (D-222)."""
         # 2026-11-23 D-229: the IS restarts and runs alongside the optimization (Fig. 5/10)
-        self.target = self.x * len(self.seen)
-        self.x = np.asarray(self.actor.measure(len(self.x)), dtype=float)
+        # 2026-11-24 D-239: n = the start message's participants (like d, known at setup)
+        self.target = self.x * len(self._start.participants)
+        self.x = np.asarray(self.actor.measure(), dtype=float)
         self._phi_prev, self.count, self.reset_at = None, 0, None
         self.resets += 1
         if self.w is None:
@@ -239,9 +234,9 @@ class DiffusionAlgorithm:
 
     def _adapt(self, phi: np.ndarray, old: np.ndarray) -> np.ndarray:
         """Eqs. (16), (20), (21): gradient step on the own entry, nudge on the other active ones."""
-        gradient = np.asarray(self.actor.gradient(phi[self.own]))
-        if not self.is_active:
+        if not self.is_active:  # 2026-11-24 D-237: no gradient call
             return phi  # uninformed: combine only (§III-B)
+        gradient = np.asarray(self.actor.gradient(phi[self.own]))
         w = phi.copy()
         delta = -self.step * gradient
         w[self.own] += delta
