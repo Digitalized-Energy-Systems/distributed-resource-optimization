@@ -10,8 +10,9 @@ sharing) that runs alongside in the same packet.
 Algorithm
 ---------
 
-Weights: Metropolis eq. (12) as printed, :math:`a_{ij} = 1/\max(n_i, n_j)` from the neighbours'
-degrees carried in the packets, :math:`a_{ii} = 1 - \sum_j a_{ij}`
+Weights: Metropolis eq. (12) as printed, :math:`a_{ij} = 1/\max(n_i, n_j)` with :math:`n_i = |N_i|`
+the neighbourhood size including the node itself (degree + 1, as Xiao–Boyd's Metropolis–Hastings
+rule) from the neighbours' degrees carried in the packets, :math:`a_{ii} = 1 - \sum_j a_{ij}`
 (:func:`~distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion.metropolis`).
 Per round :math:`k`:
 
