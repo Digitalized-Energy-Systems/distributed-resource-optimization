@@ -51,7 +51,7 @@ Per round :math:`k`:
 Stop and protocol
 -----------------
 
-A :class:`~distributed_resource_optimization.ConsensusCoordinator` (without ``lam0``; the number
+A :class:`~distributed_resource_optimization.ConsensusCoordinator` (``lam0 = ()``; the number
 of periods is the length of the measurement) starts the run and ends it once every participant
 reports ``max_iter``; there is no convergence stop (the paper tracks continuously).
 

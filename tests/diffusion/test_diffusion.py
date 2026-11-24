@@ -115,7 +115,7 @@ async def run(max_iter=4000, step=0.01, step_is=0.0, loss=0.0, silent=None, time
             agent_composed_of(DistributedOptimizationRole(algos[aid], routes=routes[aid])),
             suggested_aid=aid,
         )
-    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], start_latency=0.03)
+    coordinator = ConsensusCoordinator([a.addr for a in agents.values()], (), start_latency=0.03)
     agents["c"] = world.register(
         agent_composed_of(CoordinatorRole(coordinator, routes=routes["c"])), suggested_aid="c"
     )
