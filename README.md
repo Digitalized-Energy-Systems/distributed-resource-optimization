@@ -27,6 +27,7 @@ Six algorithm families are available:
 | **COHDA** | Combinatorial schedule selection, weighted L1 target | Fully distributed |
 | **Consensus + innovations** | Agree on a shared vector λ; local mismatches sum to zero | Coordinator starts and stops |
 | **DEED-ADMM** | Σ (x_i − y_i) = 0 with local boxes; peers exchange (λ, ξ) (Zhu et al. 2025) | Coordinator starts and stops |
+| **Diffusion** | Σ_j w[j] = target, own cost per entry; the target is learnt by information sharing (de Azevedo et al. 2017) | Fully distributed (coordinator only starts) |
 
 Two carriers are included:
 

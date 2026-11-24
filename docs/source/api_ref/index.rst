@@ -43,6 +43,12 @@ Consensus
 .. automodule:: distributed_resource_optimization.algorithm.firstorder.consensus.innovations
    :members:
 
+Diffusion
+---------
+
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion
+   :members:
+
 Algorithm Core
 --------------
 

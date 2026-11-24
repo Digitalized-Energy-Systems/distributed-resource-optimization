@@ -98,6 +98,15 @@ Algorithms
 
       :doc:`algorithms/deed_admm`
 
+   .. grid-item-card::
+      :shadow: sm
+
+      **Diffusion**
+      ^^^
+      Combine-then-adapt with a sum-keeping nudge and information sharing in one packet.
+
+      :doc:`algorithms/diffusion`
+
 ----
 
 Quick look
@@ -213,6 +222,7 @@ Where to go next
    algorithms/cohda
    algorithms/consensus
    algorithms/deed_admm
+   algorithms/diffusion
 
 .. toctree::
    :hidden:
