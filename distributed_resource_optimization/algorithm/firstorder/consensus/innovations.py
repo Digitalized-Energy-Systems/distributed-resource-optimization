@@ -15,8 +15,8 @@ Rounds are synchronous: iteration k waits for every peer's λ of iteration k.
 
 Stop: a participant is *converged* when ``max |Δλ| < eps`` and its actor reports
 :meth:`ConsensusActor.converged`; as HKW15 Fig. 3 the innovation is evaluated at the new λ right
-after the update (P⁽ⁱ⁺¹⁾, eq. 27/29), so the actor's check compares P⁽ⁱ⁺¹⁾ with P⁽ⁱ⁾. It reports flips of that flag to the coordinator
-(:class:`ConsensusReport`); the coordinator ends the run when all participants are converged
+after the update (P⁽ⁱ⁺¹⁾, eq. 27/29; P⁽⁰⁾ at the start λ), so the actor's check compares P⁽ⁱ⁺¹⁾
+with P⁽ⁱ⁾. It reports flips of that flag to the coordinator (:class:`ConsensusReport`); the coordinator ends the run when all participants are converged
 (the carrier's :class:`OptimizationFinishedMessage` is the stop). Each participant also stops on
 its own after ``max_iter`` iterations. On stopping it calls ``finish_callback(algorithm, carrier)``.
 """
