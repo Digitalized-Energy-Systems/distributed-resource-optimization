@@ -80,7 +80,7 @@ def optimum():
 
 @pytest.fixture
 def lazy(monkeypatch):
-    """(I + A)/2: eigenvalues ≥ 0, so the printed nudge (D-226) is stable."""
+    """(I + A)/2: eigenvalues ≥ 0 (kept from D-226's printed nudge; with D-245 any A works)."""
     monkeypatch.setattr(module, "metropolis", lambda n_i, n_j: 0.5 / max(n_i, n_j))
 
 
@@ -147,18 +147,23 @@ async def test_flags_restarts_and_optimum(lazy):
     np.testing.assert_allclose(own(algos), optimum(), atol=3.0)
 
 
-async def test_is_step_damps_the_averaging(lazy):
-    _, algos, _ = await run(max_iter=500, step_is=0.5)
+async def test_is_step_speeds_up_the_averaging(lazy):
+    # D-242: ŝ = φ_prev − φ, so μ_IS > 0 converges faster than plain averaging (Fig. 6)
+    _, algos, _ = await run(max_iter=500, step_is=0.4)
     for algo in algos.values():
         np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
+    _, plain, _ = await run(max_iter=500, step_is=0.0)
+    assert algos["p0"].resets > plain["p0"].resets
 
 
-async def test_printed_nudge_diverges_with_negative_eigenvalues():
-    # eq. (21) as printed (D-226): with eq. (12) weights an even ring has an eigenvalue < 0
-    # (−1/3, D-241), so the estimate's sum error grows as (A − D)^k (×1.22 here) — a result
+async def test_nudge_keeps_the_sum_on_an_even_ring():
+    # D-245: eq. (21)'s deficit on φ keeps every active estimate's sum at P_N, also on an even
+    # ring (eigenvalue −1/3), where Σ w_i,k−1 (D-226) let the sum error grow ×1.22 per round
     ring = [("p0", "p1"), ("p1", "p2"), ("p2", "p3"), ("p3", "p0")]
     _, algos, _ = await run(max_iter=3000, edges=ring)
-    assert not all(np.all(np.isfinite(a.w)) and np.abs(a.w).max() < 1e6 for a in algos.values())
+    for j in ACTIVE:
+        np.testing.assert_allclose(algos[f"p{j}"].w.sum(axis=0), D.sum(axis=0), atol=1e-6)
+    np.testing.assert_allclose(own(algos), optimum(), atol=3.0)
 
 
 async def test_loss_drops_no_neighbour(lazy):
