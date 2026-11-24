@@ -4,8 +4,9 @@ Every round each participant sends one packet to its neighbours (Fig. 10) and ru
 processes on what it received:
 
 * **Information sharing** (eq. 13): x_i starts at a local quantity (:meth:`DiffusionActor.measure`);
-  φ_i = Σ_j a_ij x_j, x_i = φ_i − μ_IS·ŝ_i with ŝ_i the change of φ_i since the previous round, so
-  x_i tends to the mean. Convergence by flags among neighbours (§III): a participant's flag is
+  φ_i = Σ_j a_ij x_j, x_i = φ_i − μ_IS·ŝ_i with ŝ_i = φ_i,prev − φ_i (the previous round's φ_i
+  minus this one's: μ_IS ≥ 0 speeds the averaging up, as Fig. 6 / Table I), so x_i tends to the
+  mean. Convergence by flags among neighbours (§III): a participant's flag is
   ``max |Δx_i| ≤ eps_is``; its counter c_i = 1 + min(own and the neighbours' counters) while the flag
   holds, else 0. Past the network diameter d it proposes a reset round, the earliest proposal is
   flooded, and at that round every participant sets the target n·x_i (eq. 10) and restarts x_i from
@@ -184,9 +185,10 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         # 2026-11-24 D-241: n = |N| includes the node (eq. 12's N_j\{j}, eq. 13's sum over N_i)
         n_i = len(self._peers) + 1
         a = [metropolis(n_i, m.degree + 1) for m in received]  # from the packets' degrees
-        # information sharing, eq. (13): ŝ = change of φ since the previous round
+        # information sharing, eq. (13); 2026-11-24 D-242: ŝ = φ_prev − φ, the sign that gives
+        # Fig. 6's speed-up with μ ≥ 0 (φ − φ_prev only slows the averaging: 9-node 50 vs 38 it.)
         phi = self._combine(self.x, [m.x for m in received], a)
-        s = 0.0 if self._phi_prev is None else phi - self._phi_prev
+        s = 0.0 if self._phi_prev is None else self._phi_prev - phi
         x, self._phi_prev = phi - self.step_is * s, phi
         flag = bool(np.max(np.abs(x - self.x)) <= self.eps_is)
         self.count = 1 + min([self.count, *(m.count for m in received)]) if flag else 0

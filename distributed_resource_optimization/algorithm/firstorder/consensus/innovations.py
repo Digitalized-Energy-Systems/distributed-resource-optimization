@@ -14,7 +14,8 @@ consensus term makes the λ_j agree, the innovation drives them to where the mis
 Rounds are synchronous: iteration k waits for every peer's λ of iteration k.
 
 Stop: a participant is *converged* when ``max |Δλ| < eps`` and its actor reports
-:meth:`ConsensusActor.converged`. It reports flips of that flag to the coordinator
+:meth:`ConsensusActor.converged`; as HKW15 Fig. 3 the innovation is evaluated at the new λ right
+after the update (P⁽ⁱ⁺¹⁾, eq. 27/29), so the actor's check compares P⁽ⁱ⁺¹⁾ with P⁽ⁱ⁾. It reports flips of that flag to the coordinator
 (:class:`ConsensusReport`); the coordinator ends the run when all participants are converged
 (the carrier's :class:`OptimizationFinishedMessage` is the stop). Each participant also stops on
 its own after ``max_iter`` iterations. On stopping it calls ``finish_callback(algorithm, carrier)``.
@@ -128,6 +129,7 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         self.eps, self.max_iter = eps, max_iter
         self.lam_min = lam_min
         self.lam: np.ndarray | None = None
+        self._mismatch: np.ndarray | None = None  # innovation at self.lam
         self.k = 0
         self.stopped = False
         self._start: ConsensusStart | None = None
@@ -144,6 +146,7 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         if isinstance(message_data, ConsensusStart):
             self._start = message_data
             self.lam = np.array(message_data.lam, dtype=float)
+            self._mismatch = self.actor.innovation(self.lam)  # P⁽⁰⁾ at λ⁽⁰⁾
             self._peers = [a for a in carrier.others("") if a in message_data.participants]
             self._send_lam(carrier)
             if self.round_timeout is not None and self._peers:
@@ -173,8 +176,11 @@ class ConsensusInnovationsAlgorithm(DistributedAlgorithm):
         i = self.k + 1
         neighbours = self._inbox.pop(self.k, [])  # [] = every peer's λ lost (deadline round)
         consensus = sum((self.lam - lam_l for lam_l in neighbours), np.zeros_like(self.lam))
-        new = self.lam - self.beta(i) * consensus - self.alpha(i) * self.actor.innovation(self.lam)
+        new = self.lam - self.beta(i) * consensus - self.alpha(i) * self._mismatch
         new = np.maximum(new, self.lam_min)
+        # 2026-11-24 D-243: HKW15 Fig. 3 order — P⁽ⁱ⁺¹⁾ from λ⁽ⁱ⁺¹⁾ before the stop check (the
+        # check compared P⁽ⁱ⁾ with P⁽ⁱ⁻¹⁾, one iteration late); reused by the next update
+        self._mismatch = self.actor.innovation(new)
         # a plain bool: an actor may return numpy.bool, which no message codec can encode
         converged = bool(np.max(np.abs(new - self.lam)) < self.eps and self.actor.converged())
         self.lam, self.k = new, i

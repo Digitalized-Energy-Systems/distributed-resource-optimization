@@ -178,6 +178,10 @@ async def test_max_iter_stops_everyone():
     assert result.stop_reason == "max_iter"
     assert result.iterations == 5
     assert finished == [5, 5, 5, 5]
+    # D-243 (HKW15 Fig. 3): the last response is P⁽ⁱ⁺¹⁾ at the final λ, not one step behind
+    for j, algo in enumerate(algos[f"p{j}"] for j in range(4)):
+        expected = np.clip((algo.lam - B[j]) / A[j], 0.0, CAP[j])
+        np.testing.assert_allclose(algo.actor.x, expected)
 
 
 async def test_single_participant_stops_when_converged():

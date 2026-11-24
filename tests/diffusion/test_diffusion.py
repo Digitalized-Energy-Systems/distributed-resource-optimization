@@ -147,10 +147,13 @@ async def test_flags_restarts_and_optimum(lazy):
     np.testing.assert_allclose(own(algos), optimum(), atol=3.0)
 
 
-async def test_is_step_damps_the_averaging(lazy):
-    _, algos, _ = await run(max_iter=500, step_is=0.5)
+async def test_is_step_speeds_up_the_averaging(lazy):
+    # D-242: ŝ = φ_prev − φ, so μ_IS > 0 converges faster than plain averaging (Fig. 6)
+    _, algos, _ = await run(max_iter=500, step_is=0.4)
     for algo in algos.values():
         np.testing.assert_allclose(algo.target, D.sum(axis=0), atol=1e-6)
+    _, plain, _ = await run(max_iter=500, step_is=0.0)
+    assert algos["p0"].resets > plain["p0"].resets
 
 
 async def test_printed_nudge_diverges_with_negative_eigenvalues():
