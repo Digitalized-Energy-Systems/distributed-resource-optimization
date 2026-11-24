@@ -13,7 +13,7 @@ processes on what it received:
   its measurement ("the information sharing process restarts", Fig. 5).
 * **Optimization** (eqs. 16, 19–21), from the first reset on: an estimate w_i of all n entries
   (row per participant, column per period), w⁰ = 0; φ_i = Σ_j a_ij w_j, the own entry steps
-  −μ·∇J_i(φ_i[own]) (:meth:`DiffusionActor.gradient`) and the "nudge" target − Σ w_i,k−1 − Δ is split
+  −μ·∇J_i(φ_i[own]) (:meth:`DiffusionActor.gradient`) and the "nudge" target − Σ φ_i − Δ is split
   equally over the other active entries; an inactive (uninformed) participant only combines.
 
 Weights: Metropolis eq. (12) as printed, a_ij = 1/max(n_i, n_j) with n_i = |N_i| (the
@@ -197,7 +197,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         if self.w is not None:
             got = [(aj, m.w) for aj, m in zip(a, received) if m.w is not None]
             phi_w = self._combine(self.w, [v for _, v in got], [aj for aj, _ in got])
-            self.w = self._adapt(phi_w, self.w)
+            self.w = self._adapt(phi_w)
         self.k += 1
         # 2026-11-23 D-228: flags among neighbours (§III); past d the earliest reset round wins
         proposals = [m.reset for m in received if m.reset is not None and m.reset >= self.k]
@@ -227,7 +227,7 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         if self.w is None:
             self.w = np.zeros((self.entries, len(self.x)))
 
-    def _adapt(self, phi: np.ndarray, old: np.ndarray) -> np.ndarray:
+    def _adapt(self, phi: np.ndarray) -> np.ndarray:
         """Eqs. (16), (20), (21): gradient step on the own entry, nudge on the other active ones."""
         if not self.is_active:  # 2026-11-24 D-237: no gradient call
             return phi  # uninformed: combine only (§III-B)
@@ -235,9 +235,10 @@ class DiffusionAlgorithm(DistributedAlgorithm):
         w = phi.copy()
         delta = -self.step * gradient
         w[self.own] += delta
-        # 2026-11-23 D-226: eq. (21) as printed (previous estimate's sum): the sum error follows
-        # e_k = (A − I)e_{k−1}, so it grows where A has an eigenvalue < 0 (a result, not fixed)
-        nudge = self.target - old.sum(axis=0) - delta
+        # 2026-11-24 D-245 (replaces D-226's Σ w_i,k−1): eq. (21)'s deficit of the combined
+        # estimate φ — the sum is exact each round; Σ w_i,k−1 gave e_k = (A − D)e_{k−1}, which
+        # diverged even in the paper's grid-tied 9-node case
+        nudge = self.target - phi.sum(axis=0) - delta
         # 2026-11-23 D-223: equal split (Fig. 8); alone, the own entry keeps the sum
         if self.others:
             w[self.others] += nudge / len(self.others)

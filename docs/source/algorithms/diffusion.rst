@@ -19,12 +19,12 @@ Per round :math:`k`:
 .. math::
 
    \text{information sharing (13):}\quad
-   \varphi_i = \sum_j a_{ij} x_j, \qquad x_i = \varphi_i - \mu_{IS}\,(\varphi_i - \varphi_i^{prev})
+   \varphi_i = \sum_j a_{ij} x_j, \qquad x_i = \varphi_i - \mu_{IS}\,(\varphi_i^{prev} - \varphi_i)
 
    \text{optimization (16, 20, 21):}\quad
    \phi_i = \sum_j a_{ij} w_j, \qquad
    \Delta = -\mu \nabla J_i(\phi_i[i]), \qquad
-   w_i = \phi_i + \Delta\,e_i + \tfrac{P_N - \sum w_{i,k-1} - \Delta}{m - 1} \sum_{j \ne i,\ j\ \text{active}} e_j
+   w_i = \phi_i + \Delta\,e_i + \tfrac{P_N - \sum \phi_i - \Delta}{m - 1} \sum_{j \ne i,\ j\ \text{active}} e_j
 
 - :math:`x_i` starts at :meth:`~distributed_resource_optimization.DiffusionActor.measure` and
   tends to the mean; :math:`\nabla J_i` is
@@ -42,9 +42,12 @@ Per round :math:`k`:
   like :math:`d` it is known at setup)
 - one packet per edge per round (:class:`~distributed_resource_optimization.DiffusionMessage`):
   :math:`x`, :math:`w`, degree, counter, reset proposal
-- eq. (21) is taken as printed (the previous estimate's sum): the sum error follows
-  :math:`e_k = (A - I)e_{k-1}`, so it grows where :math:`A` has a negative eigenvalue; with one
-  :math:`\mu` for all the fixed point has equal gradients up to an :math:`O(\mu)` offset
+- eq. (13)'s :math:`\hat s_i = \varphi_i^{prev} - \varphi_i`: :math:`\mu_{IS} \ge 0` speeds the
+  averaging up (the paper's Fig. 6 / Table I; the opposite sign only slows it)
+- eq. (21)'s deficit is taken on the combined estimate :math:`\phi_i`, so every active estimate
+  sums to :math:`P_N` each round (the previous estimate's sum :math:`\sum w_{i,k-1}` lets the
+  sum error grow as :math:`e_k = (A - D)e_{k-1}`); with one :math:`\mu` for all the fixed point
+  has equal gradients up to an :math:`O(\mu)` offset
 - optional ``round_timeout`` (lossy links): round *k* ends at ``t0 + (k+1)·round_timeout``; a
   missing packet's weights stay with :math:`i` that round; no neighbour is dropped (the paper's
   :math:`d`-round drop is for nodes that leave, not for lost packets)
