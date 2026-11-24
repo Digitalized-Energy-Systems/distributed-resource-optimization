@@ -45,8 +45,8 @@ Per round :math:`k`:
   :math:`e_k = (A - I)e_{k-1}`, so it grows where :math:`A` has a negative eigenvalue; with one
   :math:`\mu` for all the fixed point has equal gradients up to an :math:`O(\mu)` offset
 - optional ``round_timeout`` (lossy links): round *k* ends at ``t0 + (k+1)·round_timeout``; a
-  missing packet's weights stay with :math:`i` that round, a neighbour silent for more than
-  :math:`d` rounds is dropped (its weights follow)
+  missing packet's weights stay with :math:`i` that round; no neighbour is dropped (the paper's
+  :math:`d`-round drop is for nodes that leave, not for lost packets)
 
 Stop and protocol
 -----------------
