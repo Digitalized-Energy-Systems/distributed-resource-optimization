@@ -49,6 +49,12 @@ Diffusion
 .. automodule:: distributed_resource_optimization.algorithm.firstorder.diffusion.diffusion
    :members:
 
+Exact diffusion
+---------------
+
+.. automodule:: distributed_resource_optimization.algorithm.firstorder.exact_diffusion.exact_diffusion
+   :members:
+
 Algorithm Core
 --------------
 

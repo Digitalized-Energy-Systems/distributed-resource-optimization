@@ -28,6 +28,7 @@ Six algorithm families are available:
 | **Consensus + innovations** | Agree on a shared vector λ; local mismatches sum to zero | Coordinator starts and stops |
 | **DEED-ADMM** | Σ (x_i − y_i) = 0 with local boxes; peers exchange (λ, ξ) (Zhu et al. 2025) | Coordinator starts and stops |
 | **Diffusion** | Σ_j w[j] = target, own cost per entry; the target is learnt by information sharing (de Azevedo et al. 2017) | Fully distributed (coordinator only starts) |
+| **Exact diffusion** | min Σ_k J_k(w) over a common w; adapt-correct-combine reaches the exact minimiser (Yuan et al. 2019) | Coordinator starts and ends at `max_iter` |
 
 Two carriers are included:
 

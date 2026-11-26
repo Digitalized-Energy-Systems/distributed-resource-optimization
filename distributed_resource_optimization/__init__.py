@@ -15,6 +15,8 @@ Algorithms
   exchange (λ, ξ) each iteration (Zhu et al. 2025).
 * **Diffusion** — combine-then-adapt diffusion with information sharing and a
   sum-keeping "nudge" in one packet per round (de Azevedo et al. 2017).
+* **Exact diffusion** — adapt-correct-combine diffusion that reaches the exact minimiser of
+  Σ J_k (Yuan et al. 2019, Algorithm 1).
 
 Carriers
 --------
@@ -188,6 +190,13 @@ from .algorithm.firstorder.diffusion.diffusion import (
     DiffusionMessage,
 )
 
+# Exact diffusion
+from .algorithm.firstorder.exact_diffusion.exact_diffusion import (
+    ExactDiffusionActor,
+    ExactDiffusionAlgorithm,
+    ExactDiffusionMessage,
+)
+
 # Distributed QP (gossip primal-dual)
 from .algorithm.firstorder.gossip_qp.core import (
     GossipQPAlgorithm,
@@ -325,6 +334,10 @@ __all__ = [
     "DiffusionActor",
     "DiffusionAlgorithm",
     "DiffusionMessage",
+    # Exact diffusion
+    "ExactDiffusionActor",
+    "ExactDiffusionAlgorithm",
+    "ExactDiffusionMessage",
     # Distributed QP (gossip primal-dual)
     "LedgerEntry",
     "GossipQPMessage",
