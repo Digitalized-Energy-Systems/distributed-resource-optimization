@@ -107,6 +107,15 @@ Algorithms
 
       :doc:`algorithms/diffusion`
 
+   .. grid-item-card::
+      :shadow: sm
+
+      **Exact diffusion**
+      ^^^
+      Adapt-correct-combine diffusion that reaches the exact minimiser (Yuan et al. 2019).
+
+      :doc:`algorithms/exact_diffusion`
+
 ----
 
 Quick look
@@ -223,6 +232,7 @@ Where to go next
    algorithms/consensus
    algorithms/deed_admm
    algorithms/diffusion
+   algorithms/exact_diffusion
 
 .. toctree::
    :hidden:
